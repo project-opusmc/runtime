@@ -204,7 +204,7 @@ def rbwUiPreviewRequested = gradle.startParameter.taskNames.any { taskName ->
 }
 
 if (rbwUiPreviewRequested) {
-    def rbwProcessGuard = file('../../scripts/rbw-process-guard.sh').absolutePath
+    def rbwProcessGuard = file('../../../../tools/process-guard.sh').absolutePath
     def rbwPreviewControl = file('preview/rbw-ui-preview.json').absolutePath
     def rbwPreviewTheme = file('preview/rbw-ui-theme.json').absolutePath
     def rbwPreviewUtilitySettings = file('preview/rbw-utility-settings.json').absolutePath

@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":core"))
+    implementation(project(":common"))
     compileOnly("net.minecraft:launchwrapper:1.12") {
         isTransitive = false
     }

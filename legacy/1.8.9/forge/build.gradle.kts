@@ -12,8 +12,8 @@ repositories {
 
 dependencies {
     implementation(project(":bootstrap"))
-    implementation(project(":core"))
-    implementation(project(":patches"))
+    implementation(project(":common"))
+    implementation(project(":legacy:1.8.9:patches"))
 
     // This is supplied by the managed Forge runtime. It must never be packed
     // into the Opus coremod because Forge owns LaunchWrapper and ASM 5.0.3.

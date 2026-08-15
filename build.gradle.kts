@@ -34,7 +34,7 @@ subprojects {
     }
 }
 
-val forgeClientModDirectory = file("client-mod")
+val forgeClientModDirectory = file("legacy/1.8.9/client")
 val forgeClientModArtifact = file(
     "${forgeClientModDirectory}/build/libs/rbw-forge-client-0.0.1-preview.3.jar",
 )
@@ -52,11 +52,15 @@ val prepareForgeClientMod = tasks.register<Exec>("prepareForgeClientMod") {
 }
 
 tasks.register<Sync>("prepareBootstrap") {
-    dependsOn(":bootstrap:jar", ":forge:verifyCoremodArtifact", prepareForgeClientMod)
+    dependsOn(
+        ":bootstrap:jar",
+        ":legacy:1.8.9:forge:verifyCoremodArtifact",
+        prepareForgeClientMod,
+    )
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     from(project(":bootstrap").tasks.named("jar"))
-    from(project(":forge").tasks.named("jar"))
+    from(project(":legacy:1.8.9:forge").tasks.named("jar"))
     from(forgeClientModArtifact)
     into(layout.buildDirectory.dir("bootstrap"))
 }
