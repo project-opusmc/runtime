@@ -7,7 +7,7 @@ import dev.rbw.client.ui.UiInput;
 import dev.rbw.client.ui.UiRenderer;
 
 /**
- * A title-menu action with a genuine destination. Its icons are RBW-owned
+ * A title-menu action with a genuine destination. Its icons are Opus-owned
  * vector primitives rendered by Minecraft, rather than placeholder glyphs.
  */
 public final class UiHomeActionCard extends UiComponent {

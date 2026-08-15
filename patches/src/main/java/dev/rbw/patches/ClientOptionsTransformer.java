@@ -9,7 +9,7 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 /**
- * Adds the RBW Client Options entry point to the verified 1.8.9 UI paths.
+ * Adds the Opus Client Options entry point to the verified 1.8.9 UI paths.
  *
  * <p>Every injected hook is stack-neutral and branch-free. That matters for
  * the original Java 8 classes because their existing StackMapTable remains
@@ -120,7 +120,7 @@ public final class ClientOptionsTransformer implements ClassTransformer {
                             + ", keyEvents=" + matches[2]
                             + ", hooks=" + matches[3]);
         }
-        System.out.println("[RBW/PATCH] applied " + "rbw.client-options input=ave");
+        System.out.println("[OPUS/PATCH] applied " + "rbw.client-options input=ave");
         return writer.toByteArray();
     }
 
@@ -176,7 +176,7 @@ public final class ClientOptionsTransformer implements ClassTransformer {
                     "Client Options pause-menu anchor changed: init=" + matches[0]
                             + "/" + matches[1] + ", action=" + matches[2]);
         }
-        System.out.println("[RBW/PATCH] applied rbw.client-options pauseMenu=axp");
+        System.out.println("[OPUS/PATCH] applied rbw.client-options pauseMenu=axp");
         return writer.toByteArray();
     }
 
@@ -221,7 +221,7 @@ public final class ClientOptionsTransformer implements ClassTransformer {
                     "Client Options HUD anchor changed: render=" + matches[0]
                             + "/" + matches[1]);
         }
-        System.out.println("[RBW/PATCH] applied rbw.client-options hud=avo");
+        System.out.println("[OPUS/PATCH] applied rbw.client-options hud=avo");
         return writer.toByteArray();
     }
 

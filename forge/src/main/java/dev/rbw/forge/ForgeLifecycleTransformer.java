@@ -63,7 +63,7 @@ final class ForgeLifecycleTransformer implements ClassTransformer {
         if (matches[0] != 1) {
             throw new IllegalStateException("Forge lifecycle frame anchor changed: " + matches[0]);
         }
-        System.out.println("[RBW/PATCH] applied " + id());
+        System.out.println("[OPUS/PATCH] applied " + id());
         return writer.toByteArray();
     }
 }

@@ -9,11 +9,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.launchwrapper.LaunchClassLoader;
 
 /**
- * Restores the RBW diagnostics lifecycle after Forge takes ownership of the
+ * Restores the Opus diagnostics lifecycle after Forge takes ownership of the
  * game class loader.
  *
  * <p>This class lives in the FML coremod rather than the process bootstrap,
- * so the bootstrap JVM class path never needs RBW core classes. It records
+ * so the bootstrap JVM class path never needs Opus core classes. It records
  * only lifecycle names, transformer counts, and a class-loader entry count;
  * it never reads identity, server, mod-path, or game argument data.</p>
  */

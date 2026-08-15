@@ -55,13 +55,13 @@ minecraft {
     runDir = 'run'
 }
 
-def rbwJavac = System.getenv('RBW_FORGE_UI_JAVAC')
+def rbwJavac = System.getenv('OPUS_FORGE_UI_JAVAC') ?: System.getenv('RBW_FORGE_UI_JAVAC')
 if (rbwJavac == null || rbwJavac.trim().isEmpty()) {
-    throw new GradleException('RBW_FORGE_UI_JAVAC must identify the compiler for this legacy build lane.')
+    throw new GradleException('OPUS_FORGE_UI_JAVAC must identify the compiler for this legacy build lane.')
 }
 def rbwJavacFile = file(rbwJavac)
 if (!rbwJavacFile.isFile() || !rbwJavacFile.canExecute()) {
-    throw new GradleException("RBW_FORGE_UI_JAVAC is not executable: ${rbwJavacFile}")
+    throw new GradleException("OPUS_FORGE_UI_JAVAC is not executable: ${rbwJavacFile}")
 }
 
 tasks.withType(JavaCompile) {
@@ -84,7 +84,7 @@ processResources {
 jar {
     manifest {
         attributes(
-            'Implementation-Title': 'RBW Forge Client Mod',
+            'Implementation-Title': 'Opus Forge Client Mod',
             'Implementation-Version': project.version
         )
     }
@@ -131,7 +131,7 @@ task verifyToolchainInputs {
  */
 task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
     group = 'verification'
-    description = 'Verifies the reobfuscated, non-coremod RBW Forge client artifact.'
+    description = 'Verifies the reobfuscated, non-coremod Opus Forge client artifact.'
     doLast {
         def artifact = tasks.jar.archivePath
         if (!artifact.isFile()) {
@@ -179,7 +179,7 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
             }
             def metadataText = archive.getInputStream(metadata).getText('UTF-8')
             if (!metadataText.contains('"modid": "rbwclient"')) {
-                throw new GradleException('FML metadata does not declare the RBW client mod id.')
+                throw new GradleException('FML metadata does not declare the Opus client mod id.')
             }
             def manifest = archive.manifest.mainAttributes
             if (manifest.getValue('FMLCorePlugin') != null
@@ -228,7 +228,7 @@ if (rbwUiPreviewRequested) {
         def guard = [rbwProcessGuard, 'assert-idle'].execute()
         guard.consumeProcessOutput(System.out, System.err)
         if (guard.waitFor() != 0) {
-            throw new GradleException('RBW process guard rejected this preview launch.')
+            throw new GradleException('Opus process guard rejected this preview launch.')
         }
         if (rbwPreviewLock.isFile()) {
             def previousPid = rbwPreviewLock.text.trim()
@@ -237,7 +237,7 @@ if (rbwUiPreviewRequested) {
                 active = ['sh', '-c', "kill -0 ${previousPid} 2>/dev/null"].execute().waitFor() == 0
             }
             if (active) {
-                throw new GradleException("RBW UI Preview is already running (pid ${previousPid}). Stop it before opening another preview.")
+                throw new GradleException("Opus UI Preview is already running (pid ${previousPid}). Stop it before opening another preview.")
             }
             rbwPreviewLock.delete()
         }
@@ -261,5 +261,5 @@ if (rbwUiPreviewRequested) {
 
 task runUiPreview(dependsOn: 'runClient') {
     group = 'rbw'
-    description = 'Runs the real Forge client with RBW Preview Mode enabled.'
+    description = 'Runs the real Forge client with Opus Preview Mode enabled.'
 }

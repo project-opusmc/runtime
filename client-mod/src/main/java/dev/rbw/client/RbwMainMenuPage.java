@@ -8,13 +8,13 @@ import dev.rbw.client.ui.UiRuntime;
 import net.minecraft.util.ResourceLocation;
 
 /**
- * RBW's title surface is intentionally a complete product composition, not a
- * live Minecraft scene underneath. RBW's supplied transparent lockup is the
+ * Opus's title surface is intentionally a complete product composition, not a
+ * live Minecraft scene underneath. Opus's supplied transparent lockup is the
  * sole brand asset; the menu adds no generated or reconstructed imagery.
  */
 final class RbwMainMenuPage extends RbwUiPage {
     private static final ResourceLocation WORDMARK =
-            new ResourceLocation("rbwclient", "textures/gui/rbw-wordmark-transparent.png");
+            new ResourceLocation("rbwclient", "textures/gui/opus-wordmark-transparent.png");
     private static final int DESIGN_WIDTH = 720;
     private static final int DESIGN_HEIGHT = 450;
 

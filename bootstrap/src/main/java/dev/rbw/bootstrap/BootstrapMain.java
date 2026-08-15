@@ -26,9 +26,9 @@ public final class BootstrapMain {
             List<URL> gameClasspath = readClasspath(arguments.gameClasspathFile());
             TransformerChain transformers = TransformerChain.discover();
 
-            System.out.println("[RBW/BOOT] bootstrap loaded");
-            System.out.println("[RBW/BOOT] game classpath entries=" + gameClasspath.size());
-            System.out.println("[RBW/BOOT] transformers=" + transformers.size());
+            System.out.println("[OPUS/BOOT] bootstrap loaded");
+            System.out.println("[OPUS/BOOT] game classpath entries=" + gameClasspath.size());
+            System.out.println("[OPUS/BOOT] transformers=" + transformers.size());
             ClientTelemetry.bootstrapLoaded(gameClasspath.size(), transformers.size());
             RbwCore.transition(LifecycleStage.CREATED, LifecycleStage.BOOTSTRAP);
 

@@ -36,15 +36,15 @@ final class ForgeBootstrapArgumentsTest {
     void addsTheForgeTweakerWhenItIsMissing() {
         assertArrayEquals(
                 new String[] {
-                        "--version", "RBW", "--tweakClass", ForgeBootstrapMain.FML_TWEAKER
+                        "--version", "Opus", "--tweakClass", ForgeBootstrapMain.FML_TWEAKER
                 },
-                ForgeBootstrapMain.withFmlTweaker(new String[] {"--version", "RBW"}));
+                ForgeBootstrapMain.withFmlTweaker(new String[] {"--version", "Opus"}));
     }
 
     @Test
     void preservesAnExistingForgeTweaker() {
         String[] arguments = {
-                "--tweakClass", ForgeBootstrapMain.FML_TWEAKER, "--version", "RBW"
+                "--tweakClass", ForgeBootstrapMain.FML_TWEAKER, "--version", "Opus"
         };
 
         assertArrayEquals(arguments, ForgeBootstrapMain.withFmlTweaker(arguments));

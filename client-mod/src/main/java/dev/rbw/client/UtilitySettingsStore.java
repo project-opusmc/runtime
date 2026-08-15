@@ -49,14 +49,14 @@ final class UtilitySettingsStore {
     static UtilitySettingsStore fromSystemProperty(Logger log) {
         String rawPath = System.getProperty(SETTINGS_PROPERTY);
         if (rawPath == null || rawPath.trim().isEmpty()) {
-            log.warn("RBW utility settings path was not supplied; the Performance Overlay remains disabled and changes cannot persist.");
+            log.warn("Opus utility settings path was not supplied; the Performance Overlay remains disabled and changes cannot persist.");
             return new UtilitySettingsStore(log, null);
         }
 
         try {
             return new UtilitySettingsStore(log, Paths.get(rawPath));
         } catch (RuntimeException exception) {
-            log.warn("RBW utility settings path is invalid; the Performance Overlay remains disabled.", exception);
+            log.warn("Opus utility settings path is invalid; the Performance Overlay remains disabled.", exception);
             return new UtilitySettingsStore(log, null);
         }
     }
@@ -100,7 +100,7 @@ final class UtilitySettingsStore {
             // game or manufacture a plausible-looking HUD. It fails closed.
             document = new JsonObject();
             performanceOverlay = PerformanceOverlaySettings.defaults();
-            log.warn("Unable to read RBW utility settings; the Performance Overlay remains disabled.", exception);
+            log.warn("Unable to read Opus utility settings; the Performance Overlay remains disabled.", exception);
         }
     }
 

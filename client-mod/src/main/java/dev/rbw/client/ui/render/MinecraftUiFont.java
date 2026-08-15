@@ -17,7 +17,7 @@ import net.minecraft.util.ResourceLocation;
 import org.lwjgl.opengl.GL11;
 
 /**
- * Runtime-generated, anti-aliased sans-serif atlas for RBW product UI.
+ * Runtime-generated, anti-aliased sans-serif atlas for Opus product UI.
  *
  * Java 8 ships the logical SansSerif family with the same runtime used to
  * launch Minecraft, so this path is self-contained and does not depend on a

@@ -6,7 +6,7 @@ import dev.rbw.client.ui.UiFontWeight;
 import dev.rbw.client.ui.UiInput;
 import dev.rbw.client.ui.UiRenderer;
 
-/** Minimal top-navigation action used only by the RBW game-entry menu. */
+/** Minimal top-navigation action used only by the Opus game-entry menu. */
 public final class UiHomeNavButton extends UiComponent {
     public enum Icon {
         SETTINGS,

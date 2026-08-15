@@ -30,7 +30,7 @@ public final class TransformingClassLoader extends URLClassLoader {
     }
 
     /**
-     * Defines a small RBW-owned class in the game class loader.
+     * Defines a small Opus-owned class in the game class loader.
      *
      * <p>The bootstrap and core jars deliberately load parent-first, while
      * Minecraft's obfuscated classes load in this child loader. A generated

@@ -13,9 +13,9 @@ import org.lwjgl.util.glu.Project;
 
 /**
  * A self-contained renderer for Minecraft's built-in title panorama. It uses
- * the assets already shipped with Minecraft, so the RBW home menu gets a real
+ * the assets already shipped with Minecraft, so the Opus home menu gets a real
  * in-game backdrop without an AI image, an external download, or a fake DOM
- * preview. The composition above it remains wholly RBW-owned.
+ * preview. The composition above it remains wholly Opus-owned.
  */
 public final class MinecraftTitlePanorama {
     private static final ResourceLocation[] PANORAMA = new ResourceLocation[] {

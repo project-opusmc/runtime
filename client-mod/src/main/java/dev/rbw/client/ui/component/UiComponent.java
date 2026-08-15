@@ -5,7 +5,7 @@ import dev.rbw.client.ui.UiInput;
 import dev.rbw.client.ui.UiRenderer;
 
 /**
- * Base node for RBW product UI. Components never call Minecraft or GL drawing
+ * Base node for Opus product UI. Components never call Minecraft or GL drawing
  * APIs directly; all rendering goes through UiRenderer.
  */
 public abstract class UiComponent {

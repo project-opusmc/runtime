@@ -1,7 +1,7 @@
 package dev.rbw.client.ui;
 
 /**
- * A logical RBW page. Pages do not access Minecraft draw APIs or GL state;
+ * A logical Opus page. Pages do not access Minecraft draw APIs or GL state;
  * they receive a renderer and logical input from UiRuntime.
  */
 public interface UiPage {

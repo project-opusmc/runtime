@@ -26,7 +26,7 @@ final class RbwUiPageFactory implements UiRuntime.PageFactory {
                 if (ArmorStatusModule.ID.equals(route.moduleId())) {
                     return new RbwArmorStatusDetailPage(controller, runtime);
                 }
-                throw new IllegalArgumentException("unknown RBW module: " + route.moduleId());
+                throw new IllegalArgumentException("unknown Opus module: " + route.moduleId());
             case MAIN_MENU:
                 return new RbwMainMenuPage(controller, runtime);
             default:

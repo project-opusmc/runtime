@@ -71,7 +71,7 @@ public final class CombatTelemetryTransformer implements ClassTransformer {
         if (matches[0] != 1) {
             throw new IllegalStateException("Attack packet anchor changed: " + matches[0]);
         }
-        System.out.println("[RBW/PATCH] applied rbw.combat-telemetry class=bda");
+        System.out.println("[OPUS/PATCH] applied rbw.combat-telemetry class=bda");
         return writer.toByteArray();
     }
 
@@ -116,7 +116,7 @@ public final class CombatTelemetryTransformer implements ClassTransformer {
         if (matches[0] != 1) {
             throw new IllegalStateException("Entity status anchor changed: " + matches[0]);
         }
-        System.out.println("[RBW/PATCH] applied rbw.combat-telemetry class=bcy");
+        System.out.println("[OPUS/PATCH] applied rbw.combat-telemetry class=bcy");
         return writer.toByteArray();
     }
 }

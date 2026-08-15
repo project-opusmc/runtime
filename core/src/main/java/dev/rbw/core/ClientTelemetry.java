@@ -86,7 +86,7 @@ public final class ClientTelemetry {
         try {
             Path output = Paths.get(configured).toAbsolutePath().normalize();
             if (!Files.isRegularFile(output)) {
-                System.err.println("[RBW/DIAG] diagnostics output was not prepared by the launcher");
+                System.err.println("[OPUS/DIAG] diagnostics output was not prepared by the launcher");
                 return;
             }
             synchronized (WRITER_LOCK) {
@@ -102,7 +102,7 @@ public final class ClientTelemetry {
             lastSummaryNanos = System.nanoTime();
             ENABLED.set(true);
             startWriterThread();
-            System.out.println("[RBW/DIAG] telemetry started");
+            System.out.println("[OPUS/DIAG] telemetry started");
             writeEvent(
                     "session_start",
                     "\"java_version\":\"" + escape(System.getProperty("java.version", "unknown"))
@@ -120,7 +120,7 @@ public final class ClientTelemetry {
                     },
                     "rbw-client-telemetry"));
         } catch (IOException | RuntimeException error) {
-            System.err.println("[RBW/DIAG] could not start diagnostics: " + error.getClass().getSimpleName());
+            System.err.println("[OPUS/DIAG] could not start diagnostics: " + error.getClass().getSimpleName());
             closeWriter();
         }
     }

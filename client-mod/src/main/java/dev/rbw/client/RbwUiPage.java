@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.lwjgl.input.Keyboard;
 
-/** Shared page behavior: RBW-owned controls and direct route navigation. */
+/** Shared page behavior: Opus-owned controls and direct route navigation. */
 abstract class RbwUiPage extends UiPageAdapter {
     final ClientOverlayController controller;
     final UiRuntime runtime;

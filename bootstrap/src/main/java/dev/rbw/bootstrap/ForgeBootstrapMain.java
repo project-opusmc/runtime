@@ -27,8 +27,8 @@ public final class ForgeBootstrapMain {
             ForgeBootstrapArguments.validate(args);
             String[] launchArguments = withFmlTweaker(GameArgumentProtocol.read(System.in));
 
-            System.out.println("[RBW/FORGE] bootstrap loaded");
-            System.out.println("[RBW/FORGE] launch arguments=" + launchArguments.length);
+            System.out.println("[OPUS/FORGE] bootstrap loaded");
+            System.out.println("[OPUS/FORGE] launch arguments=" + launchArguments.length);
             launchStatus.markRunning();
             Launch.main(launchArguments);
             launchStatus.markExited();

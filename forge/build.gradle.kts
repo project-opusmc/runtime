@@ -16,7 +16,7 @@ dependencies {
     implementation(project(":patches"))
 
     // This is supplied by the managed Forge runtime. It must never be packed
-    // into the RBW coremod because Forge owns LaunchWrapper and ASM 5.0.3.
+    // into the Opus coremod because Forge owns LaunchWrapper and ASM 5.0.3.
     compileOnly("net.minecraftforge:forge:1.8.9-11.15.1.2318-1.8.9:universal")
     compileOnly("org.ow2.asm:asm-all:5.0.3")
     compileOnly("net.minecraft:launchwrapper:1.12") {
@@ -45,7 +45,7 @@ tasks.jar {
         ] = "false"
         attributes[
                 "Implementation-Title"
-        ] = "RBW Forge Coremod"
+        ] = "Opus Forge Coremod"
         attributes[
                 "Implementation-Version"
         ] = project.version
@@ -74,7 +74,7 @@ tasks.jar {
 
 tasks.register("verifyCoremodArtifact") {
     group = "verification"
-    description = "Verifies that the telemetry coremod contains no legacy RBW UI path."
+    description = "Verifies that the telemetry coremod contains no legacy Opus UI path."
     dependsOn(tasks.jar)
 
     doLast {

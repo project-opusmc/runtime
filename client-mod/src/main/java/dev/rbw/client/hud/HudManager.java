@@ -71,7 +71,7 @@ public final class HudManager {
         }
     }
 
-    /** Called from the RBW HUD Editor page while its UI frame is already active. */
+    /** Called from the Opus HUD Editor page while its UI frame is already active. */
     public void renderEditor(Minecraft minecraft, UiRenderer renderer, UiBounds viewport, UiInput input) {
         HudRenderContext context = new HudRenderContext(minecraft, renderer, viewport);
         editorBounds.clear();

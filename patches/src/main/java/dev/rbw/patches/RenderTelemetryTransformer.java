@@ -76,7 +76,7 @@ public final class RenderTelemetryTransformer implements ClassTransformer {
         if (hooks[0] != 1 || hooks[1] == 0) {
             throw new IllegalStateException("Render telemetry anchor changed: " + hooks[0] + "/" + hooks[1]);
         }
-        System.out.println("[RBW/PATCH] applied " + id());
+        System.out.println("[OPUS/PATCH] applied " + id());
         return writer.toByteArray();
     }
 }

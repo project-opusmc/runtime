@@ -3,7 +3,7 @@ package dev.rbw.client.ui;
 import net.minecraft.util.ResourceLocation;
 
 /**
- * The only drawing API exposed to RBW pages/components. Minecraft and OpenGL
+ * The only drawing API exposed to Opus pages/components. Minecraft and OpenGL
  * details stay in the backend so module code cannot leak GL state.
  */
 public interface UiRenderer {

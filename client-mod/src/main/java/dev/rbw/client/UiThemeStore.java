@@ -37,7 +37,7 @@ final class UiThemeStore {
         try {
             return new UiThemeStore(log, Paths.get(rawPath));
         } catch (RuntimeException exception) {
-            log.warn("RBW UI preview theme path is invalid; using shipped visual tokens.", exception);
+            log.warn("Opus UI preview theme path is invalid; using shipped visual tokens.", exception);
             return new UiThemeStore(log, null);
         }
     }
@@ -68,10 +68,10 @@ final class UiThemeStore {
                     throw new IllegalArgumentException("schemaVersion must be " + SCHEMA_VERSION);
                 }
                 UiTheme.install(UiTheme.fromPreviewJson(root));
-                log.info("RBW UI preview theme reloaded from {}", path);
+                log.info("Opus UI preview theme reloaded from {}", path);
             }
         } catch (Exception exception) {
-            log.warn("RBW UI preview theme was not applied; retaining the last valid visual tokens.", exception);
+            log.warn("Opus UI preview theme was not applied; retaining the last valid visual tokens.", exception);
         }
     }
 }

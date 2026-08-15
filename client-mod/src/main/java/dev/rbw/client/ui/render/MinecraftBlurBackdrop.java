@@ -6,7 +6,7 @@ import net.minecraft.client.shader.ShaderLinkHelper;
 import net.minecraft.util.ResourceLocation;
 
 /**
- * A real post-process backdrop blur. It is deliberately screen-owned so RBW
+ * A real post-process backdrop blur. It is deliberately screen-owned so Opus
  * never stops a shader that was already active (for example an OptiFine
  * shader-pack path). Unsupported paths fall back to the page's normal dim.
  */

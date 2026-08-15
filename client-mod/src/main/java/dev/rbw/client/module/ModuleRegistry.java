@@ -6,7 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** The single source of truth for real modules visible to any RBW UI route. */
+/** The single source of truth for real modules visible to any Opus UI route. */
 public final class ModuleRegistry {
     private final Map<String, ClientModule> byId = new LinkedHashMap<String, ClientModule>();
 

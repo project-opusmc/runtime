@@ -7,11 +7,11 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 /**
- * Creates the RBW options screen inside Minecraft's active game class loader.
+ * Creates the Opus options screen inside Minecraft's active game class loader.
  *
  * <p>The project intentionally compiles without a bundled Minecraft jar.
  * A compact placeholder class is included as a resource and transformed
- * before definition by either RBW's standalone loader or Forge's
+ * before definition by either Opus's standalone loader or Forge's
  * LaunchClassLoader. That keeps this boundary intact while still allowing
  * the generated screen to extend the real 1.8.9 {@code axu} (GuiScreen)
  * class at runtime.</p>
@@ -31,13 +31,13 @@ public final class RbwClientOptionsScreenFactory {
     public static Object create(ClassLoader gameLoader, Object parentScreen)
             throws ReflectiveOperationException {
         if (gameLoader == null) {
-            throw new IllegalArgumentException("RBW Client Options requires a game class loader");
+            throw new IllegalArgumentException("Opus Client Options requires a game class loader");
         }
 
         Class<?> guiScreenClass = Class.forName(GUI_SCREEN, false, gameLoader);
         Class<?> screenClass = loadScreenClass(gameLoader, guiScreenClass);
         if (!guiScreenClass.isAssignableFrom(screenClass)) {
-            throw new IllegalStateException("RBW Client Options placeholder was not transformed");
+            throw new IllegalStateException("Opus Client Options placeholder was not transformed");
         }
         return screenClass.getConstructor(guiScreenClass).newInstance(parentScreen);
     }
@@ -50,7 +50,7 @@ public final class RbwClientOptionsScreenFactory {
                 return placeholder;
             }
         } catch (ClassNotFoundException missingPlaceholder) {
-            // The legacy bootstrap keeps RBW support jars in its parent loader.
+            // The legacy bootstrap keeps Opus support jars in its parent loader.
             // It therefore cannot see the placeholder resource in its child.
         }
 
@@ -58,7 +58,7 @@ public final class RbwClientOptionsScreenFactory {
                 "defineGeneratedGameClass", String.class, byte[].class);
         Object generated = defineGenerated.invoke(gameLoader, CLASS_NAME, SCREEN_BYTECODE.clone());
         if (!(generated instanceof Class<?>)) {
-            throw new IllegalStateException("RBW game class loader returned an invalid generated screen");
+            throw new IllegalStateException("Opus game class loader returned an invalid generated screen");
         }
         return (Class<?>) generated;
     }

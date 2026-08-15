@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 final class UiPreviewSession {
     static final String CONTROL_FILE_PROPERTY = "rbw.ui.preview.control.file";
     private static final String FIXTURE_WORLD_ID = "rbw-ui-preview";
-    private static final String FIXTURE_WORLD_NAME = "RBW UI Preview";
+    private static final String FIXTURE_WORLD_NAME = "Opus UI Preview";
     private static final int ROUTE_SETTLE_TICKS = 6;
 
     private enum State {
@@ -62,7 +62,7 @@ final class UiPreviewSession {
         try {
             return new UiPreviewSession(log, Paths.get(rawPath));
         } catch (RuntimeException exception) {
-            log.warn("RBW UI preview control path is invalid; Preview Mode is disabled.", exception);
+            log.warn("Opus UI preview control path is invalid; Preview Mode is disabled.", exception);
             return new UiPreviewSession(log, null);
         }
     }
@@ -121,7 +121,7 @@ final class UiPreviewSession {
             writeStatus("accepted", "revision accepted", null);
             beginActiveSpec();
         } catch (Exception exception) {
-            log.warn("RBW UI Preview ignored an invalid control file.", exception);
+            log.warn("Opus UI Preview ignored an invalid control file.", exception);
             writeStatus("error", "invalid control file: " + exception.getMessage(), null);
         }
     }
@@ -161,7 +161,7 @@ final class UiPreviewSession {
             writeStatus("waiting", "loading deterministic preview world", null);
         } catch (Throwable failure) {
             state = State.IDLE;
-            log.warn("RBW UI Preview could not start its fixture world.", failure);
+            log.warn("Opus UI Preview could not start its fixture world.", failure);
             writeStatus("error", "could not start preview world: " + failure.getClass().getSimpleName(), null);
         }
     }
@@ -233,7 +233,7 @@ final class UiPreviewSession {
             remainingTicks = 2;
             return;
         }
-        // A real click may replace the RBW screen with a vanilla destination.
+        // A real click may replace the Opus screen with a vanilla destination.
         // Record the result after dispatch rather than the source route.
         renderedRoute = controller.previewRouteName();
         if (active.captureFile == null) {
@@ -256,7 +256,7 @@ final class UiPreviewSession {
             state = State.STOPPING;
             remainingTicks = 2;
         } catch (RuntimeException exception) {
-            log.warn("RBW UI Preview could not capture the game framebuffer.", exception);
+            log.warn("Opus UI Preview could not capture the game framebuffer.", exception);
             writeStatus("error", "capture failed: " + exception.getClass().getSimpleName(), null);
         } finally {
             if (state != State.STOPPING) {
@@ -295,7 +295,7 @@ final class UiPreviewSession {
                 Files.move(temporary, statusPath, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException exception) {
-            log.warn("RBW UI Preview could not write its local status file.", exception);
+            log.warn("Opus UI Preview could not write its local status file.", exception);
         }
     }
 }

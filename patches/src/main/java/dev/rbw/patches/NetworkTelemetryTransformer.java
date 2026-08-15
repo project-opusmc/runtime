@@ -69,7 +69,7 @@ public final class NetworkTelemetryTransformer implements ClassTransformer {
                 throw new IllegalStateException("Network telemetry anchor changed");
             }
         }
-        System.out.println("[RBW/PATCH] applied " + id());
+        System.out.println("[OPUS/PATCH] applied " + id());
         return writer.toByteArray();
     }
 

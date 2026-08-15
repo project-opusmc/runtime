@@ -14,7 +14,7 @@ import org.lwjgl.input.Mouse;
 
 /**
  * Thin Minecraft adapter around UiRuntime. Product routing, layout and
- * rendering live in the RBW UI framework rather than GuiScreen itself.
+ * rendering live in the Opus UI framework rather than GuiScreen itself.
  */
 final class RbwClientScreen extends GuiScreen {
     private final UiRuntime runtime;
@@ -58,7 +58,7 @@ final class RbwClientScreen extends GuiScreen {
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         refreshLayoutForTheme();
         if (isMainMenu()) {
-            // Render a real, softly blurred Minecraft scene before RBW's
+            // Render a real, softly blurred Minecraft scene before Opus's
             // native UI. It retains the game context without any generated
             // backdrop or desktop/HTML rendering path.
             titlePanorama.tick();

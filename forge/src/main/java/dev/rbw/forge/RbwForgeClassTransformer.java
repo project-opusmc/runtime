@@ -13,7 +13,7 @@ import java.util.HashSet;
 import java.util.Set;
 import net.minecraft.launchwrapper.IClassTransformer;
 
-/** Adapts RBW's verified 1.8.9 bytecode patches to Forge's class loader. */
+/** Adapts Opus's verified 1.8.9 bytecode patches to Forge's class loader. */
 public final class RbwForgeClassTransformer implements IClassTransformer {
     private static final int BASE_TRANSFORMER_COUNT = 6;
     private static final Set<String> BASE_TARGET_CLASSES = Collections.unmodifiableSet(new HashSet<String>(
@@ -42,13 +42,13 @@ public final class RbwForgeClassTransformer implements IClassTransformer {
 
         try {
             System.out.println(
-                    "[RBW/FORGE] transforming class=" + className
+                    "[OPUS/FORGE] transforming class=" + className
                             + " raw=" + normalize(name)
                             + " mapped=" + normalize(transformedName)
                             + " bytes=" + basicClass.length);
             byte[] transformed = transformerChain.transform(className, basicClass);
             if (transformed == null) {
-                throw new IllegalStateException("RBW transformer chain returned null");
+                throw new IllegalStateException("Opus transformer chain returned null");
             }
             return transformed;
         } catch (Throwable failure) {
@@ -56,7 +56,7 @@ public final class RbwForgeClassTransformer implements IClassTransformer {
             if (failure instanceof Error) {
                 throw (Error) failure;
             }
-            throw new IllegalStateException("RBW Forge patch failed for " + className, failure);
+            throw new IllegalStateException("Opus Forge patch failed for " + className, failure);
         }
     }
 

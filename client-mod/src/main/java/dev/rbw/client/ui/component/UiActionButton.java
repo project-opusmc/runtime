@@ -5,7 +5,7 @@ import dev.rbw.client.ui.UiFontWeight;
 import dev.rbw.client.ui.UiRenderer;
 import dev.rbw.client.UiTheme;
 
-/** RBW-owned button used inside the product overlay, never a vanilla GuiButton. */
+/** Opus-owned button used inside the product overlay, never a vanilla GuiButton. */
 public final class UiActionButton extends UiComponent {
     public enum Tone {
         PRIMARY,

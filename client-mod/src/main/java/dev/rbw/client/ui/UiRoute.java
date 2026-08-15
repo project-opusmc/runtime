@@ -1,7 +1,7 @@
 package dev.rbw.client.ui;
 
 /**
- * The complete in-game RBW route state. All entry points resolve one of these
+ * The complete in-game Opus route state. All entry points resolve one of these
  * values instead of creating unrelated Minecraft GuiScreen subclasses.
  */
 public final class UiRoute {

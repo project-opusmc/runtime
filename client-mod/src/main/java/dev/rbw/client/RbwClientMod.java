@@ -6,7 +6,7 @@ import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import org.apache.logging.log4j.Logger;
 
 /**
- * The typed Forge boundary for RBW's in-game client implementation.
+ * The typed Forge boundary for Opus's in-game client implementation.
  *
  * <p>The first production slice is intentionally narrow: a player can open a
  * real client-options screen and opt into a real FPS reading. Other utilities
@@ -14,7 +14,7 @@ import org.apache.logging.log4j.Logger;
  */
 @Mod(
         modid = RbwClientMod.MOD_ID,
-        name = "RBW Client",
+        name = "Opus Client",
         version = RbwClientMod.VERSION,
         clientSideOnly = true,
         acceptedMinecraftVersions = "[1.8.9]")
@@ -34,6 +34,6 @@ public final class RbwClientMod {
     @Mod.EventHandler
     public void onInitialization(FMLInitializationEvent event) {
         overlayController.initialize();
-        log.info("RBW Forge client module loaded; the typed Client Options surface is ready.");
+        log.info("Opus Forge client module loaded; the typed Client Options surface is ready.");
     }
 }

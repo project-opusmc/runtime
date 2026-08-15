@@ -5,7 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
 
 /**
- * Keeps RBW surfaces at a stable physical size instead of inheriting the
+ * Keeps Opus surfaces at a stable physical size instead of inheriting the
  * player's Minecraft GUI scale. Product coordinates target two framebuffer
  * pixels per unit, which is readable on both standard and Retina displays.
  */

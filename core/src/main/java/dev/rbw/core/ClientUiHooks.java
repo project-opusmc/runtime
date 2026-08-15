@@ -5,7 +5,7 @@ import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Boundary between injected Minecraft bytecode and RBW-owned UI code.
+ * Boundary between injected Minecraft bytecode and Opus-owned UI code.
  *
  * <p>This class intentionally exposes only {@link Object}-typed methods.
  * Core is loaded by the bootstrap parent class loader, whereas Minecraft's
@@ -64,7 +64,7 @@ public final class ClientUiHooks {
         try {
             ClientConfigUi.renderHud(guiIngame);
         } catch (ReflectiveOperationException | RuntimeException failure) {
-            reportFailure("render RBW HUD", failure);
+            reportFailure("render Opus HUD", failure);
         }
     }
 
@@ -193,7 +193,7 @@ public final class ClientUiHooks {
     private static void reportFailure(String action, Throwable failure) {
         if (FAILURE_REPORTED.compareAndSet(false, true)) {
             System.err.println(
-                    "[RBW/UI] could not " + action + ": " + failure.getClass().getSimpleName());
+                    "[OPUS/UI] could not " + action + ": " + failure.getClass().getSimpleName());
         }
     }
 

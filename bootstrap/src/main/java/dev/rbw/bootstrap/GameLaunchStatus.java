@@ -68,7 +68,7 @@ final class GameLaunchStatus {
             channel.write(ByteBuffer.wrap((nextPhase + "\n").getBytes(StandardCharsets.UTF_8)));
             channel.force(true);
         } catch (IOException error) {
-            System.err.println("[RBW/BOOT] could not update game status: " + error.getMessage());
+            System.err.println("[OPUS/BOOT] could not update game status: " + error.getMessage());
         }
     }
 }

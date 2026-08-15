@@ -33,7 +33,7 @@ import dev.rbw.client.ui.UiRoute;
 
 /**
  * Owns all interaction with the typed Forge client APIs. No ASM, reflection,
- * or access to obfuscated Minecraft members is used for RBW's overlay surface.
+ * or access to obfuscated Minecraft members is used for Opus's overlay surface.
  */
 /**
  * Public because Forge generates its event-handler class in a different
@@ -82,7 +82,7 @@ public final class ClientOverlayController {
         ClientRegistry.registerKeyBinding(openOptionsKey);
         MinecraftForge.EVENT_BUS.register(this);
         FMLCommonHandler.instance().bus().register(this);
-        log.info("RBW client options registered: Right Shift and the pause-menu Client Options button open the real utility surface.");
+        log.info("Opus client options registered: Right Shift and the pause-menu Client Options button open the real utility surface.");
     }
 
     @SubscribeEvent
@@ -134,7 +134,7 @@ public final class ClientOverlayController {
     @SubscribeEvent
     public void onRenderHudText(RenderGameOverlayEvent.Text event) {
         // The workspace is translucent live context, not a modal blackout:
-        // enabled RBW widgets remain part of the player's HUD beneath it.
+        // enabled Opus widgets remain part of the player's HUD beneath it.
         // The editor draws the same widget itself so it can attach its hover
         // controls without a second FPS pass.
         if (Minecraft.getMinecraft().currentScreen instanceof RbwClientScreen
@@ -147,7 +147,7 @@ public final class ClientOverlayController {
     @SubscribeEvent
     public void onRenderHudPre(RenderGameOverlayEvent.Pre event) {
         // Deliberately left intact. Vanilla HUD is live world context and
-        // must stay visible around the RBW workspace, like the HUD editor.
+        // must stay visible around the Opus workspace, like the HUD editor.
     }
 
     PerformanceOverlaySettings performanceOverlay() {
@@ -296,7 +296,7 @@ public final class ClientOverlayController {
                 minecraft.displayWidth,
                 minecraft.displayHeight,
                 minecraft.getFramebuffer());
-        log.info("RBW UI Preview framebuffer written to {}/screenshots/{}", minecraft.mcDataDir, fileName);
+        log.info("Opus UI Preview framebuffer written to {}/screenshots/{}", minecraft.mcDataDir, fileName);
     }
 
     private void openOptions(UiRoute route) {
@@ -343,7 +343,7 @@ public final class ClientOverlayController {
                 minecraft.displayWidth,
                 minecraft.displayHeight,
                 minecraft.getFramebuffer());
-        log.info("RBW UI capture written to {}/screenshots/{}", minecraft.mcDataDir, fileName);
+        log.info("Opus UI capture written to {}/screenshots/{}", minecraft.mcDataDir, fileName);
         captureRouteIndex++;
         if (captureRouteIndex >= captureRouteNames.length) {
             captureComplete = true;
@@ -370,7 +370,7 @@ public final class ClientOverlayController {
         if ("armor".equals(normalized)) {
             return UiRoute.moduleDetail(ArmorStatusModule.ID);
         }
-        throw new IllegalArgumentException("unknown RBW UI capture route: " + routeName);
+        throw new IllegalArgumentException("unknown Opus UI capture route: " + routeName);
     }
 
     private static String[] captureRoutes(String rawValue) {

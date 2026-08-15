@@ -284,7 +284,7 @@ public final class ClientConfigUi {
                 HAIRLINE);
 
         if (!drawBrand(draw, layout.windowX + 9, layout.windowY, 152, layout.headerH)) {
-            draw.scaledText(font, "RBW CLIENT", layout.windowX + 14, layout.windowY + 17, 1.25f, TEXT);
+            draw.scaledText(font, "OPUS CLIENT", layout.windowX + 14, layout.windowY + 17, 1.25f, TEXT);
         }
 
         int tabX = layout.contentX + 17;
@@ -746,7 +746,7 @@ public final class ClientConfigUi {
             ScreenBindings draw = bindingsFor(screen);
             return Layout.forScreen(draw.width.getInt(screen), draw.height.getInt(screen));
         } catch (ReflectiveOperationException failure) {
-            throw new IllegalStateException("RBW config layout is unavailable", failure);
+            throw new IllegalStateException("Opus config layout is unavailable", failure);
         }
     }
 
@@ -763,7 +763,7 @@ public final class ClientConfigUi {
         try {
             screen.getClass().getMethod("rbwClose").invoke(screen);
         } catch (ReflectiveOperationException failure) {
-            throw new IllegalStateException("RBW config screen cannot close", failure);
+            throw new IllegalStateException("Opus config screen cannot close", failure);
         }
     }
 
@@ -997,7 +997,7 @@ public final class ClientConfigUi {
                     }
                 } catch (IOException | RuntimeException failure) {
                     saveFailed = true;
-                    System.err.println("[RBW/UI] could not read utility settings: "
+                    System.err.println("[OPUS/UI] could not read utility settings: "
                             + failure.getClass().getSimpleName());
                 }
             }
@@ -1182,7 +1182,7 @@ public final class ClientConfigUi {
                 saveFailed = false;
             } catch (IOException | RuntimeException failure) {
                 saveFailed = true;
-                System.err.println("[RBW/UI] could not save utility settings: "
+                System.err.println("[OPUS/UI] could not save utility settings: "
                         + failure.getClass().getSimpleName());
             }
         }

@@ -10,7 +10,7 @@ import net.minecraft.util.ResourceLocation;
 /** Shared workspace shell used by the real module catalogue and module detail. */
 abstract class RbwPanelPage extends RbwUiPage {
     private static final ResourceLocation WORDMARK =
-            new ResourceLocation("rbwclient", "textures/gui/rbw-wordmark-transparent.png");
+            new ResourceLocation("rbwclient", "textures/gui/opus-wordmark-transparent.png");
 
     final UiActionButton close;
     UiBounds frame = new UiBounds(0, 0, 0, 0);

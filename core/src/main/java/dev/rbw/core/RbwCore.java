@@ -16,10 +16,10 @@ public final class RbwCore {
     public static void transition(LifecycleStage expected, LifecycleStage next) {
         if (!STAGE.compareAndSet(expected, next)) {
             throw new IllegalStateException(
-                    "Invalid RBW lifecycle transition: expected " + expected + ", actual " + STAGE.get()
+                    "Invalid Opus lifecycle transition: expected " + expected + ", actual " + STAGE.get()
                             + ", requested " + next);
         }
-        System.out.println("[RBW/CORE] lifecycle=" + next);
+        System.out.println("[OPUS/CORE] lifecycle=" + next);
         ClientTelemetry.lifecycle(next.name());
     }
 }

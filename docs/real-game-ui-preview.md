@@ -8,7 +8,7 @@ renders the normal RBW page tree, then captures the **same OpenGL framebuffer**
 that a player sees. There is no second renderer.
 
 Preview Mode is deliberately opt-in. It exists only when the development JVM
-receives explicit local file paths. A packaged RBW Client or RBW Client Demo
+receives explicit local file paths. A packaged Opus Launcher or Opus Launcher QA
 does not watch arbitrary theme/control files.
 
 ## Run it

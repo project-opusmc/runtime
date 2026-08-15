@@ -32,13 +32,13 @@ See https://gist.github.com/TheCurle/fe7ad3ede188cbdd15c235cc75d52d4a for more i
 :compileJavaNote: /Users/zvwgvx/Project/rbw-client/game/client-mod/build/sources/main/java/dev/rbw/client/ClientOverlayController.java uses or overrides a deprecated API.
 Note: Recompile with -Xlint:deprecation for details.
 
-:processResources UP-TO-DATE
+:processResources
 :classes
-:jar UP-TO-DATE
+:jar
 :reobfJar
 :verifyToolchainInputs
 :verifyClientArtifact
 
 BUILD SUCCESSFUL
 
-Total time: 18.962 secs
+Total time: 13.138 secs

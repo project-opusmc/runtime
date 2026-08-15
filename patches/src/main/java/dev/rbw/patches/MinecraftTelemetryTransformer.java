@@ -67,7 +67,7 @@ public final class MinecraftTelemetryTransformer implements ClassTransformer {
                             + ", tick=" + hooks[2] + "/" + hooks[3]
                             + ", leftClick=" + hooks[4]);
         }
-        System.out.println("[RBW/PATCH] applied " + id());
+        System.out.println("[OPUS/PATCH] applied " + id());
         return writer.toByteArray();
     }
 

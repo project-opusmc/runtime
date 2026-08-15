@@ -10,7 +10,7 @@ import org.objectweb.asm.Opcodes;
 public final class WindowTitleTransformer implements ClassTransformer {
     static final String TARGET_CLASS = "ave";
     static final String VANILLA_TITLE = "Minecraft 1.8.9";
-    static final String RBW_TITLE = "RBW Client";
+    static final String RBW_TITLE = "Opus Client";
 
     @Override
     public String id() {
@@ -59,7 +59,7 @@ public final class WindowTitleTransformer implements ClassTransformer {
             throw new IllegalStateException(
                     "Window title patch expected exactly one anchor but found " + replacements[0]);
         }
-        System.out.println("[RBW/PATCH] applied " + id());
+        System.out.println("[OPUS/PATCH] applied " + id());
         return writer.toByteArray();
     }
 }
