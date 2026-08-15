@@ -1,0 +1,16 @@
+[
+  {
+    "modid": "rbwclient",
+    "name": "RBW Client",
+    "description": "Typed client-only Forge integration for RBW Client.",
+    "version": "${version}",
+    "mcversion": "1.8.9",
+    "url": "",
+    "updateUrl": "",
+    "authorList": ["RBW"],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]

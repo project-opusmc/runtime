@@ -1,0 +1,265 @@
+import java.util.jar.JarFile
+import java.security.MessageDigest
+import org.gradle.api.tasks.compile.JavaCompile
+
+buildscript {
+    configurations.classpath {
+        // ForgeGradle 2.1.3 has one historic SNAPSHOT dependency. Its bytes
+        // are checked below and this cache must never silently refresh it.
+        resolutionStrategy.cacheChangingModulesFor 36500, 'days'
+    }
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.1.3'
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle.forge'
+
+def rbwToolchain = new Properties()
+file('toolchain.lock').withInputStream { stream -> rbwToolchain.load(stream) }
+
+def rbwSha256 = { File artifact ->
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+    artifact.withInputStream { stream ->
+        byte[] buffer = new byte[16 * 1024]
+        int count
+        while ((count = stream.read(buffer)) >= 0) {
+            if (count > 0) {
+                digest.update(buffer, 0, count)
+            }
+        }
+    }
+    digest.digest().collect { byte value -> String.format('%02x', value & 0xff) }.join()
+}
+
+def rbwExpectedHash = { String key ->
+    def expected = rbwToolchain.getProperty(key)
+    if (expected == null || !expected.matches('[0-9a-f]{64}')) {
+        throw new GradleException("Missing or invalid ${key} in toolchain.lock")
+    }
+    expected
+}
+
+version = '0.0.1-preview.3'
+group = 'dev.rbw'
+archivesBaseName = 'rbw-forge-client'
+sourceCompatibility = targetCompatibility = '1.8'
+
+minecraft {
+    version = '1.8.9-11.15.1.2318-1.8.9'
+    mappings = 'stable_22'
+    runDir = 'run'
+}
+
+def rbwJavac = System.getenv('RBW_FORGE_UI_JAVAC')
+if (rbwJavac == null || rbwJavac.trim().isEmpty()) {
+    throw new GradleException('RBW_FORGE_UI_JAVAC must identify the compiler for this legacy build lane.')
+}
+def rbwJavacFile = file(rbwJavac)
+if (!rbwJavacFile.isFile() || !rbwJavacFile.canExecute()) {
+    throw new GradleException("RBW_FORGE_UI_JAVAC is not executable: ${rbwJavacFile}")
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.fork = true
+    options.forkOptions.executable = rbwJavacFile.absolutePath
+}
+
+processResources {
+    inputs.property 'version', project.version
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+        expand version: project.version
+    }
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'RBW Forge Client Mod',
+            'Implementation-Version': project.version
+        )
+    }
+}
+
+task verifyToolchainInputs {
+    group = 'verification'
+    description = 'Checks the pinned ForgeGradle artifacts in the isolated legacy cache.'
+    doLast {
+        def artifacts = buildscript.configurations.classpath.resolvedConfiguration.resolvedArtifacts
+        def forgeGradle = artifacts.find {
+            it.moduleVersion.id.group == 'net.minecraftforge.gradle' && it.name == 'ForgeGradle' && it.moduleVersion.id.version == '2.1.3'
+        }
+        if (forgeGradle == null) {
+            throw new GradleException('Pinned ForgeGradle 2.1.3 was not resolved.')
+        }
+        if (rbwSha256(forgeGradle.file) != rbwExpectedHash('forgegradle.jar.sha256')) {
+            throw new GradleException('ForgeGradle 2.1.3 bytes did not match toolchain.lock.')
+        }
+
+        def fernflower = artifacts.find {
+            it.moduleVersion.id.group == 'net.minecraftforge' && it.name == 'fernflower' && it.moduleVersion.id.version == '2.0-SNAPSHOT'
+        }
+        if (fernflower == null) {
+            throw new GradleException('Pinned ForgeGradle fernflower dependency was not resolved.')
+        }
+        if (rbwSha256(fernflower.file) != rbwExpectedHash('forgegradle.fernflower.jar.sha256')) {
+            throw new GradleException('ForgeGradle fernflower bytes did not match toolchain.lock.')
+        }
+
+        def unexpectedSnapshots = artifacts.findAll {
+            it.moduleVersion.id.version.endsWith('-SNAPSHOT') && it != fernflower
+        }
+        if (!unexpectedSnapshots.isEmpty()) {
+            throw new GradleException("Unexpected changing build dependencies: ${unexpectedSnapshots}")
+        }
+    }
+}
+
+/**
+ * Prove the result is a normal FML client mod after ForgeGradle's
+ * reobfuscation. The verification guards the typed UI path against quietly
+ * falling back to a coremod package.
+ */
+task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
+    group = 'verification'
+    description = 'Verifies the reobfuscated, non-coremod RBW Forge client artifact.'
+    doLast {
+        def artifact = tasks.jar.archivePath
+        if (!artifact.isFile()) {
+            throw new GradleException("Expected the reobfuscated client-mod JAR at ${artifact}")
+        }
+
+        JarFile archive = new JarFile(artifact)
+        try {
+            if (archive.getEntry('dev/rbw/client/RbwClientMod.class') == null) {
+                throw new GradleException('Client-mod entry class is missing from the artifact.')
+            }
+            for (className in [
+                    'dev/rbw/client/ClientOverlayController.class',
+                    'dev/rbw/client/RbwClientScreen.class',
+                    'dev/rbw/client/RbwPreviewPauseMenu.class',
+                    'dev/rbw/client/RbwMainMenuPage.class',
+                    'dev/rbw/client/RbwHudEditorPage.class',
+                    'dev/rbw/client/RbwPanelPage.class',
+                    'dev/rbw/client/RbwModHubPage.class',
+                    'dev/rbw/client/RbwPerformanceDetailPage.class',
+                    'dev/rbw/client/RbwArmorStatusDetailPage.class',
+                    'dev/rbw/client/FpsModule.class',
+                    'dev/rbw/client/ArmorStatusModule.class',
+                    'dev/rbw/client/ArmorStatusSettings.class',
+                    'dev/rbw/client/UtilitySettingsStore.class',
+                    'dev/rbw/client/UiTheme.class',
+                    'dev/rbw/client/UiThemeStore.class',
+                    'dev/rbw/client/UiPreviewSpec.class',
+                    'dev/rbw/client/UiPreviewSession.class',
+                    'dev/rbw/client/ui/UiRuntime.class',
+                    'dev/rbw/client/ui/UiFontWeight.class',
+                    'dev/rbw/client/ui/render/MinecraftBlurBackdrop.class',
+                    'dev/rbw/client/ui/render/MinecraftUiFont.class',
+                    'dev/rbw/client/ui/render/MinecraftUiScale.class',
+                    'dev/rbw/client/ui/render/MinecraftUiRenderer.class',
+                    'dev/rbw/client/hud/HudManager.class',
+                    'dev/rbw/client/module/ModuleRegistry.class']) {
+                if (archive.getEntry(className) == null) {
+                    throw new GradleException("Typed client surface class is missing from the artifact: ${className}")
+                }
+            }
+            def metadata = archive.getEntry('mcmod.info')
+            if (metadata == null) {
+                throw new GradleException('FML metadata is missing from the artifact.')
+            }
+            def metadataText = archive.getInputStream(metadata).getText('UTF-8')
+            if (!metadataText.contains('"modid": "rbwclient"')) {
+                throw new GradleException('FML metadata does not declare the RBW client mod id.')
+            }
+            def manifest = archive.manifest.mainAttributes
+            if (manifest.getValue('FMLCorePlugin') != null
+                    || manifest.getValue('FMLCorePluginContainsFMLMod') != null) {
+                throw new GradleException('The client mod must not be packaged as a coremod.')
+            }
+        } finally {
+            archive.close()
+        }
+    }
+}
+
+check.dependsOn verifyClientArtifact
+
+/**
+ * Runs the real Forge client at a reviewable desktop resolution. The UI is
+ * still rendered solely by Minecraft; these files merely drive route/input
+ * commands and hot-reload visual tokens during local development.
+ */
+def rbwUiPreviewRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName == 'runUiPreview' || taskName.endsWith(':runUiPreview')
+}
+
+if (rbwUiPreviewRequested) {
+    def rbwProcessGuard = file('../../scripts/rbw-process-guard.sh').absolutePath
+    def rbwPreviewControl = file('preview/rbw-ui-preview.json').absolutePath
+    def rbwPreviewTheme = file('preview/rbw-ui-theme.json').absolutePath
+    def rbwPreviewUtilitySettings = file('preview/rbw-utility-settings.json').absolutePath
+    tasks.getByName('runClient').jvmArgs(
+            "-Drbw.ui.preview.control.file=${rbwPreviewControl}",
+            "-Drbw.ui.preview.theme.file=${rbwPreviewTheme}",
+            "-Drbw.utility.settings.file=${rbwPreviewUtilitySettings}")
+    // Keep the same native renderer reviewable at more than one desktop
+    // size; this is a launch override rather than a second preview layout.
+    def rbwPreviewWidth = (findProperty('rbwPreviewWidth') ?: '1440').toString()
+    def rbwPreviewHeight = (findProperty('rbwPreviewHeight') ?: '900').toString()
+    if (!rbwPreviewWidth.matches('^[1-9][0-9]{2,3}$') || !rbwPreviewHeight.matches('^[1-9][0-9]{2,3}$')) {
+        throw new GradleException('rbwPreviewWidth and rbwPreviewHeight must be positive pixel dimensions.')
+    }
+    tasks.getByName('runClient').args('--width', rbwPreviewWidth, '--height', rbwPreviewHeight)
+
+    // Preview renders a real Forge process. Keep a PID lock beside the
+    // controls so an interrupted review cannot quietly accumulate clients.
+    def rbwPreviewLock = file('preview/.rbw-ui-preview.lock')
+    tasks.getByName('runClient').doFirst {
+        def guard = [rbwProcessGuard, 'assert-idle'].execute()
+        guard.consumeProcessOutput(System.out, System.err)
+        if (guard.waitFor() != 0) {
+            throw new GradleException('RBW process guard rejected this preview launch.')
+        }
+        if (rbwPreviewLock.isFile()) {
+            def previousPid = rbwPreviewLock.text.trim()
+            def active = false
+            if (previousPid ==~ /^[0-9]+$/) {
+                active = ['sh', '-c', "kill -0 ${previousPid} 2>/dev/null"].execute().waitFor() == 0
+            }
+            if (active) {
+                throw new GradleException("RBW UI Preview is already running (pid ${previousPid}). Stop it before opening another preview.")
+            }
+            rbwPreviewLock.delete()
+        }
+        rbwPreviewLock.parentFile.mkdirs()
+        rbwPreviewLock.text = java.lang.management.ManagementFactory.runtimeMXBean.name.split('@')[0] + '\\n'
+    }
+    tasks.getByName('runClient').doLast {
+        if (rbwPreviewLock.isFile()) {
+            rbwPreviewLock.delete()
+        }
+    }
+    tasks.getByName('runClient').finalizedBy('clearUiPreviewLock')
+    task clearUiPreviewLock {
+        doLast {
+            if (rbwPreviewLock.isFile()) {
+                rbwPreviewLock.delete()
+            }
+        }
+    }
+}
+
+task runUiPreview(dependsOn: 'runClient') {
+    group = 'rbw'
+    description = 'Runs the real Forge client with RBW Preview Mode enabled.'
+}

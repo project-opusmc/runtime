@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "colors": {
+    "surface": "#EE12171B",
+    "header": "#F20C1014",
+    "panel": "#D914191D",
+    "border": "#FF394149",
+    "text": "#FFF2F4F5",
+    "muted": "#FFADB2B7",
+    "mainTop": "#FF08131D",
+    "mainBottom": "#FF152331",
+    "mainTopWash": "#CC102333",
+    "mainBottomWash": "#A0050A0F",
+    "watermarkTint": "#0B9AB8D0",
+    "mainStageRule": "#24465E74",
+    "mainFooter": "#FF7D8B96",
+    "mainFill": "#A90C1015",
+    "mainFillHover": "#D9141A20",
+    "mainBorder": "#2BFFFFFF",
+    "mainBorderHover": "#92FFFFFF",
+    "mainQuietFill": "#00111519",
+    "mainQuietFillHover": "#1FFFFFFF",
+    "mainQuietBorder": "#00374A5B",
+    "mainQuietBorderHover": "#48FFFFFF"
+  },
+  "metrics": {
+    "panelWidthRatio": 0.82,
+    "panelHeightRatio": 0.84,
+    "mainButtonWidthRatio": 0.43,
+    "mainLogoWidthRatio": 0.43,
+    "mainButtonRadius": 2
+  }
+}

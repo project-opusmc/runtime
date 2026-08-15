@@ -1,0 +1,25 @@
+# Forge 1.8.9 client-mod build lane. This file is an audited input contract,
+# not a Gradle lockfile (Gradle 2.14 predates dependency locking).
+schema=1
+
+gradle.version=2.14.1
+gradle.url=https://services.gradle.org/distributions/gradle-2.14.1-bin.zip
+gradle.sha256=cfc61eda71f2d12a572822644ce13d2919407595c2aec3e3566d2aab6f97ef39
+
+# Gradle 2.14 must run on Java 8. The macOS build helper fetches this exact
+# build-only Temurin JDK into its private cache unless explicitly overridden.
+orchestrator.java.major=8
+orchestrator.java.vendor=Eclipse Temurin
+orchestrator.java.version=8u502-b07
+orchestrator.java.url=https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u502-b07/OpenJDK8U-jdk_x64_mac_hotspot_8u502b07.tar.gz
+orchestrator.java.sha256=66565d468f4a48e9defa7420bbe522bf811a00609f618da1a85fc4ff149683b1
+compiler.target=8
+
+forgegradle.coordinate=net.minecraftforge.gradle:ForgeGradle:2.1.3
+forgegradle.jar.sha256=29f4f9a4b7ad917937d6ca761404ed4c56ee2a716cbfdd190b9aa99f25eb4695
+# ForgeGradle 2.1.3 declares this legacy changing dependency. It is verified
+# after resolution and cached privately; any different bytes fail the build.
+forgegradle.fernflower.coordinate=net.minecraftforge:fernflower:2.0-SNAPSHOT
+forgegradle.fernflower.jar.sha256=6530a77d7a16bb53cabefb53497cae9c6184cadb82abdc4a3bb7c446dd7ebdbd
+forge.version=1.8.9-11.15.1.2318-1.8.9
+mcp.mappings=stable_22

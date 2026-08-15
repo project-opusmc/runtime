@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "revision": 180,
+  "fixture": "current",
+  "route": "main",
+  "pointer": { "x": 360, "y": 216 },
+  "capture": {
+    "file": "rbw-home-menu-blur-hero-lift-hover.png",
+    "afterFrames": 14
+  }
+}
