@@ -19,6 +19,6 @@ repositories {
 
 tasks.jar {
     manifest {
-        attributes["Main-Class"] = "dev.rbw.bootstrap.BootstrapMain"
+        attributes["Main-Class"] = "org.polydevs.opusmc.bootstrap.BootstrapMain"
     }
 }

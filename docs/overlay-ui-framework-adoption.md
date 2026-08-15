@@ -16,7 +16,7 @@ Giữ nguyên integration path:
 - JSON settings file được truyền qua JVM system property;
 - OptiFine trong cùng Forge runtime.
 
-Thay toàn bộ product UI phía trên integration path. Không mở rộng RbwClientScreen prototype, GuiButton nội bộ, coordinate layout cố định hay renderer HUD riêng lẻ.
+Thay toàn bộ product UI phía trên integration path. Không mở rộng OpusClientScreen prototype, GuiButton nội bộ, coordinate layout cố định hay renderer HUD riêng lẻ.
 
 Không sử dụng external desktop overlay, transparent native window, OpenGL injection ngoài Minecraft hoặc React/Tauri để render UI in-game.
 
@@ -39,7 +39,7 @@ Không có route nào được phép mở generic settings form.
 
     Minecraft/Forge
           ↓
-    RbwClientScreen (adapter duy nhất)
+    OpusClientScreen (adapter duy nhất)
           ↓
     UiRuntime
           ├── router + page state
@@ -50,7 +50,7 @@ Không có route nào được phép mở generic settings form.
                    ↓
              Minecraft/OpenGL backend
 
-RbwClientScreen chỉ chuyển lifecycle/input của Minecraft cho UiRuntime. Nó không tự tính layout, không tạo internal GuiButton và không ghi module settings.
+OpusClientScreen chỉ chuyển lifecycle/input của Minecraft cho UiRuntime. Nó không tự tính layout, không tạo internal GuiButton và không ghi module settings.
 
 ClientOverlayController chỉ giữ Minecraft integration: key binding, pause-menu insertion, route open và forwarding Forge HUD event. Nó không render module hay chứa module business logic.
 
@@ -97,7 +97,7 @@ Layout dùng primitive:
 
 Absolute coordinates chỉ tồn tại ở renderer sau layout. Một component không tự quyết định coordinate của sibling. Design canvas có thể dùng để so reference 1280×720, nhưng layout phải vẫn đúng ở GUI scale, window resize, fullscreen và Retina.
 
-GuiButton chỉ được phép dùng cho nút Client Options chèn vào pause menu vanilla. Nó không được dùng bên trong RBW product UI.
+GuiButton chỉ được phép dùng cho nút Client Options chèn vào pause menu vanilla. Nó không được dùng bên trong OPUS product UI.
 
 ## Renderer contract
 
@@ -166,7 +166,7 @@ Demo và Premium phải có guard behavior nhất quán. Không được để P
 
 ### Phase A — freeze/migration contract
 
-- Không mở rộng RbwClientScreen.
+- Không mở rộng OpusClientScreen.
 - Không thêm widget/card/settings mock.
 - Ghi rõ legacy coremod disposition.
 - Định nghĩa Module, HudWidget và config schema ownership.

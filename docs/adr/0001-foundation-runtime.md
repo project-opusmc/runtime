@@ -10,7 +10,7 @@ Status: partially superseded by [ADR 0003](0003-forge-optifine-runtime.md)
 - macOS ARM64 runs Mojang's x86_64 `jre-legacy` and x86_64 LWJGL 2 natives
   under Rosetta. Host and game architectures are modeled separately.
 - The game directory is isolated from `.minecraft`.
-- The original standalone child-first RBW game classloader decision has been
+- The original standalone child-first OPUS game classloader decision has been
   superseded. The supported profile now enters Forge's LaunchWrapper, which
   owns game classloading and transformer ordering; see ADR 0003.
 - Authenticated game arguments are transferred through a bounded,
@@ -28,11 +28,11 @@ verification. Library rules are evaluated using the game architecture, not the
 launcher host architecture.
 
 The verified Mojang logging configuration must contain its deny filter for
-`${...}` lookups. RBW fails closed when that anchor is absent and derives a
+`${...}` lookups. OPUS fails closed when that anchor is absent and derives a
 session-local configuration that also suppresses legacy session-token logging.
 
 The first transformer changes exactly one verified `Minecraft 1.8.9` window
 title constant in runtime class `ave`. Zero or multiple anchors fail the class
 load instead of silently applying an uncertain patch. Under the active profile,
-that patch is registered through the RBW Forge coremod rather than a standalone
+that patch is registered through the OPUS Forge coremod rather than a standalone
 classloader.

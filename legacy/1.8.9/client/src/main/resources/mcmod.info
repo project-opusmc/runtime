@@ -1,6 +1,6 @@
 [
   {
-    "modid": "rbwclient",
+    "modid": "opusclient",
     "name": "Opus Client",
     "description": "Typed client-only Forge integration for Opus Client.",
     "version": "${version}",

@@ -1,6 +1,0 @@
-dev.rbw.patches.WindowTitleTransformer
-dev.rbw.patches.MinecraftTelemetryTransformer
-dev.rbw.patches.ClientOptionsTransformer
-dev.rbw.patches.RenderTelemetryTransformer
-dev.rbw.patches.CombatTelemetryTransformer
-dev.rbw.patches.NetworkTelemetryTransformer

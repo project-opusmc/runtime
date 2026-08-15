@@ -7,8 +7,8 @@ Severity: **release blocker**
 
 Affected builds:
 
-- `/Applications/RBW Client.app` installed at 2026-08-10 17:12 local time
-- `/Applications/Ranked Bedwars Client Demo.app` installed at 2026-08-10 17:13 local time
+- `/Applications/OPUS Client.app` installed at 2026-08-10 17:12 local time
+- `/Applications/Opus Client Demo.app` installed at 2026-08-10 17:13 local time
 - Reproduced in QA session `1786362439772-85114`
 
 ## User-visible failures
@@ -29,13 +29,13 @@ Reference captures supplied with the report:
 
 The custom renderer mixes direct `org.lwjgl.opengl.GL11` state mutations with Minecraft 1.8.9's cached `GlStateManager` (`bfl`) state.
 
-`ClientConfigUi.GlBindings` directly binds the RBW PNG texture and finally binds texture `0`. Minecraft's font renderer binds its glyph texture through `bfl.i(int)`, which skips the OpenGL call when its cached texture id already matches. Because the direct RBW call bypasses that cache, the cache can say that the font atlas is bound while OpenGL actually has texture `0` or another atlas bound. Font quads are then rendered as solid blocks.
+`ClientConfigUi.GlBindings` directly binds the OPUS PNG texture and finally binds texture `0`. Minecraft's font renderer binds its glyph texture through `bfl.i(int)`, which skips the OpenGL call when its cached texture id already matches. Because the direct OPUS call bypasses that cache, the cache can say that the font atlas is bound while OpenGL actually has texture `0` or another atlas bound. Font quads are then rendered as solid blocks.
 
 The same class also changes texture, blend, enable/disable, and color state directly, without a complete Minecraft-aware state restore. This makes both the config screen and HUD renderer unsafe.
 
 Evidence:
 
-- `game/core/src/main/java/dev/rbw/core/ClientConfigUi.java`: `GlBindings.uploadTexture`, `GlBindings.texture`, and related direct GL methods
+- `game/core/src/main/java/org/polydevs/opusmc/core/ClientConfigUi.java`: `GlBindings.uploadTexture`, `GlBindings.texture`, and related direct GL methods
 - Minecraft 1.8.9 bytecode: `avn` delegates glyph texture binding to `bmj.a(jy)`; `bmj` delegates to `bfl.i(int)`; `bfl.i(int)` conditionally skips `GL11.glBindTexture` based on its cached id
 - The PNG wordmark renders correctly, while all labels rendered immediately after it become solid glyph blocks
 
@@ -51,7 +51,7 @@ The current QA settings file records both widgets as enabled:
 Two separate causes are confirmed:
 
 - FPS is explicitly shipped as enabled by default in both the Rust settings model and the React fallback defaults.
-- CPS was enabled during an automated smoke test and was not restored afterward. The test mutated the persistent QA profile at `~/.rbw-client-qa/utility-settings-v1.json`.
+- CPS was enabled during an automated smoke test and was not restored afterward. The test mutated the persistent QA profile at `~/.opus-client-qa/utility-settings-v1.json`.
 
 This is a product-default defect and a test-isolation failure. No HUD element should become visible merely because a test ran or because a fresh profile was created, unless that default has been explicitly approved.
 
@@ -68,7 +68,7 @@ However, the display must be treated as invalid in this build because its render
 
 The transformer is loaded and reports that it patched `ave.s()`, but the user's live reproduction shows that Right Shift does not open the screen.
 
-The current implementation has no positive telemetry for raw key code, key state, guard result, or successful screen open. Therefore the existing log line `applied rbw.client-options input=ave` proves only bytecode insertion, not working input behavior.
+The current implementation has no positive telemetry for raw key code, key state, guard result, or successful screen open. Therefore the existing log line `applied opus.client-options input=ave` proves only bytecode insertion, not working input behavior.
 
 The current QA stderr contains this runtime clue immediately after the reproduction:
 
@@ -94,7 +94,7 @@ This allowed all of the following to pass unnoticed:
 
 ## Current evidence snapshot
 
-- Installed QA process is launching bootstrap/core/mappings/patches from `/Applications/Ranked Bedwars Client Demo.app/Contents/Resources/bootstrap`.
+- Installed QA process is launching bootstrap/core/mappings/patches from `/Applications/Opus Client Demo.app/Contents/Resources/bootstrap`.
 - Current session reports six transformers loaded and applies the UI input, pause-menu, and HUD hooks.
 - No `VerifyError` is present. This does **not** imply functional correctness.
 - QA settings currently have FPS and CPS enabled.

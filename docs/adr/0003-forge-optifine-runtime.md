@@ -8,8 +8,8 @@ artifact-verification decisions in ADR 0001 remain in force.
 
 ## Context
 
-RBW needs a reproducible Minecraft 1.8.9 runtime that can use OptiFine and
-leave a controlled path for future reviewed Forge integrations. The former RBW
+OPUS needs a reproducible Minecraft 1.8.9 runtime that can use OptiFine and
+leave a controlled path for future reviewed Forge integrations. The former OPUS
 bootstrap owned its own `TransformingClassLoader`; that conflicts with Forge's
 LaunchWrapper ownership of tweakers and transformed Minecraft classes.
 
@@ -18,19 +18,19 @@ LaunchWrapper ownership of tweakers and transformed Minecraft classes.
 - The supported runtime is Forge `1.8.9-11.15.1.2318-1.8.9` over Minecraft
   `1.8.9`, entered through Forge LaunchWrapper and `FMLTweaker`.
 - The checked-in Forge runtime lock pins the profile, library coordinates,
-  HTTPS source URLs, sizes, and SHA-1 values. RBW does not run a Forge
+  HTTPS source URLs, sizes, and SHA-1 values. OPUS does not run a Forge
   installer or adopt mutable third-party profile metadata.
-- OptiFine `1.8.9 HD U M5` is user-provided. RBW verifies a local JAR against
+- OptiFine `1.8.9 HD U M5` is user-provided. OPUS verifies a local JAR against
   the lock and makes an isolated copy for its managed runtime; it never
   downloads, bundles, redistributes, modifies, uploads, or removes the source
   JAR.
 - `ForgeBootstrapMain` retains the secret-free stdin argument boundary, then
   invokes Forge's LaunchWrapper. Forge owns game classloading and transform
   ordering.
-- RBW game integration is a verified Forge coremod. Its `IFMLLoadingPlugin`
-  registers the RBW transformer adapter with Forge rather than creating a
+- OPUS game integration is a verified Forge coremod. Its `IFMLLoadingPlugin`
+  registers the OPUS transformer adapter with Forge rather than creating a
   competing Minecraft classloader.
-- QA allows only the verified RBW coremod and the exact locally imported
+- QA allows only the verified OPUS coremod and the exact locally imported
   OptiFine artifact. Any future managed mod must be explicitly pinned,
   integrity-checked, ordering-reviewed, and covered by the directory
   validation policy before QA supports it.

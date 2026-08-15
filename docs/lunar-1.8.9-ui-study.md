@@ -8,7 +8,7 @@ Target observed: **Lunar Client 1.8.9 (v2.22.27-2632)** running inside the
 Minecraft game window. The Lunar launcher is explicitly out of scope.
 
 This study is based on screenshots and a narrated interaction sequence supplied
-by the user. It exists to prevent the next RBW implementation from inventing a
+by the user. It exists to prevent the next OPUS implementation from inventing a
 different information architecture, shipping mock controls, or treating a
 launcher/browser preview as proof of in-game behavior.
 
@@ -121,11 +121,11 @@ Evidence: L1, 1280 × 747.
 - The central composition is aligned to the viewport center, not to a panel.
 - No opaque full-screen card surrounds the central actions.
 
-### Relevance to RBW
+### Relevance to OPUS
 
 This establishes Lunar's rendering principle: the client UI replaces the
 relevant Minecraft surface and keeps a live/blurred game render behind it. It
-does not prove that RBW must implement every Lunar main-menu service such as
+does not prove that OPUS must implement every Lunar main-menu service such as
 Store or Discover.
 
 ## Screen B — Right Shift quick hub
@@ -157,13 +157,13 @@ Evidence: L2, 1271 × 754.
 - Gaps are approximately 6–8 px.
 - The hub is centered geometrically; it is not attached to a left or right dock.
 
-### Required RBW behavior
+### Required OPUS behavior
 
 - Right Shift must open this hub, not the full settings workspace and not an
   intermediary text screen.
 - The center Mods action must be functional and transition to the catalog.
 - The hub must never create sample or diagnostic HUD data.
-- The RBW transparent wordmark must replace the Lunar brand lockup.
+- The OPUS transparent wordmark must replace the Lunar brand lockup.
 
 ## Screen C — Mods catalog workspace
 
@@ -243,7 +243,7 @@ The captures show at least these Lunar modules:
 - Hit Color, Better Sounds, Toggle Sneak/Sprint
 
 This is evidence of the catalog's capacity and scrolling behavior, not an
-approved RBW feature list. Each RBW utility still needs a fair-play and product
+approved OPUS feature list. Each OPUS utility still needs a fair-play and product
 decision before it exists in the runtime.
 
 ## Screen D — module options in the same workspace
@@ -359,7 +359,7 @@ non-negotiable for a future implementation:
 | Gameplay | Right Shift | Quick hub |
 | Quick hub | `MODS` | Mods catalog workspace |
 | Quick hub | HUD Edit | Live HUD Editor |
-| Vanilla pause menu | `Client Options` in RBW | Mods catalog workspace directly |
+| Vanilla pause menu | `Client Options` in OPUS | Mods catalog workspace directly |
 | Mods catalog | Module `OPTIONS` | That module's detail inside the same shell |
 | Mods catalog | `EDIT HUD LAYOUT` | The same live HUD Editor |
 | HUD Editor | Widget gear | The same detail UI and state as that module's catalog `OPTIONS` |
@@ -375,7 +375,7 @@ The screenshots establish a strict separation:
 - HUD widgets are user/profile state and live outside the config shell.
 - The quick hub and Mods workspace do not own FPS, CPS, armor, potion, chat,
   scoreboard, or other gameplay data merely because they are open.
-- A fresh RBW profile must show no utility unless its default has been
+- A fresh OPUS profile must show no utility unless its default has been
   explicitly approved.
 - A toggle is not complete until it changes the real HUD, persists, and restores
   correctly after a full game restart.
@@ -394,7 +394,7 @@ Confirmed visual requirements:
 - The Mods workspace provides local smoked-glass contrast while gameplay and
   existing HUD remain visible around it.
 
-The exact render pipeline is still **inferred**, not measured. A future RBW
+The exact render pipeline is still **inferred**, not measured. A future OPUS
 renderer should treat the likely layer order as a hypothesis until a controlled
 capture proves it:
 
@@ -407,16 +407,16 @@ capture proves it:
 Direct OpenGL state mutation without Minecraft-aware save/restore is already a
 known failure mode; see [overlay-incident-2026-08-10.md](overlay-incident-2026-08-10.md).
 
-## RBW adaptation boundary
+## OPUS adaptation boundary
 
 Behavioral and spatial parity does not mean importing Lunar's brand assets.
-The future RBW surface must:
+The future OPUS surface must:
 
-- use the transparent RBW mark/wordmark already owned by the project;
-- use `RBW CLIENT` naming and a `Client Options` pause-menu entry;
+- use the transparent OPUS mark/wordmark already owned by the project;
+- use `OPUS CLIENT` naming and a `Client Options` pause-menu entry;
 - preserve the observed navigation, hierarchy, proportions, live background,
   and component behavior;
-- use original RBW icons or licensed/open equivalents for modules;
+- use original OPUS icons or licensed/open equivalents for modules;
 - connect every visible control to actual module state before it is shown as
   interactive.
 

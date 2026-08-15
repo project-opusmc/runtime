@@ -3,102 +3,102 @@
 # 2.1 requires a separate Gradle 2.14 / Java 8 lane for Minecraft 1.8.9.
 set -eu
 
-rbw_project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-rbw_gradle_version='2.14.1'
-rbw_gradle_url='https://services.gradle.org/distributions/gradle-2.14.1-bin.zip'
-rbw_gradle_sha256='cfc61eda71f2d12a572822644ce13d2919407595c2aec3e3566d2aab6f97ef39'
-rbw_jdk_version='8u502-b07'
-rbw_jdk_url='https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u502-b07/OpenJDK8U-jdk_x64_mac_hotspot_8u502b07.tar.gz'
-rbw_jdk_sha256='66565d468f4a48e9defa7420bbe522bf811a00609f618da1a85fc4ff149683b1'
-rbw_cache_root="${RBW_FORGE_UI_CACHE_DIR:-${HOME}/.cache/rbw-forge-ui}"
-rbw_archive="${rbw_cache_root}/gradle-${rbw_gradle_version}-bin.zip"
-rbw_gradle_binary="${rbw_cache_root}/gradle-${rbw_gradle_version}/bin/gradle"
-rbw_jdk_archive="${rbw_cache_root}/OpenJDK8U-jdk_x64_mac_hotspot_${rbw_jdk_version//-}.tar.gz"
-rbw_jdk_home="${rbw_cache_root}/jdk${rbw_jdk_version}/Contents/Home"
+opus_project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+opus_gradle_version='2.14.1'
+opus_gradle_url='https://services.gradle.org/distributions/gradle-2.14.1-bin.zip'
+opus_gradle_sha256='cfc61eda71f2d12a572822644ce13d2919407595c2aec3e3566d2aab6f97ef39'
+opus_jdk_version='8u502-b07'
+opus_jdk_url='https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u502-b07/OpenJDK8U-jdk_x64_mac_hotspot_8u502b07.tar.gz'
+opus_jdk_sha256='66565d468f4a48e9defa7420bbe522bf811a00609f618da1a85fc4ff149683b1'
+opus_cache_root="${OPUS_FORGE_UI_CACHE_DIR:-${HOME}/.cache/opus-forge-ui}"
+opus_archive="${opus_cache_root}/gradle-${opus_gradle_version}-bin.zip"
+opus_gradle_binary="${opus_cache_root}/gradle-${opus_gradle_version}/bin/gradle"
+opus_jdk_archive="${opus_cache_root}/OpenJDK8U-jdk_x64_mac_hotspot_${opus_jdk_version//-}.tar.gz"
+opus_jdk_home="${opus_cache_root}/jdk${opus_jdk_version}/Contents/Home"
 
 umask 077
-mkdir -p "${rbw_cache_root}"
+mkdir -p "${opus_cache_root}"
 
-if [ -n "${RBW_FORGE_UI_JAVA_HOME:-}" ]; then
-    rbw_java_home="${RBW_FORGE_UI_JAVA_HOME}"
+if [ -n "${OPUS_FORGE_UI_JAVA_HOME:-}" ]; then
+    opus_java_home="${OPUS_FORGE_UI_JAVA_HOME}"
 else
     if [ "$(uname -s)" != 'Darwin' ]; then
-        echo 'Set RBW_FORGE_UI_JAVA_HOME to a Java 8 JDK on this platform.' >&2
+        echo 'Set OPUS_FORGE_UI_JAVA_HOME to a Java 8 JDK on this platform.' >&2
         exit 2
     fi
-    if [ ! -f "${rbw_jdk_archive}" ]; then
-        rbw_partial_jdk="${rbw_jdk_archive}.part.$$"
+    if [ ! -f "${opus_jdk_archive}" ]; then
+        opus_partial_jdk="${opus_jdk_archive}.part.$$"
         curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
-            --output "${rbw_partial_jdk}" "${rbw_jdk_url}"
-        rbw_partial_jdk_hash=$(shasum -a 256 "${rbw_partial_jdk}" | /usr/bin/awk '{print $1}')
-        if [ "${rbw_partial_jdk_hash}" != "${rbw_jdk_sha256}" ]; then
+            --output "${opus_partial_jdk}" "${opus_jdk_url}"
+        opus_partial_jdk_hash=$(shasum -a 256 "${opus_partial_jdk}" | /usr/bin/awk '{print $1}')
+        if [ "${opus_partial_jdk_hash}" != "${opus_jdk_sha256}" ]; then
             echo 'Downloaded Java 8 JDK archive did not match its pinned SHA-256.' >&2
             exit 1
         fi
-        mv "${rbw_partial_jdk}" "${rbw_jdk_archive}"
+        mv "${opus_partial_jdk}" "${opus_jdk_archive}"
     fi
-    rbw_jdk_archive_hash=$(shasum -a 256 "${rbw_jdk_archive}" | /usr/bin/awk '{print $1}')
-    if [ "${rbw_jdk_archive_hash}" != "${rbw_jdk_sha256}" ]; then
+    opus_jdk_archive_hash=$(shasum -a 256 "${opus_jdk_archive}" | /usr/bin/awk '{print $1}')
+    if [ "${opus_jdk_archive_hash}" != "${opus_jdk_sha256}" ]; then
         echo 'Cached Java 8 JDK archive did not match its pinned SHA-256.' >&2
         exit 1
     fi
-    if [ ! -e "${rbw_jdk_home}" ]; then
-        if [ -e "${rbw_cache_root}/jdk${rbw_jdk_version}" ]; then
+    if [ ! -e "${opus_jdk_home}" ]; then
+        if [ -e "${opus_cache_root}/jdk${opus_jdk_version}" ]; then
             echo 'Java 8 JDK cache directory is incomplete; review it before retrying.' >&2
             exit 1
         fi
-        tar -xzf "${rbw_jdk_archive}" -C "${rbw_cache_root}"
+        tar -xzf "${opus_jdk_archive}" -C "${opus_cache_root}"
     fi
-    rbw_java_home="${rbw_jdk_home}"
+    opus_java_home="${opus_jdk_home}"
 fi
 
-rbw_java="${rbw_java_home}/bin/java"
-rbw_javac="${RBW_FORGE_UI_JAVAC:-${rbw_java_home}/bin/javac}"
-if [ ! -x "${rbw_java}" ]; then
-    echo "Java 8 home has no executable java: ${rbw_java}" >&2
+opus_java="${opus_java_home}/bin/java"
+opus_javac="${OPUS_FORGE_UI_JAVAC:-${opus_java_home}/bin/javac}"
+if [ ! -x "${opus_java}" ]; then
+    echo "Java 8 home has no executable java: ${opus_java}" >&2
     exit 2
 fi
-if ! "${rbw_java}" -version 2>&1 | /usr/bin/grep -E 'version "1\.8\.' >/dev/null; then
+if ! "${opus_java}" -version 2>&1 | /usr/bin/grep -E 'version "1\.8\.' >/dev/null; then
     echo 'ForgeGradle 2.1 must be orchestrated by Java 8; no build was started.' >&2
     exit 2
 fi
-if [ ! -x "${rbw_javac}" ]; then
-    echo "Java 8 toolchain has no executable Java compiler: ${rbw_javac}" >&2
+if [ ! -x "${opus_javac}" ]; then
+    echo "Java 8 toolchain has no executable Java compiler: ${opus_javac}" >&2
     exit 2
 fi
 
-if [ ! -f "${rbw_archive}" ]; then
-    rbw_partial_archive="${rbw_archive}.part.$$"
+if [ ! -f "${opus_archive}" ]; then
+    opus_partial_archive="${opus_archive}.part.$$"
     curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
-        --output "${rbw_partial_archive}" "${rbw_gradle_url}"
-    rbw_partial_hash=$(shasum -a 256 "${rbw_partial_archive}" | /usr/bin/awk '{print $1}')
-    if [ "${rbw_partial_hash}" != "${rbw_gradle_sha256}" ]; then
+        --output "${opus_partial_archive}" "${opus_gradle_url}"
+    opus_partial_hash=$(shasum -a 256 "${opus_partial_archive}" | /usr/bin/awk '{print $1}')
+    if [ "${opus_partial_hash}" != "${opus_gradle_sha256}" ]; then
         echo 'Downloaded Gradle archive did not match its pinned SHA-256.' >&2
         exit 1
     fi
-    mv "${rbw_partial_archive}" "${rbw_archive}"
+    mv "${opus_partial_archive}" "${opus_archive}"
 fi
 
-rbw_archive_hash=$(shasum -a 256 "${rbw_archive}" | /usr/bin/awk '{print $1}')
-if [ "${rbw_archive_hash}" != "${rbw_gradle_sha256}" ]; then
+opus_archive_hash=$(shasum -a 256 "${opus_archive}" | /usr/bin/awk '{print $1}')
+if [ "${opus_archive_hash}" != "${opus_gradle_sha256}" ]; then
     echo 'Cached Gradle archive did not match its pinned SHA-256.' >&2
     exit 1
 fi
-unzip -tqq "${rbw_archive}"
+unzip -tqq "${opus_archive}"
 
-if [ ! -e "${rbw_gradle_binary}" ]; then
-    if [ -e "${rbw_cache_root}/gradle-${rbw_gradle_version}" ]; then
+if [ ! -e "${opus_gradle_binary}" ]; then
+    if [ -e "${opus_cache_root}/gradle-${opus_gradle_version}" ]; then
         echo 'Gradle cache directory is incomplete; review it before retrying.' >&2
         exit 1
     fi
-    unzip -q "${rbw_archive}" -d "${rbw_cache_root}"
+    unzip -q "${opus_archive}" -d "${opus_cache_root}"
 fi
-if [ ! -x "${rbw_gradle_binary}" ]; then
+if [ ! -x "${opus_gradle_binary}" ]; then
     echo 'Pinned Gradle distribution did not contain its expected executable.' >&2
     exit 1
 fi
 
-export JAVA_HOME="${rbw_java_home}"
-export RBW_FORGE_UI_JAVAC="${rbw_javac}"
-export GRADLE_USER_HOME="${rbw_cache_root}/gradle-user-home"
-exec "${rbw_gradle_binary}" --no-daemon -p "${rbw_project_dir}" "$@"
+export JAVA_HOME="${opus_java_home}"
+export OPUS_FORGE_UI_JAVAC="${opus_javac}"
+export GRADLE_USER_HOME="${opus_cache_root}/gradle-user-home"
+exec "${opus_gradle_binary}" --no-daemon -p "${opus_project_dir}" "$@"

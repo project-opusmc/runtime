@@ -33,13 +33,13 @@ dependencies {
 }
 
 tasks.jar {
-    archiveBaseName.set("rbw-forge-coremod")
+    archiveBaseName.set("opus-forge-coremod")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     manifest {
         attributes[
                 "FMLCorePlugin"
-        ] = "dev.rbw.forge.RbwLoadingPlugin"
+        ] = "org.polydevs.opusmc.forge.OpusLoadingPlugin"
         attributes[
                 "FMLCorePluginContainsFMLMod"
         ] = "false"
@@ -60,11 +60,11 @@ tasks.jar {
         // The old ASM/reflection UI remains as migration evidence only. The
         // typed Forge client mod is the sole production UI path, so none of
         // these classes or its service registration may enter the coremod.
-        exclude("dev/rbw/core/ClientUiHooks.class")
-        exclude("dev/rbw/patches/ClientOptionsTransformer*.class")
-        exclude("dev/rbw/patches/RbwClientOptionsScreenFactory.class")
-        exclude("rbwclient/gui/**")
-        exclude("META-INF/services/dev.rbw.bootstrap.ClassTransformer")
+        exclude("org/polydevs/opusmc/core/ClientUiHooks.class")
+        exclude("org/polydevs/opusmc/patches/ClientOptionsTransformer*.class")
+        exclude("org/polydevs/opusmc/patches/OpusClientOptionsScreenFactory.class")
+        exclude("org/polydevs/opusmc/client/gui/**")
+        exclude("META-INF/services/org.polydevs.opusmc.bootstrap.ClassTransformer")
         exclude("META-INF/MANIFEST.MF")
         exclude("META-INF/*.SF")
         exclude("META-INF/*.DSA")
@@ -81,11 +81,11 @@ tasks.register("verifyCoremodArtifact") {
         val artifact = tasks.jar.get().archiveFile.get().asFile
         JarFile(artifact).use { archive ->
             val forbidden = listOf(
-                "dev/rbw/core/ClientUiHooks.class",
-                "dev/rbw/patches/ClientOptionsTransformer.class",
-                "dev/rbw/patches/RbwClientOptionsScreenFactory.class",
-                "rbwclient/gui/RbwClientOptionsScreen.class",
-                "META-INF/services/dev.rbw.bootstrap.ClassTransformer",
+                "org/polydevs/opusmc/core/ClientUiHooks.class",
+                "org/polydevs/opusmc/patches/ClientOptionsTransformer.class",
+                "org/polydevs/opusmc/patches/OpusClientOptionsScreenFactory.class",
+                "org/polydevs/opusmc/client/gui/OpusClientOptionsScreen.class",
+                "META-INF/services/org.polydevs.opusmc.bootstrap.ClassTransformer",
             )
             val leaked = forbidden.filter { archive.getEntry(it) != null }
             check(leaked.isEmpty()) {

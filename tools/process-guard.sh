@@ -22,7 +22,7 @@ opus_processes() {
       command = line
       sub(/^[0-9]+[[:space:]]+/, "", command)
       if (command ~ /\/Applications\/Opus Launcher( QA)?\.app\/Contents\/MacOS\/opus-launcher/ \
-          || command ~ /rbw\.ui\.preview\.control\.file=/ \
+          || command ~ /opus\.ui\.preview\.control\.file=/ \
           || command ~ /\.opus-launcher-ui-preview\/game/) {
         print pid "\t" command
       }

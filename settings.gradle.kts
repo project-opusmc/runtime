@@ -1,4 +1,4 @@
-rootProject.name = "rbw-game"
+rootProject.name = "opus-runtime"
 
 include("bootstrap")
 include("common")

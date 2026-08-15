@@ -1,0 +1,6 @@
+org.polydevs.opusmc.patches.WindowTitleTransformer
+org.polydevs.opusmc.patches.MinecraftTelemetryTransformer
+org.polydevs.opusmc.patches.ClientOptionsTransformer
+org.polydevs.opusmc.patches.RenderTelemetryTransformer
+org.polydevs.opusmc.patches.CombatTelemetryTransformer
+org.polydevs.opusmc.patches.NetworkTelemetryTransformer

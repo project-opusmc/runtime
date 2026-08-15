@@ -11,7 +11,7 @@ plugins {
 }
 
 allprojects {
-    group = "dev.rbw"
+    group = "org.polydevs.opusmc"
     version = "0.0.1"
 
     repositories {
@@ -39,7 +39,7 @@ subprojects {
 
 val forgeClientModDirectory = file("legacy/1.8.9/client")
 val forgeClientModArtifact = file(
-    "${forgeClientModDirectory}/build/libs/rbw-forge-client-0.0.1-preview.3.jar",
+    "${forgeClientModDirectory}/build/libs/opus-forge-client-0.0.1-preview.3.jar",
 )
 
 val prepareForgeClientMod = tasks.register<Exec>("prepareForgeClientMod") {
@@ -82,12 +82,12 @@ val runtimeArtifacts = listOf(
     ),
     RuntimeArtifact(
         role = "runtime-legacy-1.8.9",
-        sourceName = "rbw-forge-coremod-${project.version}.jar",
+        sourceName = "opus-forge-coremod-${project.version}.jar",
         releaseName = "opus-runtime-legacy-1.8.9-${project.version}.jar",
     ),
     RuntimeArtifact(
         role = "client-legacy-1.8.9",
-        sourceName = "rbw-forge-client-0.0.1-preview.3.jar",
+        sourceName = "opus-forge-client-0.0.1-preview.3.jar",
         releaseName = "opus-client-legacy-1.8.9-${project.version}.jar",
     ),
 )

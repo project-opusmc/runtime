@@ -1,4 +1,4 @@
-# RBW Forge client-mod build lane
+# OPUS Forge client-mod build lane
 
 This directory is deliberately separate from `/game`'s Gradle 9 coremod build.
 Minecraft Forge 1.8.9 requires ForgeGradle 2.1 and Gradle 2.14.1; running that
@@ -12,7 +12,7 @@ no visible feature. It is a reobfuscation and runtime-loading proof only.
 `toolchain.lock` pins the Gradle distribution SHA-256, ForgeGradle release,
 Forge version, MCP mapping set, and a build-only Temurin Java 8 JDK.
 `./gradlew` verifies the Gradle and JDK archives before it runs them. It caches
-the JDK privately under `~/.cache/rbw-forge-ui/` on macOS; it does not change
+the JDK privately under `~/.cache/opus-forge-ui/` on macOS; it does not change
 the JDK used by the game or install a system-wide JDK.
 
 The helper also gives this lane its own Gradle dependency cache. The Phase 1
@@ -26,7 +26,7 @@ Run the Phase 1 proof with:
 ```
 
 To use a pre-provisioned Java 8 JDK instead, set
-`RBW_FORGE_UI_JAVA_HOME=/path/to/java-8-home`. On non-macOS hosts that
+`OPUS_FORGE_UI_JAVA_HOME=/path/to/java-8-home`. On non-macOS hosts that
 variable is required. The caller must not use the repository's Gradle 9 wrapper
 for this directory.
 

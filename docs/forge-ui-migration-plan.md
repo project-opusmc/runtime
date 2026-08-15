@@ -7,7 +7,7 @@ Date: 2026-08-11
 
 ## Decision
 
-Move every RBW in-game UI concern from the current reflection/ASM UI path into
+Move every OPUS in-game UI concern from the current reflection/ASM UI path into
 a conventional **client-only Forge mod**. Keep the Forge coremod only for
 telemetry or a narrowly justified patch that cannot be implemented through a
 Forge API.
@@ -17,11 +17,11 @@ This is a migration, not a patch to the existing `ClientUiHooks` /
 
 ## Why this is necessary
 
-The installed Forge + OptiFine session proves that Forge, OptiFine, the RBW
+The installed Forge + OptiFine session proves that Forge, OptiFine, the OPUS
 coremod, and the bytecode transformers can load. It also proves the current UI
 architecture is invalid under that runtime:
 
-- Forge applies runtime deobfuscation after RBW's raw-name patches.
+- Forge applies runtime deobfuscation after OPUS's raw-name patches.
 - `ClientUiHooks` and `ClientConfigUi` reflect obfuscated fields/methods such as
   `m`, `a`, `j`, and `k`.
 - A real Right Shift press reached the hook but failed with
@@ -58,10 +58,10 @@ classes and is reobfuscated as a build artifact.
 ```text
 Forge + OptiFine runtime
 │
-├─ RBW coremod (kept temporarily)
+├─ OPUS coremod (kept temporarily)
 │  └─ telemetry / only Forge-unavailable patches
 │
-└─ RBW Forge client mod (new, typed, client-only)
+└─ OPUS Forge client mod (new, typed, client-only)
    ├─ @Mod lifecycle
    ├─ KeyBinding + ClientTickEvent       → Right Shift
    ├─ GuiScreenEvent                     → Client Options in pause menu
@@ -85,12 +85,12 @@ The screenshot study establishes these surfaces and routes:
 | Right Shift HUD editor | L2 + user report | Implement after one real HUD module exists |
 | HUD editor → Mods | L2/L3 + user report | Implement |
 | Pause menu → Client Options → Mods catalog | user report/L9 | Implement route; exact pause-menu placement waits for capture |
-| Mods catalog | L3/L5–L9 | Implement with only real RBW modules |
+| Mods catalog | L3/L5–L9 | Implement with only real OPUS modules |
 | Module detail | L4 | Implement from the shared option schema |
 | HUD editor | L10 + user report | Implement after real widget layout exists |
 | Widget resize / settings / remove controls | L10 + user report | Implement against a real widget only |
 
-The following surfaces must remain absent until new evidence and real RBW
+The following surfaces must remain absent until new evidence and real OPUS
 behavior exist:
 
 - Quick hub's remaining non-HUD side button.
@@ -109,12 +109,12 @@ behavior exist:
 
 - Record the currently installed QA bundle/version and the failing session ID.
 - Preserve the old coremod source for comparison, but mark its UI path legacy.
-- The isolated UI Preview passes `-Drbw.legacy.ui.disabled=true`, so the
+- The isolated UI Preview passes `-Dopus.legacy.ui.disabled=true`, so the
   known-broken reflection UI/HUD path is absent while its typed Forge client
   module is being proved. This switch does not disable telemetry or the Forge
   bootstrap, and it does not alter the existing Demo bundle.
 - Do not change QA utility settings or make any new widget enabled by default.
-- Do not replace `/Applications/Ranked Bedwars Client Demo.app`.
+- Do not replace `/Applications/Opus Client Demo.app`.
 
 **Exit gate:** the exact Forge runtime failure and the source locations using
 raw reflection are recorded. This gate is already met.
@@ -141,16 +141,16 @@ Create a **separate compatibility build lane** for the Forge client mod:
    startup log marker is sufficient proof of loading.
 5. Package the resulting client-mod JAR as a distinct launcher resource and
    extend the managed-mod allowlist/integrity contract to stage exactly three
-   artifacts: OptiFine, RBW coremod, RBW client mod.
+   artifacts: OptiFine, OPUS coremod, OPUS client mod.
 
 **Exit gate:** a clean isolated QA preview launches Forge + OptiFine and logs
-the RBW FML mod lifecycle once. The old UI transformer is still untouched, but
+the OPUS FML mod lifecycle once. The old UI transformer is still untouched, but
 no new UI is exposed.
 
 **Implementation evidence (2026-08-11):** passed. The separately installed
-`Ranked Bedwars Client UI Preview` opened a real Forge + OptiFine session and
-logged `RBW Forge client module loaded; no overlay surface is enabled.` The
-Preview supplied `-Drbw.legacy.ui.disabled=true`, so no reflection UI ran.
+`Opus Client UI Preview` opened a real Forge + OptiFine session and
+logged `OPUS Forge client module loaded; no overlay surface is enabled.` The
+Preview supplied `-Dopus.legacy.ui.disabled=true`, so no reflection UI ran.
 
 **Stop rule:** if ForgeGradle 1.8.9 cannot run reproducibly on the host,
 evaluate a dedicated pinned legacy build worker/CI lane before writing UI code.
@@ -179,8 +179,8 @@ separately approved.
 
 **Current implementation:** the normal client mod now registers Right Shift,
 adds `Client Options` in the real 1.8.9 pause-menu row, and uses typed Forge
-events to route both to `RbwClientScreen`. It is packaged as
-`rbw-forge-client-0.0.1-preview.3.jar`. This has compiled/reobfuscated and
+events to route both to `OpusClientScreen`. It is packaged as
+`opus-forge-client-0.0.1-preview.3.jar`. This has compiled/reobfuscated and
 passed artifact checks; it has not yet passed the live screen acceptance gate.
 
 **Exit gate:** Right Shift input and pause-menu Client Options are recorded by
@@ -227,7 +227,7 @@ appears; disable → it disappears; restart → state is retained exactly.
 
 Build in this order:
 
-1. **Quick hub:** RBW transparent wordmark, functional Mods action, functional
+1. **Quick hub:** OPUS transparent wordmark, functional Mods action, functional
    HUD Edit action only when there is an editable live widget. Omit unknown
    actions.
 2. **Mods catalog:** stable outer shell, profile rail only if actual profiles
@@ -238,7 +238,7 @@ Build in this order:
    resize control, settings control, and remove action. Widget gear must call
    exactly the same module detail route as catalog Options.
 
-Use actual RBW PNG assets through Forge resources. Do not load wordmarks with
+Use actual OPUS PNG assets through Forge resources. Do not load wordmarks with
 `ImageIO` and direct texture uploads. Do not use raw `GL11` texture binds that
 bypass Minecraft's cached `GlStateManager` state.
 
@@ -293,7 +293,7 @@ data and all visible options are actually implemented.
 
 | Area | Required proof |
 | --- | --- |
-| Forge path | Forge + exact OptiFine + RBW client mod all load in one real session |
+| Forge path | Forge + exact OptiFine + OPUS client mod all load in one real session |
 | No old UI path | no `ClientOptionsTransformer` active in the client-mod build |
 | Right Shift | opens the real quick hub from gameplay |
 | Pause menu | Client Options opens the same catalog directly |
@@ -330,6 +330,6 @@ the relevant UI surface becomes visible, collect:
 2. a full HUD-editor screenshot beyond the current widget crop, if it has any
    global toolbar, safe-area marker, or exit control;
 3. behavior of the remaining Quick Hub side button;
-4. Settings and Waypoints captures only if those RBW features are requested.
+4. Settings and Waypoints captures only if those OPUS features are requested.
 
 No implementation may fill these gaps by imitation.

@@ -1,0 +1,59 @@
+package org.polydevs.opusmc.bootstrap;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import org.junit.jupiter.api.Test;
+
+final class ForgeBootstrapArgumentsTest {
+    @Test
+    void acceptsOnlyTheStdinProtocolMarker() {
+        assertDoesNotThrow(() -> ForgeBootstrapArguments.validate(new String[] {
+                "--opus-game-arguments-stdin"
+        }));
+    }
+
+    @Test
+    void rejectsACommandLineGameArgument() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ForgeBootstrapArguments.validate(new String[] {
+                        "--opus-game-arguments-stdin", "--accessToken", "secret"
+                }));
+    }
+
+    @Test
+    void acceptsTheLegacyForgeLaunchMainForCurrentLauncherCompatibility() {
+        assertDoesNotThrow(() -> ForgeBootstrapArguments.validate(new String[] {
+                "--opus-game-main",
+                "net.minecraft.launchwrapper.Launch",
+                "--opus-game-arguments-stdin"
+        }));
+    }
+
+    @Test
+    void addsTheForgeTweakerWhenItIsMissing() {
+        assertArrayEquals(
+                new String[] {
+                        "--version", "Opus", "--tweakClass", ForgeBootstrapMain.FML_TWEAKER
+                },
+                ForgeBootstrapMain.withFmlTweaker(new String[] {"--version", "Opus"}));
+    }
+
+    @Test
+    void preservesAnExistingForgeTweaker() {
+        String[] arguments = {
+                "--tweakClass", ForgeBootstrapMain.FML_TWEAKER, "--version", "Opus"
+        };
+
+        assertArrayEquals(arguments, ForgeBootstrapMain.withFmlTweaker(arguments));
+    }
+
+    @Test
+    void rejectsATweakClassWithoutAValue() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ForgeBootstrapMain.withFmlTweaker(new String[] {"--tweakClass"}));
+    }
+}

@@ -19,10 +19,10 @@ buildscript {
 
 apply plugin: 'net.minecraftforge.gradle.forge'
 
-def rbwToolchain = new Properties()
-file('toolchain.lock').withInputStream { stream -> rbwToolchain.load(stream) }
+def opusToolchain = new Properties()
+file('toolchain.lock').withInputStream { stream -> opusToolchain.load(stream) }
 
-def rbwSha256 = { File artifact ->
+def opusSha256 = { File artifact ->
     MessageDigest digest = MessageDigest.getInstance('SHA-256')
     artifact.withInputStream { stream ->
         byte[] buffer = new byte[16 * 1024]
@@ -36,8 +36,8 @@ def rbwSha256 = { File artifact ->
     digest.digest().collect { byte value -> String.format('%02x', value & 0xff) }.join()
 }
 
-def rbwExpectedHash = { String key ->
-    def expected = rbwToolchain.getProperty(key)
+def opusExpectedHash = { String key ->
+    def expected = opusToolchain.getProperty(key)
     if (expected == null || !expected.matches('[0-9a-f]{64}')) {
         throw new GradleException("Missing or invalid ${key} in toolchain.lock")
     }
@@ -45,8 +45,8 @@ def rbwExpectedHash = { String key ->
 }
 
 version = '0.0.1-preview.3'
-group = 'dev.rbw'
-archivesBaseName = 'rbw-forge-client'
+group = 'org.polydevs.opusmc'
+archivesBaseName = 'opus-forge-client'
 sourceCompatibility = targetCompatibility = '1.8'
 
 minecraft {
@@ -55,19 +55,19 @@ minecraft {
     runDir = 'run'
 }
 
-def rbwJavac = System.getenv('OPUS_FORGE_UI_JAVAC') ?: System.getenv('RBW_FORGE_UI_JAVAC')
-if (rbwJavac == null || rbwJavac.trim().isEmpty()) {
+def opusJavac = System.getenv('OPUS_FORGE_UI_JAVAC')
+if (opusJavac == null || opusJavac.trim().isEmpty()) {
     throw new GradleException('OPUS_FORGE_UI_JAVAC must identify the compiler for this legacy build lane.')
 }
-def rbwJavacFile = file(rbwJavac)
-if (!rbwJavacFile.isFile() || !rbwJavacFile.canExecute()) {
-    throw new GradleException("OPUS_FORGE_UI_JAVAC is not executable: ${rbwJavacFile}")
+def opusJavacFile = file(opusJavac)
+if (!opusJavacFile.isFile() || !opusJavacFile.canExecute()) {
+    throw new GradleException("OPUS_FORGE_UI_JAVAC is not executable: ${opusJavacFile}")
 }
 
 tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
     options.fork = true
-    options.forkOptions.executable = rbwJavacFile.absolutePath
+    options.forkOptions.executable = opusJavacFile.absolutePath
 }
 
 processResources {
@@ -101,7 +101,7 @@ task verifyToolchainInputs {
         if (forgeGradle == null) {
             throw new GradleException('Pinned ForgeGradle 2.1.3 was not resolved.')
         }
-        if (rbwSha256(forgeGradle.file) != rbwExpectedHash('forgegradle.jar.sha256')) {
+        if (opusSha256(forgeGradle.file) != opusExpectedHash('forgegradle.jar.sha256')) {
             throw new GradleException('ForgeGradle 2.1.3 bytes did not match toolchain.lock.')
         }
 
@@ -111,7 +111,7 @@ task verifyToolchainInputs {
         if (fernflower == null) {
             throw new GradleException('Pinned ForgeGradle fernflower dependency was not resolved.')
         }
-        if (rbwSha256(fernflower.file) != rbwExpectedHash('forgegradle.fernflower.jar.sha256')) {
+        if (opusSha256(fernflower.file) != opusExpectedHash('forgegradle.fernflower.jar.sha256')) {
             throw new GradleException('ForgeGradle fernflower bytes did not match toolchain.lock.')
         }
 
@@ -140,35 +140,35 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
 
         JarFile archive = new JarFile(artifact)
         try {
-            if (archive.getEntry('dev/rbw/client/RbwClientMod.class') == null) {
+            if (archive.getEntry('org/polydevs/opusmc/client/OpusClientMod.class') == null) {
                 throw new GradleException('Client-mod entry class is missing from the artifact.')
             }
             for (className in [
-                    'dev/rbw/client/ClientOverlayController.class',
-                    'dev/rbw/client/RbwClientScreen.class',
-                    'dev/rbw/client/RbwPreviewPauseMenu.class',
-                    'dev/rbw/client/RbwMainMenuPage.class',
-                    'dev/rbw/client/RbwHudEditorPage.class',
-                    'dev/rbw/client/RbwPanelPage.class',
-                    'dev/rbw/client/RbwModHubPage.class',
-                    'dev/rbw/client/RbwPerformanceDetailPage.class',
-                    'dev/rbw/client/RbwArmorStatusDetailPage.class',
-                    'dev/rbw/client/FpsModule.class',
-                    'dev/rbw/client/ArmorStatusModule.class',
-                    'dev/rbw/client/ArmorStatusSettings.class',
-                    'dev/rbw/client/UtilitySettingsStore.class',
-                    'dev/rbw/client/UiTheme.class',
-                    'dev/rbw/client/UiThemeStore.class',
-                    'dev/rbw/client/UiPreviewSpec.class',
-                    'dev/rbw/client/UiPreviewSession.class',
-                    'dev/rbw/client/ui/UiRuntime.class',
-                    'dev/rbw/client/ui/UiFontWeight.class',
-                    'dev/rbw/client/ui/render/MinecraftBlurBackdrop.class',
-                    'dev/rbw/client/ui/render/MinecraftUiFont.class',
-                    'dev/rbw/client/ui/render/MinecraftUiScale.class',
-                    'dev/rbw/client/ui/render/MinecraftUiRenderer.class',
-                    'dev/rbw/client/hud/HudManager.class',
-                    'dev/rbw/client/module/ModuleRegistry.class']) {
+                    'org/polydevs/opusmc/client/ClientOverlayController.class',
+                    'org/polydevs/opusmc/client/OpusClientScreen.class',
+                    'org/polydevs/opusmc/client/OpusPreviewPauseMenu.class',
+                    'org/polydevs/opusmc/client/OpusMainMenuPage.class',
+                    'org/polydevs/opusmc/client/OpusHudEditorPage.class',
+                    'org/polydevs/opusmc/client/OpusPanelPage.class',
+                    'org/polydevs/opusmc/client/OpusModHubPage.class',
+                    'org/polydevs/opusmc/client/OpusPerformanceDetailPage.class',
+                    'org/polydevs/opusmc/client/OpusArmorStatusDetailPage.class',
+                    'org/polydevs/opusmc/client/FpsModule.class',
+                    'org/polydevs/opusmc/client/ArmorStatusModule.class',
+                    'org/polydevs/opusmc/client/ArmorStatusSettings.class',
+                    'org/polydevs/opusmc/client/UtilitySettingsStore.class',
+                    'org/polydevs/opusmc/client/UiTheme.class',
+                    'org/polydevs/opusmc/client/UiThemeStore.class',
+                    'org/polydevs/opusmc/client/UiPreviewSpec.class',
+                    'org/polydevs/opusmc/client/UiPreviewSession.class',
+                    'org/polydevs/opusmc/client/ui/UiRuntime.class',
+                    'org/polydevs/opusmc/client/ui/UiFontWeight.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftBlurBackdrop.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftUiFont.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftUiScale.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftUiRenderer.class',
+                    'org/polydevs/opusmc/client/hud/HudManager.class',
+                    'org/polydevs/opusmc/client/module/ModuleRegistry.class']) {
                 if (archive.getEntry(className) == null) {
                     throw new GradleException("Typed client surface class is missing from the artifact: ${className}")
                 }
@@ -178,7 +178,7 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
                 throw new GradleException('FML metadata is missing from the artifact.')
             }
             def metadataText = archive.getInputStream(metadata).getText('UTF-8')
-            if (!metadataText.contains('"modid": "rbwclient"')) {
+            if (!metadataText.contains('"modid": "opusclient"')) {
                 throw new GradleException('FML metadata does not declare the Opus client mod id.')
             }
             def manifest = archive.manifest.mainAttributes
@@ -199,39 +199,39 @@ check.dependsOn verifyClientArtifact
  * still rendered solely by Minecraft; these files merely drive route/input
  * commands and hot-reload visual tokens during local development.
  */
-def rbwUiPreviewRequested = gradle.startParameter.taskNames.any { taskName ->
+def opusUiPreviewRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName == 'runUiPreview' || taskName.endsWith(':runUiPreview')
 }
 
-if (rbwUiPreviewRequested) {
-    def rbwProcessGuard = file('../../../../tools/process-guard.sh').absolutePath
-    def rbwPreviewControl = file('preview/rbw-ui-preview.json').absolutePath
-    def rbwPreviewTheme = file('preview/rbw-ui-theme.json').absolutePath
-    def rbwPreviewUtilitySettings = file('preview/rbw-utility-settings.json').absolutePath
+if (opusUiPreviewRequested) {
+    def opusProcessGuard = file('../../../../tools/process-guard.sh').absolutePath
+    def opusPreviewControl = file('preview/opus-ui-preview.json').absolutePath
+    def opusPreviewTheme = file('preview/opus-ui-theme.json').absolutePath
+    def opusPreviewUtilitySettings = file('preview/opus-utility-settings.json').absolutePath
     tasks.getByName('runClient').jvmArgs(
-            "-Drbw.ui.preview.control.file=${rbwPreviewControl}",
-            "-Drbw.ui.preview.theme.file=${rbwPreviewTheme}",
-            "-Drbw.utility.settings.file=${rbwPreviewUtilitySettings}")
+            "-Dopus.ui.preview.control.file=${opusPreviewControl}",
+            "-Dopus.ui.preview.theme.file=${opusPreviewTheme}",
+            "-Dopus.utility.settings.file=${opusPreviewUtilitySettings}")
     // Keep the same native renderer reviewable at more than one desktop
     // size; this is a launch override rather than a second preview layout.
-    def rbwPreviewWidth = (findProperty('rbwPreviewWidth') ?: '1440').toString()
-    def rbwPreviewHeight = (findProperty('rbwPreviewHeight') ?: '900').toString()
-    if (!rbwPreviewWidth.matches('^[1-9][0-9]{2,3}$') || !rbwPreviewHeight.matches('^[1-9][0-9]{2,3}$')) {
-        throw new GradleException('rbwPreviewWidth and rbwPreviewHeight must be positive pixel dimensions.')
+    def opusPreviewWidth = (findProperty('opusPreviewWidth') ?: '1440').toString()
+    def opusPreviewHeight = (findProperty('opusPreviewHeight') ?: '900').toString()
+    if (!opusPreviewWidth.matches('^[1-9][0-9]{2,3}$') || !opusPreviewHeight.matches('^[1-9][0-9]{2,3}$')) {
+        throw new GradleException('opusPreviewWidth and opusPreviewHeight must be positive pixel dimensions.')
     }
-    tasks.getByName('runClient').args('--width', rbwPreviewWidth, '--height', rbwPreviewHeight)
+    tasks.getByName('runClient').args('--width', opusPreviewWidth, '--height', opusPreviewHeight)
 
     // Preview renders a real Forge process. Keep a PID lock beside the
     // controls so an interrupted review cannot quietly accumulate clients.
-    def rbwPreviewLock = file('preview/.rbw-ui-preview.lock')
+    def opusPreviewLock = file('preview/.opus-ui-preview.lock')
     tasks.getByName('runClient').doFirst {
-        def guard = [rbwProcessGuard, 'assert-idle'].execute()
+        def guard = [opusProcessGuard, 'assert-idle'].execute()
         guard.consumeProcessOutput(System.out, System.err)
         if (guard.waitFor() != 0) {
             throw new GradleException('Opus process guard rejected this preview launch.')
         }
-        if (rbwPreviewLock.isFile()) {
-            def previousPid = rbwPreviewLock.text.trim()
+        if (opusPreviewLock.isFile()) {
+            def previousPid = opusPreviewLock.text.trim()
             def active = false
             if (previousPid ==~ /^[0-9]+$/) {
                 active = ['sh', '-c', "kill -0 ${previousPid} 2>/dev/null"].execute().waitFor() == 0
@@ -239,27 +239,27 @@ if (rbwUiPreviewRequested) {
             if (active) {
                 throw new GradleException("Opus UI Preview is already running (pid ${previousPid}). Stop it before opening another preview.")
             }
-            rbwPreviewLock.delete()
+            opusPreviewLock.delete()
         }
-        rbwPreviewLock.parentFile.mkdirs()
-        rbwPreviewLock.text = java.lang.management.ManagementFactory.runtimeMXBean.name.split('@')[0] + '\\n'
+        opusPreviewLock.parentFile.mkdirs()
+        opusPreviewLock.text = java.lang.management.ManagementFactory.runtimeMXBean.name.split('@')[0] + '\\n'
     }
     tasks.getByName('runClient').doLast {
-        if (rbwPreviewLock.isFile()) {
-            rbwPreviewLock.delete()
+        if (opusPreviewLock.isFile()) {
+            opusPreviewLock.delete()
         }
     }
     tasks.getByName('runClient').finalizedBy('clearUiPreviewLock')
     task clearUiPreviewLock {
         doLast {
-            if (rbwPreviewLock.isFile()) {
-                rbwPreviewLock.delete()
+            if (opusPreviewLock.isFile()) {
+                opusPreviewLock.delete()
             }
         }
     }
 }
 
 task runUiPreview(dependsOn: 'runClient') {
-    group = 'rbw'
+    group = 'opus'
     description = 'Runs the real Forge client with Opus Preview Mode enabled.'
 }

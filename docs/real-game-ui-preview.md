@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This is RBW's replacement for HTML mockups, desktop-window screenshots, and
+This is OPUS's replacement for HTML mockups, desktop-window screenshots, and
 manual Computer Use while iterating on Minecraft UI. The Forge client mod
-renders the normal RBW page tree, then captures the **same OpenGL framebuffer**
+renders the normal OPUS page tree, then captures the **same OpenGL framebuffer**
 that a player sees. There is no second renderer.
 
 Preview Mode is deliberately opt-in. It exists only when the development JVM
@@ -21,9 +21,9 @@ From `game/client-mod`:
 
 The task launches a 1440 x 900 Forge development client and enables:
 
-- `preview/rbw-ui-preview.json` — revisioned route/input/capture command;
-- `preview/rbw-ui-theme.json` — visual tokens and selected layout ratios.
-- `preview/rbw-utility-settings.json` — local preferences for the currently
+- `preview/opus-ui-preview.json` — revisioned route/input/capture command;
+- `preview/opus-ui-theme.json` — visual tokens and selected layout ratios.
+- `preview/opus-utility-settings.json` — local preferences for the currently
   implemented live utilities. It begins empty; preview fixtures never inject
   player equipment or sample telemetry to make a module look populated.
 
@@ -39,14 +39,14 @@ are written to:
 
 The adjacent status file is written by the real client:
 
-`game/client-mod/preview/rbw-ui-preview.json.status.json`
+`game/client-mod/preview/opus-ui-preview.json.status.json`
 
 ## Fast iteration loop
 
 1. Keep the preview client open once.
-2. Save `rbw-ui-theme.json`; its valid visual token changes reload on the next
+2. Save `opus-ui-theme.json`; its valid visual token changes reload on the next
    client tick and relayout the real open page.
-3. Edit `rbw-ui-preview.json`, increment `revision`, select a route and a
+3. Edit `opus-ui-preview.json`, increment `revision`, select a route and a
    capture filename.
 4. The game opens the real route, waits for it to render, then writes its
    framebuffer PNG. Inspect that PNG; do not judge a separate mockup.
@@ -95,7 +95,7 @@ ignored, so the client cannot accidentally repeat a click or drag every tick.
   "route": "mods",
   "pointer": { "x": 320, "y": 140 },
   "input": { "type": "click", "x": 320, "y": 140, "button": 0 },
-  "capture": { "file": "rbw-mods-hover.png", "afterFrames": 10 }
+  "capture": { "file": "opus-mods-hover.png", "afterFrames": 10 }
 }
 ```
 
@@ -109,7 +109,7 @@ used by the Right Shift key binding).
 
 `pointer` makes the real UI render its actual hover state. `input` is optional
 and is dispatched to the existing `UiRuntime`; only a real control can handle
-it. Supported types are `click` and `drag`. Coordinates are RBW logical UI
+it. Supported types are `click` and `drag`. Coordinates are OPUS logical UI
 coordinates, not desktop pixels.
 
 `capture.file` must be a simple `.png` filename. It is saved by Minecraft's
@@ -117,7 +117,7 @@ coordinates, not desktop pixels.
 
 ## Invariants
 
-- The preview calls the same `RbwClientScreen`, `UiRuntime`, pages, assets,
+- The preview calls the same `OpusClientScreen`, `UiRuntime`, pages, assets,
   font renderer, blur path and framebuffer as the shipped client.
 - A visible route/control requires real production behavior; Preview Mode does
   not manufacture module state or telemetry.

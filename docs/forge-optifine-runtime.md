@@ -1,6 +1,6 @@
 # Pinned Forge + OptiFine 1.8.9 runtime
 
-RBW's supported game runtime is a single, locked Minecraft 1.8.9 profile:
+OPUS's supported game runtime is a single, locked Minecraft 1.8.9 profile:
 
 | Part | Locked value |
 | --- | --- |
@@ -8,13 +8,13 @@ RBW's supported game runtime is a single, locked Minecraft 1.8.9 profile:
 | Forge | `1.8.9-11.15.1.2318-1.8.9` |
 | Forge entry point | `net.minecraft.launchwrapper.Launch` with `FMLTweaker` |
 | OptiFine | `OptiFine_1.8.9_HD_U_M5.jar` |
-| RBW integration | verified `rbw-forge-coremod` plus the normal client-only `rbw-forge-client` mod loaded by Forge |
+| OPUS integration | verified `opus-forge-coremod` plus the normal client-only `opus-forge-client` mod loaded by Forge |
 
 The authoritative contract is
-`launcher/rbw-runtime/runtime-lock/forge-1.8.9-11.15.1.2318.lock.json`, parsed
+`launcher/opus-runtime/runtime-lock/forge-1.8.9-11.15.1.2318.lock.json`, parsed
 by `src/forge.rs`. It pins the Forge profile identity, launch argument
 template, every Forge library URL/path/size/SHA-1, and the accepted OptiFine
-artifact. RBW does not execute a Forge installer or trust a mutable launcher
+artifact. OPUS does not execute a Forge installer or trust a mutable launcher
 profile as part of installation.
 
 ## Install and OptiFine import
@@ -28,14 +28,14 @@ OptiFine is deliberately different:
 
 - The player obtains the exact supported JAR from OptiFine through their own
   lawful route and accepts any applicable OptiFine terms.
-- RBW accepts a **local path only**, verifies the exact locked size and SHA-1,
+- OPUS accepts a **local path only**, verifies the exact locked size and SHA-1,
   then copies the verified file into its isolated runtime at
-  `<RBW data root>/game/mods/OptiFine_1.8.9_HD_U_M5.jar`.
-- RBW never downloads, bundles, redistributes, modifies, uploads, or deletes
+  `<OPUS data root>/game/mods/OptiFine_1.8.9_HD_U_M5.jar`.
+- OPUS never downloads, bundles, redistributes, modifies, uploads, or deletes
   the original OptiFine JAR. A failed verification leaves it unimported.
 
 The desktop command is `import_optifine`; the CLI equivalent is
-`rbw import-optifine <path>`. Installation can finish while OptiFine is absent,
+`opus import-optifine <path>`. Installation can finish while OptiFine is absent,
 but no Forge game launch is allowed until the import is present and verifies
 again from the managed copy.
 
@@ -46,20 +46,20 @@ The only supported product launch mode is `LaunchMode::ForgeBootstrap`:
 1. The launcher renders the locked Forge game-argument template and transfers
    those arguments through the bounded stdin protocol. This keeps an
    authenticated access token off the operating-system command line.
-2. The system classpath contains the small RBW bootstrap JAR followed by the
+2. The system classpath contains the small OPUS bootstrap JAR followed by the
    verified Forge and Minecraft classpath. The process entry is
-   `dev.rbw.bootstrap.ForgeBootstrapMain`.
+   `org.polydevs.opusmc.bootstrap.ForgeBootstrapMain`.
 3. The bridge validates its small control protocol, decodes stdin, ensures the
    Forge `FMLTweaker` is present, and calls
    `net.minecraft.launchwrapper.Launch.main`.
 4. Forge's LaunchWrapper and `LaunchClassLoader` own Minecraft class loading,
    tweaker ordering, and class transformation. OptiFine participates through
-   the imported managed mod; RBW does not replace Forge with a second custom
+   the imported managed mod; OPUS does not replace Forge with a second custom
    game classloader.
-5. Before starting Forge, RBW verifies and stages the bundled
-   `rbw-forge-coremod` and `rbw-forge-client` artifacts beside OptiFine in the
+5. Before starting Forge, OPUS verifies and stages the bundled
+   `opus-forge-coremod` and `opus-forge-client` artifacts beside OptiFine in the
    isolated `game/mods/` directory. The coremod's `FMLCorePlugin` manifest
-   registers `dev.rbw.forge.RbwLoadingPlugin`; the client artifact is a normal,
+   registers `org.polydevs.opusmc.forge.OpusLoadingPlugin`; the client artifact is a normal,
    client-only FML mod with `mcmod.info` and no coremod manifest entry.
 
 `BootstrapMain`, `TransformingClassLoader`, and the standalone ServiceLoader
@@ -73,9 +73,9 @@ The QA demo and isolated UI Preview are intentionally controlled three-artifact
 Forge mod sets:
 
 1. the exact OptiFine JAR imported and verified above; and
-2. the checksum-verified RBW Forge coremod staged from the packaged launcher
+2. the checksum-verified OPUS Forge coremod staged from the packaged launcher
    asset; and
-3. the checksum-verified normal RBW Forge client mod staged from the packaged
+3. the checksum-verified normal OPUS Forge client mod staged from the packaged
    launcher asset.
 
 An unexpected visible entry in the managed `game/mods/` directory makes the
@@ -91,7 +91,7 @@ future mod is not supported merely because Forge happens to discover it.
 
 ## Changing the profile
 
-A Forge, OptiFine, RBW coremod, or RBW client-mod update is a runtime-contract
+A Forge, OptiFine, OPUS coremod, or OPUS client-mod update is a runtime-contract
 change, not a settings change. Update the lock and all relevant integrity
 values, regenerate the applicable artifact deliberately, verify Forge load
 order, run the Java/Rust tests, and smoke-test a clean isolated root. Keep the
