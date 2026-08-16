@@ -26,6 +26,16 @@ allprojects {
 subprojects {
     apply(plugin = "java-library")
 
+    // Pin the compiler toolchain so Runtime artifact bytes are reproducible
+    // regardless of the JDK that launches Gradle. Without this, the same
+    // source compiled by JDK 21 on CI and JDK 25 locally produced different
+    // bootstrap/coremod bytes and broke the release-lock SHA-256 contract.
+    extensions.configure<org.gradle.api.plugins.JavaPluginExtension> {
+        toolchain {
+            languageVersion.set(JavaLanguageVersion.of(25))
+        }
+    }
+
     tasks.withType<JavaCompile>().configureEach {
         options.release.set(8)
         options.encoding = "UTF-8"
