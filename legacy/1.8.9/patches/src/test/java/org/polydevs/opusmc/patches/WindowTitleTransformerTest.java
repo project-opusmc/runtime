@@ -13,12 +13,36 @@ import org.objectweb.asm.Opcodes;
 
 final class WindowTitleTransformerTest {
     @Test
-    void replacesExactlyOneVerifiedTitleAnchor() {
+    void replacesExactlyOneVerifiedTitleAnchorWithTheDefault() {
         byte[] original = classWithString(WindowTitleTransformer.VANILLA_TITLE);
-        byte[] transformed = new WindowTitleTransformer().transform("ave", original);
+        byte[] transformed = new WindowTitleTransformer(null).transform("ave", original);
 
         assertEquals(0, countString(transformed, WindowTitleTransformer.VANILLA_TITLE));
-        assertEquals(1, countString(transformed, WindowTitleTransformer.OPUS_TITLE));
+        assertEquals(1, countString(transformed, WindowTitleTransformer.DEFAULT_TITLE));
+    }
+
+    @Test
+    void injectsAPerInstanceTitleWhenConfigured() {
+        String instanceTitle = "Opus Client - [OFFICIAL] zvwgvx";
+        byte[] original = classWithString(WindowTitleTransformer.VANILLA_TITLE);
+        byte[] transformed = new WindowTitleTransformer(instanceTitle).transform("ave", original);
+
+        assertEquals(1, countString(transformed, instanceTitle));
+        assertEquals(0, countString(transformed, WindowTitleTransformer.DEFAULT_TITLE));
+    }
+
+    @Test
+    void sanitizesBlankControlAndOverlongTitlesToASafeSingleLine() {
+        assertEquals(WindowTitleTransformer.DEFAULT_TITLE, WindowTitleTransformer.sanitize(null));
+        assertEquals(WindowTitleTransformer.DEFAULT_TITLE, WindowTitleTransformer.sanitize("   "));
+        assertEquals("Opus Client - A B", WindowTitleTransformer.sanitize("  Opus Client - A\nB\t "));
+
+        StringBuilder overlong = new StringBuilder();
+        for (int index = 0; index < 500; index++) {
+            overlong.append('x');
+        }
+        String sanitized = WindowTitleTransformer.sanitize(overlong.toString());
+        assertEquals(WindowTitleTransformer.MAX_TITLE_LENGTH, sanitized.length());
     }
 
     @Test
@@ -26,7 +50,7 @@ final class WindowTitleTransformerTest {
         byte[] unrelated = classWithString("not the expected title");
         assertThrows(
                 IllegalStateException.class,
-                () -> new WindowTitleTransformer().transform("ave", unrelated));
+                () -> new WindowTitleTransformer(null).transform("ave", unrelated));
     }
 
     private static byte[] classWithString(String value) {
@@ -67,4 +91,3 @@ final class WindowTitleTransformerTest {
         return count.get();
     }
 }
-

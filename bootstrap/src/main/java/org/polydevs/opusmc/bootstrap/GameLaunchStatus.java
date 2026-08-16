@@ -1,6 +1,7 @@
 package org.polydevs.opusmc.bootstrap;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -10,6 +11,7 @@ import java.nio.file.StandardOpenOption;
 
 final class GameLaunchStatus {
     static final String PROPERTY = "opus.game.statusFile";
+    static final String PID_FILE_NAME = "game.pid";
 
     private final Path statusFile;
     private volatile String phase = "starting";
@@ -43,6 +45,7 @@ final class GameLaunchStatus {
     }
 
     void markRunning() {
+        writeProcessId();
         mark("running");
     }
 
@@ -56,6 +59,44 @@ final class GameLaunchStatus {
 
     String phase() {
         return phase;
+    }
+
+    /**
+     * Record the game JVM's own process id beside the status file so the
+     * launcher can offer an explicit "kill instance" control. Java 8 has no
+     * {@code ProcessHandle}, so the pid is parsed from the runtime MXBean name
+     * ("pid@host"). Best effort: the launch must still proceed if this fails.
+     */
+    private void writeProcessId() {
+        if (statusFile == null) {
+            return;
+        }
+        long pid = currentProcessId();
+        if (pid <= 0) {
+            return;
+        }
+        Path pidFile = statusFile.resolveSibling(PID_FILE_NAME);
+        try (FileChannel channel = FileChannel.open(
+                pidFile,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
+            channel.write(ByteBuffer.wrap((pid + "\n").getBytes(StandardCharsets.UTF_8)));
+            channel.force(true);
+        } catch (IOException error) {
+            System.err.println("[OPUS/BOOT] could not record game pid: " + error.getMessage());
+        }
+    }
+
+    static long currentProcessId() {
+        try {
+            String runtimeName = ManagementFactory.getRuntimeMXBean().getName();
+            int separator = runtimeName.indexOf('@');
+            String pidText = separator > 0 ? runtimeName.substring(0, separator) : runtimeName;
+            return Long.parseLong(pidText.trim());
+        } catch (RuntimeException | LinkageError ignored) {
+            return -1L;
+        }
     }
 
     private synchronized void mark(String nextPhase) {
