@@ -24,6 +24,7 @@ public final class MinecraftUiRenderer implements UiRenderer {
     private UiBounds viewport = new UiBounds(0, 0, 0, 0);
     private boolean frameTransformActive;
     private MinecraftUiFont uiFont;
+    private MinecraftMonoFont monoFont;
 
     public MinecraftUiRenderer(Minecraft minecraft) {
         if (minecraft == null) {
@@ -187,6 +188,26 @@ public final class MinecraftUiRenderer implements UiRenderer {
     @Override
     public float measureUiText(String value, float fontSize, UiFontWeight weight, float tracking) {
         return productFont().measure(value, fontSize, weight, tracking);
+    }
+
+    @Override
+    public void monoText(String value, float x, float y, float fontSize, int argb) {
+        monoFont().draw(value, x, y, fontSize, argb);
+    }
+
+    @Override
+    public float measureMonoText(String value, float fontSize) {
+        return monoFont().measure(value, fontSize);
+    }
+
+    @Override
+    public float monoCellWidth(float fontSize) {
+        return monoFont().cellWidth(fontSize);
+    }
+
+    @Override
+    public float monoLineHeight(float fontSize) {
+        return monoFont().lineHeight(fontSize);
     }
 
     @Override
@@ -378,6 +399,13 @@ public final class MinecraftUiRenderer implements UiRenderer {
             uiFont = MinecraftUiFont.get(minecraft);
         }
         return uiFont;
+    }
+
+    private MinecraftMonoFont monoFont() {
+        if (monoFont == null) {
+            monoFont = MinecraftMonoFont.get(minecraft);
+        }
+        return monoFont;
     }
 
     private static void vertexColor(WorldRenderer renderer, int x, int y, int argb) {

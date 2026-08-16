@@ -41,6 +41,21 @@ public interface UiRenderer {
 
     float measureUiText(String value, float fontSize, UiFontWeight weight, float tracking);
 
+    /**
+     * Draws fixed-pitch monospace text for the terminal/TUI surfaces. Uses a
+     * dedicated monospace atlas so panes line up on a character grid.
+     */
+    void monoText(String value, float x, float y, float fontSize, int argb);
+
+    /** Width in pixels of {@code value} rendered by {@link #monoText}. */
+    float measureMonoText(String value, float fontSize);
+
+    /** Width of a single monospace character cell at {@code fontSize}. */
+    float monoCellWidth(float fontSize);
+
+    /** Line height of monospace text at {@code fontSize}. */
+    float monoLineHeight(float fontSize);
+
     void centeredText(String value, UiBounds bounds, int argb);
 
     int measureText(String value);
