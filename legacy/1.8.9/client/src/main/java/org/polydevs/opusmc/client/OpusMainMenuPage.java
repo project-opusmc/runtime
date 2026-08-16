@@ -6,17 +6,33 @@ import org.polydevs.opusmc.client.ui.UiInput;
 import org.polydevs.opusmc.client.ui.UiRenderer;
 import org.polydevs.opusmc.client.ui.UiRuntime;
 import net.minecraft.util.ResourceLocation;
+import org.lwjgl.input.Keyboard;
 
 /**
  * Opus's title surface is intentionally a complete product composition, not a
  * live Minecraft scene underneath. Opus's supplied transparent lockup is the
  * sole brand asset; the menu adds no generated or reconstructed imagery.
+ *
+ * <p>The whole composition is centered on the viewport (btop-style centering)
+ * and is fully operable by both mouse and keyboard: the arrow keys move a
+ * focus ring through the actions and Enter activates the focused one, while
+ * mouse hover keeps the same focus in sync.</p>
  */
 final class OpusMainMenuPage extends OpusUiPage {
     private static final ResourceLocation WORDMARK =
             new ResourceLocation("opusclient", "textures/gui/opus-wordmark-transparent.png");
     private static final int DESIGN_WIDTH = 720;
     private static final int DESIGN_HEIGHT = 450;
+
+    // Focus order for keyboard navigation. Client Options (2) and Game Options
+    // (3) render side by side; Left/Right swap between them, Up/Down step the
+    // linear list so a single pair of keys reaches every action.
+    private static final int SINGLEPLAYER = 0;
+    private static final int MULTIPLAYER = 1;
+    private static final int CLIENT_OPTIONS = 2;
+    private static final int GAME_OPTIONS = 3;
+    private static final int QUIT = 4;
+    private static final int ACTION_COUNT = 5;
 
     private UiBounds wordmark = new UiBounds(0, 0, 0, 0);
     private UiBounds singleplayer = new UiBounds(0, 0, 0, 0);
@@ -26,11 +42,10 @@ final class OpusMainMenuPage extends OpusUiPage {
     private UiBounds quit = new UiBounds(0, 0, 0, 0);
     private float layoutScale = 1.0F;
     private long lastFrameNanos;
-    private float singleplayerHover;
-    private float multiplayerHover;
-    private float clientOptionsHover;
-    private float gameOptionsHover;
-    private float quitHover;
+    private final float[] highlight = new float[ACTION_COUNT];
+    private int focusedIndex = SINGLEPLAYER;
+    private int lastMouseX = Integer.MIN_VALUE;
+    private int lastMouseY = Integer.MIN_VALUE;
 
     OpusMainMenuPage(ClientOverlayController controller, UiRuntime runtime) {
         super(controller, runtime);
@@ -60,10 +75,10 @@ final class OpusMainMenuPage extends OpusUiPage {
         // Preserve the original transparent lockup; no recolored or rebuilt
         // logo is introduced by the menu renderer.
         renderer.textureRegion(WORDMARK, wordmark, 0.045D, 0.14D, 0.735D, 0.82D);
-        renderMenuAction(renderer, singleplayer, "Singleplayer", singleplayerHover, true);
-        renderMenuAction(renderer, multiplayer, "Multiplayer", multiplayerHover, true);
-        renderMenuAction(renderer, clientOptions, "Client Options", clientOptionsHover, false);
-        renderMenuAction(renderer, gameOptions, "Game Options", gameOptionsHover, false);
+        renderMenuAction(renderer, singleplayer, "Singleplayer", highlight[SINGLEPLAYER], true);
+        renderMenuAction(renderer, multiplayer, "Multiplayer", highlight[MULTIPLAYER], true);
+        renderMenuAction(renderer, clientOptions, "Client Options", highlight[CLIENT_OPTIONS], false);
+        renderMenuAction(renderer, gameOptions, "Game Options", highlight[GAME_OPTIONS], false);
         renderQuit(renderer);
     }
 
@@ -72,27 +87,92 @@ final class OpusMainMenuPage extends OpusUiPage {
         if (button != 0) {
             return false;
         }
+        int index = actionAt(mouseX, mouseY);
+        if (index < 0) {
+            return false;
+        }
+        focusedIndex = index;
+        activate(index);
+        return true;
+    }
+
+    @Override
+    public boolean keyTyped(char typedCharacter, int keyCode) {
+        switch (keyCode) {
+            case Keyboard.KEY_UP:
+            case Keyboard.KEY_W:
+                moveFocus(-1);
+                return true;
+            case Keyboard.KEY_DOWN:
+            case Keyboard.KEY_S:
+            case Keyboard.KEY_TAB:
+                moveFocus(1);
+                return true;
+            case Keyboard.KEY_LEFT:
+            case Keyboard.KEY_A:
+                if (focusedIndex == GAME_OPTIONS) {
+                    focusedIndex = CLIENT_OPTIONS;
+                }
+                return true;
+            case Keyboard.KEY_RIGHT:
+            case Keyboard.KEY_D:
+                if (focusedIndex == CLIENT_OPTIONS) {
+                    focusedIndex = GAME_OPTIONS;
+                }
+                return true;
+            case Keyboard.KEY_RETURN:
+            case Keyboard.KEY_NUMPADENTER:
+            case Keyboard.KEY_SPACE:
+                activate(focusedIndex);
+                return true;
+            default:
+                return super.keyTyped(typedCharacter, keyCode);
+        }
+    }
+
+    private void moveFocus(int delta) {
+        focusedIndex = ((focusedIndex + delta) % ACTION_COUNT + ACTION_COUNT) % ACTION_COUNT;
+    }
+
+    private void activate(int index) {
+        switch (index) {
+            case SINGLEPLAYER:
+                controller.openSingleplayer();
+                break;
+            case MULTIPLAYER:
+                controller.openMultiplayer();
+                break;
+            case CLIENT_OPTIONS:
+                controller.openClientModHub();
+                break;
+            case GAME_OPTIONS:
+                controller.openVanillaOptions();
+                break;
+            case QUIT:
+                controller.quitGame();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private int actionAt(int mouseX, int mouseY) {
         if (singleplayer.contains(mouseX, mouseY)) {
-            controller.openSingleplayer();
-            return true;
+            return SINGLEPLAYER;
         }
         if (multiplayer.contains(mouseX, mouseY)) {
-            controller.openMultiplayer();
-            return true;
+            return MULTIPLAYER;
         }
         if (clientOptions.contains(mouseX, mouseY)) {
-            controller.openClientModHub();
-            return true;
+            return CLIENT_OPTIONS;
         }
         if (gameOptions.contains(mouseX, mouseY)) {
-            controller.openVanillaOptions();
-            return true;
+            return GAME_OPTIONS;
         }
         if (quit.contains(mouseX, mouseY)) {
-            controller.quitGame();
-            return true;
+            return QUIT;
         }
-        return false;
+        return -1;
     }
 
     private void renderBackground(UiRenderer renderer) {
@@ -149,6 +229,20 @@ final class OpusMainMenuPage extends OpusUiPage {
                     Math.max(0.45F, layoutScale * 0.45F), white(lerp(48, 145, progress)));
             labelColor = white(lerp(208, 255, progress));
         }
+        // A crisp focus ring makes the keyboard selection obvious even when the
+        // mouse is idle; it tracks the same highlight value as hover. Primary
+        // (filled) actions get a dark ring for contrast; secondary actions get
+        // the launcher accent so the focus reads on the graphite surface.
+        if (progress > 0.02F) {
+            int ringAlpha = Math.max(0, Math.min(220, Math.round(progress * 220.0F)));
+            int ringColor = primary
+                    ? (ringAlpha << 24) | 0x0011161D
+                    : (ringAlpha << 24) | 0x0055A7FF;
+            renderer.border(
+                    expand(surface, Math.max(1, Math.round(layoutScale))),
+                    Math.max(1, Math.round(layoutScale)),
+                    ringColor);
+        }
         float fontSize = (primary ? 8.2F : 6.55F) * layoutScale;
         UiFontWeight weight = primary ? UiFontWeight.SEMIBOLD : UiFontWeight.REGULAR;
         float tracking = primary ? 0.04F : 0.025F;
@@ -159,16 +253,17 @@ final class OpusMainMenuPage extends OpusUiPage {
     }
 
     private void renderQuit(UiRenderer renderer) {
+        float progress = highlight[QUIT];
         float fontSize = 6.6F * layoutScale;
         String label = "Quit Game";
         float textWidth = renderer.measureUiText(label, fontSize, UiFontWeight.REGULAR, 0.08F);
         float textX = quit.x + (quit.width - textWidth) / 2.0F;
         renderer.uiText(label, textX, quit.y + (quit.height - fontSize) / 2.0F,
-                fontSize, UiFontWeight.REGULAR, 0.08F, white(lerp(142, 246, quitHover)));
-        if (quitHover > 0.02F) {
+                fontSize, UiFontWeight.REGULAR, 0.08F, white(lerp(142, 246, progress)));
+        if (progress > 0.02F) {
             renderer.line(textX, quit.bottom() - 2.0F * layoutScale,
                     textX + textWidth, quit.bottom() - 2.0F * layoutScale,
-                    Math.max(0.55F, layoutScale * 0.55F), white(lerp(0, 160, quitHover)));
+                    Math.max(0.55F, layoutScale * 0.55F), white(lerp(0, 160, progress)));
         }
     }
 
@@ -178,11 +273,21 @@ final class OpusMainMenuPage extends OpusUiPage {
         lastFrameNanos = now;
         seconds = Math.max(0.0F, Math.min(0.05F, seconds));
         float amount = Math.min(1.0F, seconds * 10.0F);
-        singleplayerHover = approach(singleplayerHover, singleplayer.contains(input.mouseX, input.mouseY), amount);
-        multiplayerHover = approach(multiplayerHover, multiplayer.contains(input.mouseX, input.mouseY), amount);
-        clientOptionsHover = approach(clientOptionsHover, clientOptions.contains(input.mouseX, input.mouseY), amount);
-        gameOptionsHover = approach(gameOptionsHover, gameOptions.contains(input.mouseX, input.mouseY), amount);
-        quitHover = approach(quitHover, quit.contains(input.mouseX, input.mouseY), amount);
+
+        // Moving the mouse takes over the focus so hover and keyboard selection
+        // never fight. A still mouse leaves the keyboard focus untouched.
+        if (input.mouseX != lastMouseX || input.mouseY != lastMouseY) {
+            lastMouseX = input.mouseX;
+            lastMouseY = input.mouseY;
+            int hovered = actionAt(input.mouseX, input.mouseY);
+            if (hovered >= 0) {
+                focusedIndex = hovered;
+            }
+        }
+
+        for (int index = 0; index < ACTION_COUNT; index++) {
+            highlight[index] = approach(highlight[index], index == focusedIndex, amount);
+        }
     }
 
     private static float approach(float current, boolean target, float amount) {
