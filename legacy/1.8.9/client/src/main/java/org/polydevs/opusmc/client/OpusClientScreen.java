@@ -17,6 +17,7 @@ import org.lwjgl.input.Mouse;
  * rendering live in the Opus UI framework rather than GuiScreen itself.
  */
 final class OpusClientScreen extends GuiScreen {
+    private final ClientOverlayController controller;
     private final UiRuntime runtime;
     private final MinecraftBlurBackdrop blurBackdrop;
     private final MinecraftTitlePanorama titlePanorama;
@@ -27,11 +28,19 @@ final class OpusClientScreen extends GuiScreen {
     private int previewPointerY;
 
     OpusClientScreen(ClientOverlayController controller, UiRoute initialRoute) {
+        this.controller = controller;
         Minecraft minecraft = Minecraft.getMinecraft();
         runtime = new UiRuntime(
                 new MinecraftUiRenderer(minecraft),
                 new OpusUiPageFactory(controller),
                 initialRoute);
+        runtime.setRouteListener(new Runnable() {
+            @Override
+            public void run() {
+                controller.onRouteChanged(runtime.route().kind());
+            }
+        });
+        controller.onRouteChanged(initialRoute.kind());
         blurBackdrop = new MinecraftBlurBackdrop(minecraft);
         titlePanorama = new MinecraftTitlePanorama(minecraft);
     }
@@ -95,6 +104,7 @@ final class OpusClientScreen extends GuiScreen {
     public void onGuiClosed() {
         runtime.dispose();
         blurBackdrop.end();
+        controller.onScreenClosed();
     }
 
     @Override

@@ -15,6 +15,7 @@ public final class UiRuntime {
     private UiPage page;
     private UiBounds viewport = new UiBounds(0, 0, 0, 0);
     private boolean closeRequested;
+    private Runnable routeListener;
 
     public UiRuntime(UiRenderer renderer, PageFactory pageFactory, UiRoute initialRoute) {
         if (renderer == null || pageFactory == null || initialRoute == null) {
@@ -38,6 +39,17 @@ public final class UiRuntime {
         if (page != null) {
             page.layout(viewport);
         }
+        if (routeListener != null) {
+            routeListener.run();
+        }
+    }
+
+    /**
+     * Registers a callback invoked after every route change so the virtual
+     * screen bridge can mirror the current Opus route to the web UI.
+     */
+    public void setRouteListener(Runnable routeListener) {
+        this.routeListener = routeListener;
     }
 
     public void navigate(UiRoute nextRoute) {

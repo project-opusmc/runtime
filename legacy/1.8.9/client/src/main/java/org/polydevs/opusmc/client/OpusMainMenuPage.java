@@ -59,6 +59,7 @@ final class OpusMainMenuPage extends OpusUiPage {
             new Action("Multiplayer", new Runnable() { public void run() { OpusMainMenuPage.this.runtime.navigate(org.polydevs.opusmc.client.ui.UiRoute.multiplayer()); } }),
             new Action("Client Options", new Runnable() { public void run() { controller.openClientModHub(); } }),
             new Action("Game Options", new Runnable() { public void run() { OpusMainMenuPage.this.runtime.navigate(org.polydevs.opusmc.client.ui.UiRoute.gameOptions()); } }),
+            new Action("Open Web UI", new Runnable() { public void run() { controller.openExternalUi(); } }),
             new Action("Quit Game", new Runnable() { public void run() { controller.quitGame(); } }),
         };
         rowBounds = new UiBounds[actions.length];
@@ -193,7 +194,7 @@ final class OpusMainMenuPage extends OpusUiPage {
         renderer.fill(new UiBounds(footerBounds.x, footerBounds.y, footerBounds.width, Math.max(1, Math.round(uiScale))), BORDER_STRONG);
         float footFont = Math.max(8.0F, 10.0F * uiScale);
         float y = footerBounds.y + (footerBounds.height - footFont) / 2.0F;
-        String hint = "ARROW navigate   ENTER select   1-5 quick   ESC back";
+        String hint = "ARROW navigate   ENTER select   1-6 quick   ESC back";
         renderer.monoText(hint, footerBounds.x + Math.round(14 * uiScale), y, footFont, QUIET);
     }
 
@@ -247,6 +248,7 @@ final class OpusMainMenuPage extends OpusUiPage {
             case Keyboard.KEY_3: return 2;
             case Keyboard.KEY_4: return 3;
             case Keyboard.KEY_5: return 4;
+            case Keyboard.KEY_6: return 5;
             default: return -1;
         }
     }

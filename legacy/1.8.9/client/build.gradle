@@ -55,6 +55,31 @@ minecraft {
     runDir = 'run'
 }
 
+def opusUiDir = file('../../../../ui')
+def opusUiDist = file("${opusUiDir}/dist")
+
+/**
+ * Builds the Opus web UI SPA (Svelte 5 + Vite) before the client mod is
+ * packaged. The game's loopback interop server serves these assets, exactly
+ * like LiquidBounce embeds its theme build into the mod resources.
+ */
+task buildUiDist(type: Exec) {
+    description = 'Builds the Opus web UI SPA with Vite.'
+    group = 'build'
+    workingDir opusUiDir
+    commandLine 'npm', 'run', 'build'
+    inputs.files(
+            "${opusUiDir}/package.json",
+            "${opusUiDir}/package-lock.json",
+            "${opusUiDir}/vite.config.ts",
+            "${opusUiDir}/svelte.config.js",
+            "${opusUiDir}/tsconfig.json",
+            "${opusUiDir}/index.html")
+    inputs.dir("${opusUiDir}/src")
+    inputs.dir("${opusUiDir}/public")
+    outputs.dir opusUiDist
+}
+
 def opusJavac = System.getenv('OPUS_FORGE_UI_JAVAC')
 if (opusJavac == null || opusJavac.trim().isEmpty()) {
     throw new GradleException('OPUS_FORGE_UI_JAVAC must identify the compiler for this legacy build lane.')
@@ -70,7 +95,28 @@ tasks.withType(JavaCompile) {
     options.forkOptions.executable = opusJavacFile.absolutePath
 }
 
+sourceSets {
+    harness {
+        java.srcDir 'preview/harness'
+        compileClasspath = sourceSets.main.output + sourceSets.main.compileClasspath
+    }
+}
+
+task harnessBridge(type: JavaExec) {
+    group = 'verification'
+    description = 'Runs the loopback interop bridge harness (SPA/auth/REST/WS/virtual screen).'
+    dependsOn 'harnessClasses', 'processResources'
+    main = 'BridgeHarness'
+    doFirst {
+        classpath = files(
+                sourceSets.harness.output,
+                sourceSets.main.output,
+                sourceSets.main.runtimeClasspath)
+    }
+}
+
 processResources {
+    dependsOn buildUiDist
     inputs.property 'version', project.version
     from(sourceSets.main.resources.srcDirs) {
         include 'mcmod.info'
@@ -78,6 +124,9 @@ processResources {
     }
     from(sourceSets.main.resources.srcDirs) {
         exclude 'mcmod.info'
+    }
+    from(opusUiDist) {
+        into 'opusui'
     }
 }
 
@@ -156,6 +205,11 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
                     'org/polydevs/opusmc/client/OpusControlsPage.class',
                     'org/polydevs/opusmc/client/OpusLanguagePage.class',
                     'org/polydevs/opusmc/client/OpusVanillaTerminalOverlay.class',
+                    'org/polydevs/opusmc/client/interop/OpusInteropServer.class',
+                    'org/polydevs/opusmc/client/interop/OpusWebSocket.class',
+                    'org/polydevs/opusmc/client/interop/OpusVirtualScreenManager.class',
+                    'org/polydevs/opusmc/client/interop/OpusExternalBrowser.class',
+                    'org/polydevs/opusmc/client/interop/OpusJson.class',
                     'org/polydevs/opusmc/client/OpusHudEditorPage.class',
                     'org/polydevs/opusmc/client/OpusPanelPage.class',
                     'org/polydevs/opusmc/client/OpusModHubPage.class',
@@ -185,6 +239,9 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
             if (metadata == null) {
                 throw new GradleException('FML metadata is missing from the artifact.')
             }
+            if (archive.getEntry('opusui/index.html') == null) {
+                throw new GradleException('Opus web UI bundle is missing from the artifact.')
+            }
             def metadataText = archive.getInputStream(metadata).getText('UTF-8')
             if (!metadataText.contains('"modid": "opusclient"')) {
                 throw new GradleException('FML metadata does not declare the Opus client mod id.')
@@ -201,6 +258,7 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
 }
 
 check.dependsOn verifyClientArtifact
+check.dependsOn harnessBridge
 
 /**
  * Runs the real Forge client at a reviewable desktop resolution. The UI is

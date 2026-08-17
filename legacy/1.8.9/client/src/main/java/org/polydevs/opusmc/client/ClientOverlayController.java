@@ -39,6 +39,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import org.polydevs.opusmc.client.hud.HudManager;
+import org.polydevs.opusmc.client.interop.OpusExternalBrowser;
+import org.polydevs.opusmc.client.interop.OpusInteropServer;
+import org.polydevs.opusmc.client.interop.OpusVirtualScreenManager;
 import org.polydevs.opusmc.client.ui.UiBounds;
 import org.polydevs.opusmc.client.ui.UiInput;
 import org.polydevs.opusmc.client.ui.UiRenderer;
@@ -72,6 +75,8 @@ public final class ClientOverlayController {
     private final UiThemeStore themeStore;
     private final UiPreviewSession previewSession;
     private final OpusVanillaTerminalOverlay vanillaTerminal;
+    private final OpusInteropServer interopServer;
+    private final OpusVirtualScreenManager virtualScreens;
     private final String[] captureRouteNames = captureRoutes(System.getProperty("opus.ui.capture.route"));
     private int captureRouteIndex;
     private boolean captureRouteOpened;
@@ -90,6 +95,9 @@ public final class ClientOverlayController {
         this.themeStore = UiThemeStore.fromSystemProperties(log);
         this.previewSession = UiPreviewSession.fromSystemProperties(log);
         this.vanillaTerminal = new OpusVanillaTerminalOverlay(log);
+        this.interopServer = new OpusInteropServer(log);
+        this.virtualScreens = new OpusVirtualScreenManager(log, interopServer);
+        this.interopServer.setScreenManager(virtualScreens);
     }
 
     void initialize() {
@@ -98,6 +106,15 @@ public final class ClientOverlayController {
         ClientRegistry.registerKeyBinding(openOptionsKey);
         MinecraftForge.EVENT_BUS.register(this);
         FMLCommonHandler.instance().bus().register(this);
+        if (!Boolean.getBoolean("opus.interop.skip") && interopServer.start()) {
+            virtualScreens.setReloadAction(new Runnable() {
+                @Override
+                public void run() {
+                    OpusExternalBrowser.open(log, interopServer.url());
+                }
+            });
+            log.info("Opus web UI bridge listening on {}", interopServer.url());
+        }
         log.info("Opus client options registered: Right Shift and the pause-menu Client Options button open the real utility surface.");
     }
 
@@ -164,18 +181,67 @@ public final class ClientOverlayController {
     public void onGuiOpening(GuiOpenEvent event) {
         if (event.gui instanceof GuiMainMenu) {
             event.gui = new OpusClientScreen(this, UiRoute.mainMenu());
+            virtualScreens.open("title");
         } else if (event.gui instanceof GuiIngameMenu && !(event.gui instanceof OpusPreviewPauseMenu)) {
             // Replace the vanilla pause menu with the Opus terminal pause page.
             // The preview-only subclass is excluded so Preview Mode still drives
             // the genuine FML-populated controls.
             event.gui = new OpusClientScreen(this, UiRoute.pauseMenu());
+            virtualScreens.open("game_menu");
         } else if (event.gui instanceof GuiSelectWorld) {
             // Any path that would show the vanilla world list (including other
             // mods) is redirected to the Opus terminal singleplayer page.
             event.gui = new OpusClientScreen(this, UiRoute.singleplayer());
+            virtualScreens.open("singleplayer");
         } else if (event.gui instanceof GuiMultiplayer) {
             // Same for the vanilla server list.
             event.gui = new OpusClientScreen(this, UiRoute.multiplayer());
+            virtualScreens.open("multiplayer");
+        }
+    }
+
+    /**
+     * Mirrors an in-game Opus route change to the web UI. Route names follow
+     * the LiquidBounce virtual-screen contract (title, singleplayer,
+     * multiplayer, settings, hud...).
+     */
+    void onRouteChanged(UiRoute.Kind kind) {
+        String screen = virtualScreenName(kind);
+        if (screen != null) {
+            virtualScreens.open(screen);
+        }
+    }
+
+    void onScreenClosed() {
+        virtualScreens.close();
+    }
+
+    /** Dev entry point: opens the bundled Opus web UI in the system browser. */
+    void openExternalUi() {
+        OpusExternalBrowser.open(log, interopServer.url());
+    }
+
+    private static String virtualScreenName(UiRoute.Kind kind) {
+        switch (kind) {
+            case MAIN_MENU:
+                return "title";
+            case SINGLEPLAYER:
+                return "singleplayer";
+            case MULTIPLAYER:
+                return "multiplayer";
+            case GAME_OPTIONS:
+            case CONTROLS:
+            case LANGUAGE:
+                return "settings";
+            case PAUSE_MENU:
+                return "game_menu";
+            case HUD_EDITOR:
+                return "hud";
+            case MOD_HUB:
+            case MODULE_DETAIL:
+                return "settings";
+            default:
+                return null;
         }
     }
 
