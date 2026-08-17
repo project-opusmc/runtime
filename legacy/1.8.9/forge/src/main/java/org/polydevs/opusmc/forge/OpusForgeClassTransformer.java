@@ -15,10 +15,11 @@ import net.minecraft.launchwrapper.IClassTransformer;
 
 /** Adapts Opus's verified 1.8.9 bytecode patches to Forge's class loader. */
 public final class OpusForgeClassTransformer implements IClassTransformer {
-    private static final int BASE_TRANSFORMER_COUNT = 6;
+    private static final int BASE_TRANSFORMER_COUNT = 8;
     private static final Set<String> BASE_TARGET_CLASSES = Collections.unmodifiableSet(new HashSet<String>(
             Arrays.asList(
                     "ave",
+                    "avi",
                     "bfk",
                     "bda",
                     "bcy",
@@ -77,6 +78,9 @@ public final class OpusForgeClassTransformer implements IClassTransformer {
         if ("net.minecraft.client.Minecraft".equals(transformedName)) {
             return "ave";
         }
+        if ("net.minecraft.client.LoadingScreenRenderer".equals(transformedName)) {
+            return "avi";
+        }
         if ("net.minecraft.client.renderer.EntityRenderer".equals(transformedName)) {
             return "bfk";
         }
@@ -100,6 +104,12 @@ public final class OpusForgeClassTransformer implements IClassTransformer {
         transformers.add(new RenderTelemetryTransformer());
         transformers.add(new CombatTelemetryTransformer());
         transformers.add(new NetworkTelemetryTransformer());
+        // Replaces the vanilla Mojang splash with the Opus terminal boot
+        // screen. Fail-soft so it never blocks a launch if the anchor moves.
+        transformers.add(new BootTerminalTransformer());
+        // Replaces the later world/resource loading dirt texture with the same
+        // full-screen Opus terminal language.
+        transformers.add(new LoadingTerminalTransformer());
         return transformers;
     }
 

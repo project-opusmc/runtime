@@ -7,6 +7,12 @@ package org.polydevs.opusmc.client.ui;
 public final class UiRoute {
     public enum Kind {
         MAIN_MENU,
+        PAUSE_MENU,
+        SINGLEPLAYER,
+        MULTIPLAYER,
+        GAME_OPTIONS,
+        CONTROLS,
+        LANGUAGE,
         HUD_EDITOR,
         MOD_HUB,
         MODULE_DETAIL
@@ -22,6 +28,30 @@ public final class UiRoute {
 
     public static UiRoute mainMenu() {
         return new UiRoute(Kind.MAIN_MENU, null);
+    }
+
+    public static UiRoute pauseMenu() {
+        return new UiRoute(Kind.PAUSE_MENU, null);
+    }
+
+    public static UiRoute singleplayer() {
+        return new UiRoute(Kind.SINGLEPLAYER, null);
+    }
+
+    public static UiRoute multiplayer() {
+        return new UiRoute(Kind.MULTIPLAYER, null);
+    }
+
+    public static UiRoute gameOptions() {
+        return new UiRoute(Kind.GAME_OPTIONS, null);
+    }
+
+    public static UiRoute controls() {
+        return new UiRoute(Kind.CONTROLS, null);
+    }
+
+    public static UiRoute language() {
+        return new UiRoute(Kind.LANGUAGE, null);
     }
 
     public static UiRoute hudEditor() {

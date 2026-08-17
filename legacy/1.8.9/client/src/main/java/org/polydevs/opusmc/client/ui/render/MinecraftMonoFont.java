@@ -36,6 +36,9 @@ final class MinecraftMonoFont {
         '\u2518', // ┘
         '\u251C', // ├
         '\u2524', // ┤
+        '\u252C', // ┬ tee-down
+        '\u2534', // ┴ tee-up
+        '\u253C', // ┼ cross
         '\u25B8', // ▸ caret
         '\u2022', // • bullet
         '\u00B7', // · middot

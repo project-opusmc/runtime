@@ -22,6 +22,12 @@ dependencies {
     compileOnly("net.minecraft:launchwrapper:1.12") {
         isTransitive = false
     }
+    // The managed Minecraft runtime supplies LWJGL 2 at game time. The Opus
+    // boot terminal draws with plain GL11/Display, so compile against the exact
+    // 1.8.9 LWJGL version but never pack it into the coremod (compileOnly).
+    compileOnly("org.lwjgl.lwjgl:lwjgl:2.9.3") {
+        isTransitive = false
+    }
 
     testImplementation(platform("org.junit:junit-bom:5.13.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")

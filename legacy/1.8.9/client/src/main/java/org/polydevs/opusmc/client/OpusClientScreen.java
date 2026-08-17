@@ -41,9 +41,8 @@ final class OpusClientScreen extends GuiScreen {
         productViewport = MinecraftUiScale.viewport(mc);
         runtime.resize(productViewport.width, productViewport.height);
         appliedThemeGeneration = UiTheme.generation();
-        if (!isMainMenu()) {
-            blurBackdrop.begin();
-        }
+        // The Opus UI is a fully opaque terminal surface now; never composite a
+        // blurred Minecraft scene behind it, on the title route or elsewhere.
     }
 
     @Override
@@ -57,13 +56,8 @@ final class OpusClientScreen extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         refreshLayoutForTheme();
-        if (isMainMenu()) {
-            // Render a real, softly blurred Minecraft scene before Opus's
-            // native UI. It retains the game context without any generated
-            // backdrop or desktop/HTML rendering path.
-            titlePanorama.tick();
-            titlePanorama.render(width, height, partialTicks);
-        }
+        // No Minecraft panorama or scene is drawn: the Opus TUI paints an
+        // opaque, edge-to-edge terminal surface over the entire screen.
         int uiX = previewPointerActive ? previewPointerX : toUiX(mouseX);
         int uiY = previewPointerActive ? previewPointerY : toUiY(mouseY);
         runtime.render(uiX, uiY, partialTicks);
@@ -105,7 +99,14 @@ final class OpusClientScreen extends GuiScreen {
 
     @Override
     public boolean doesGuiPauseGame() {
-        return false;
+        // The Opus terminal pause page must pause the integrated server exactly
+        // like the vanilla pause menu it replaces. Every other Opus surface
+        // (title, HUD editor, mod hub) stays live over the world.
+        UiRoute.Kind kind = runtime.route().kind();
+        return kind == UiRoute.Kind.PAUSE_MENU
+                || (kind == UiRoute.Kind.GAME_OPTIONS && mc.theWorld != null)
+                || (kind == UiRoute.Kind.CONTROLS && mc.theWorld != null)
+                || (kind == UiRoute.Kind.LANGUAGE && mc.theWorld != null);
     }
 
     boolean isHudEditor() {

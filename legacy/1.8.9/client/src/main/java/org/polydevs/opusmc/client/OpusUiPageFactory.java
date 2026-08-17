@@ -29,6 +29,18 @@ final class OpusUiPageFactory implements UiRuntime.PageFactory {
                 throw new IllegalArgumentException("unknown Opus module: " + route.moduleId());
             case MAIN_MENU:
                 return new OpusMainMenuPage(controller, runtime);
+            case PAUSE_MENU:
+                return new OpusPauseMenuPage(controller, runtime);
+            case SINGLEPLAYER:
+                return new OpusSingleplayerPage(controller, runtime);
+            case MULTIPLAYER:
+                return new OpusMultiplayerPage(controller, runtime);
+            case GAME_OPTIONS:
+                return new OpusGameOptionsPage(controller, runtime);
+            case CONTROLS:
+                return new OpusControlsPage(controller, runtime);
+            case LANGUAGE:
+                return new OpusLanguagePage(controller, runtime);
             default:
                 throw new IllegalStateException("unsupported route: " + route.kind());
         }

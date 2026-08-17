@@ -7,21 +7,21 @@ import org.polydevs.opusmc.client.ui.UiRuntime;
 import org.lwjgl.input.Keyboard;
 
 /**
- * In-game title surface rendered as a centered terminal/TUI console so it
- * matches the Opus desktop launcher: a bordered panel with a header rule, a
- * single-column MENU pane whose rows carry a caret and a highlighted selection
- * bar, a live STATUS block, and a keyboard-hint command bar. It is fully
- * operable by both keyboard (arrow keys + Enter) and mouse (hover + click),
- * and uses the shared monospace atlas rather than any HTML/CSS surface.
+ * The in-game title screen rendered as a full-screen terminal (TUI) surface
+ * that matches the Opus desktop launcher. Nothing from the vanilla Minecraft
+ * title screen remains: there is no panorama, no blurred scene, no vanilla
+ * widgets. The whole viewport is an opaque terminal painted with the shared
+ * monospace atlas: a header row with a rule, a MENU pane and a STATUS pane
+ * filling the body, and a command-hint bar at the bottom.
+ *
+ * <p>Fully operable by keyboard (arrows/W-S/Tab to move, Enter/Space or 1-5 to
+ * activate) and by mouse (hover syncs focus, click activates).</p>
  */
 final class OpusMainMenuPage extends OpusUiPage {
-    private static final int DESIGN_WIDTH = 720;
-    private static final int DESIGN_HEIGHT = 450;
-
-    // Launcher palette, expressed as ARGB so the in-game console reads exactly
-    // like the desktop TUI: near-black surfaces, graphite borders, accent blue.
-    private static final int PANEL_FILL = 0xF2050505;
-    private static final int PANEL_VEIL = 0xB0060A0F;
+    // Launcher palette (ARGB).
+    private static final int BACKGROUND = 0xFF000000;
+    private static final int SURFACE = 0xFF050505;
+    private static final int SURFACE_RAISED = 0xFF0A0A0A;
     private static final int BORDER_STRONG = 0xFF565656;
     private static final int BORDER_SOFT = 0xFF262626;
     private static final int ACCENT = 0xFF55A7FF;
@@ -45,19 +45,20 @@ final class OpusMainMenuPage extends OpusUiPage {
     private int lastMouseX = Integer.MIN_VALUE;
     private int lastMouseY = Integer.MIN_VALUE;
 
-    private UiBounds panel = new UiBounds(0, 0, 0, 0);
+    private UiBounds headerBounds = new UiBounds(0, 0, 0, 0);
     private UiBounds menuPane = new UiBounds(0, 0, 0, 0);
     private UiBounds statusPane = new UiBounds(0, 0, 0, 0);
-    private float layoutScale = 1.0F;
+    private UiBounds footerBounds = new UiBounds(0, 0, 0, 0);
+    private float uiScale = 1.0F;
     private float bodyFont = 12.0F;
 
     OpusMainMenuPage(ClientOverlayController controller, UiRuntime runtime) {
         super(controller, runtime);
         actions = new Action[] {
-            new Action("Singleplayer", new Runnable() { public void run() { controller.openSingleplayer(); } }),
-            new Action("Multiplayer", new Runnable() { public void run() { controller.openMultiplayer(); } }),
+            new Action("Singleplayer", new Runnable() { public void run() { OpusMainMenuPage.this.runtime.navigate(org.polydevs.opusmc.client.ui.UiRoute.singleplayer()); } }),
+            new Action("Multiplayer", new Runnable() { public void run() { OpusMainMenuPage.this.runtime.navigate(org.polydevs.opusmc.client.ui.UiRoute.multiplayer()); } }),
             new Action("Client Options", new Runnable() { public void run() { controller.openClientModHub(); } }),
-            new Action("Game Options", new Runnable() { public void run() { controller.openVanillaOptions(); } }),
+            new Action("Game Options", new Runnable() { public void run() { OpusMainMenuPage.this.runtime.navigate(org.polydevs.opusmc.client.ui.UiRoute.gameOptions()); } }),
             new Action("Quit Game", new Runnable() { public void run() { controller.quitGame(); } }),
         };
         rowBounds = new UiBounds[actions.length];
@@ -69,39 +70,37 @@ final class OpusMainMenuPage extends OpusUiPage {
     @Override
     public void layout(UiBounds nextViewport) {
         super.layout(nextViewport);
-        layoutScale = Math.min(
-                viewport.width / (float) DESIGN_WIDTH,
-                viewport.height / (float) DESIGN_HEIGHT);
+        // Scale relative to a nominal terminal so cell sizes track window size.
+        uiScale = Math.max(0.75F, Math.min(2.0F, viewport.height / 320.0F));
+        bodyFont = Math.max(9.0F, 11.0F * uiScale);
 
-        int panelWidth = Math.round(560 * layoutScale);
-        int panelHeight = Math.round(320 * layoutScale);
-        int panelX = viewport.x + (viewport.width - panelWidth) / 2;
-        int panelY = viewport.y + (viewport.height - panelHeight) / 2;
-        panel = new UiBounds(panelX, panelY, panelWidth, panelHeight);
+        int headerHeight = Math.round(38 * uiScale);
+        int footerHeight = Math.round(26 * uiScale);
+        int gap = Math.max(1, Math.round(uiScale));
+        int pad = Math.round(10 * uiScale);
 
-        bodyFont = Math.max(9.0F, 12.0F * layoutScale);
-        int pad = Math.round(14 * layoutScale);
-        int headerHeight = Math.round(46 * layoutScale);
-        int footerHeight = Math.round(30 * layoutScale);
+        headerBounds = new UiBounds(viewport.x, viewport.y, viewport.width, headerHeight);
+        footerBounds = new UiBounds(viewport.x, viewport.bottom() - footerHeight, viewport.width, footerHeight);
 
-        int contentTop = panel.y + headerHeight;
-        int contentBottom = panel.bottom() - footerHeight;
-        int contentHeight = Math.max(1, contentBottom - contentTop);
-        int gap = Math.max(1, Math.round(layoutScale));
-        int menuWidth = Math.round((panelWidth - pad * 2) * 0.52F);
+        int bodyTop = headerBounds.bottom() + gap;
+        int bodyBottom = footerBounds.y - gap;
+        int bodyHeight = Math.max(1, bodyBottom - bodyTop);
+        int bodyLeft = viewport.x + pad;
+        int bodyRight = viewport.right() - pad;
+        int bodyWidth = Math.max(1, bodyRight - bodyLeft);
+        int menuWidth = Math.round(bodyWidth * 0.4F);
 
-        menuPane = new UiBounds(panel.x + pad, contentTop, menuWidth, contentHeight);
-        statusPane = new UiBounds(
-                menuPane.right() + pad, contentTop,
-                panel.right() - pad - (menuPane.right() + pad), contentHeight);
+        menuPane = new UiBounds(bodyLeft, bodyTop, menuWidth, bodyHeight);
+        statusPane = new UiBounds(menuPane.right() + pad, bodyTop, bodyRight - (menuPane.right() + pad), bodyHeight);
 
-        int rowHeight = Math.round(Math.max(20, 30 * layoutScale));
-        int rowsTop = menuPane.y + Math.round(10 * layoutScale);
+        int rowHeight = Math.round(Math.max(22, 30 * uiScale));
+        int rowsTop = menuPane.y + Math.round(34 * uiScale);
+        int rowInset = Math.round(10 * uiScale);
         for (int index = 0; index < rowBounds.length; index++) {
             rowBounds[index] = new UiBounds(
-                    menuPane.x + Math.round(6 * layoutScale),
+                    menuPane.x + rowInset,
                     rowsTop + index * (rowHeight + gap),
-                    menuPane.width - Math.round(12 * layoutScale),
+                    menuPane.width - rowInset * 2,
                     rowHeight);
         }
     }
@@ -110,82 +109,92 @@ final class OpusMainMenuPage extends OpusUiPage {
     public void render(UiRenderer renderer, UiInput input) {
         syncFocusToMouse(input);
 
-        // Soft veil so the blurred panorama reads as a backdrop, not a menu.
-        renderer.fill(viewport, PANEL_VEIL);
-
-        // Panel body + double frame (graphite outer, soft inner) like the panes.
-        renderer.fill(panel, PANEL_FILL);
-        renderer.border(panel, Math.max(1, Math.round(layoutScale)), BORDER_STRONG);
+        // Opaque terminal background edge to edge: no Minecraft scene at all.
+        renderer.fill(viewport, BACKGROUND);
 
         renderHeader(renderer);
-        renderMenu(renderer);
-        renderStatus(renderer);
+        renderPane(renderer, menuPane, "MENU");
+        renderPane(renderer, statusPane, "STATUS");
+        renderMenuRows(renderer);
+        renderStatusRows(renderer);
         renderFooter(renderer);
     }
 
     private void renderHeader(UiRenderer renderer) {
-        float titleFont = Math.max(11.0F, 15.0F * layoutScale);
-        float x = panel.x + Math.round(16 * layoutScale);
-        float y = panel.y + Math.round(14 * layoutScale);
+        renderer.fill(headerBounds, SURFACE);
+        renderer.fill(new UiBounds(headerBounds.x, headerBounds.bottom() - Math.max(1, Math.round(uiScale)),
+                headerBounds.width, Math.max(1, Math.round(uiScale))), BORDER_STRONG);
+        float titleFont = Math.max(11.0F, 14.0F * uiScale);
+        float cell = renderer.monoCellWidth(titleFont);
+        float x = headerBounds.x + Math.round(14 * uiScale);
+        float y = headerBounds.y + (headerBounds.height - titleFont) / 2.0F;
         renderer.monoText("OPUS CLIENT", x, y, titleFont, FOREGROUND);
         float titleWidth = renderer.measureMonoText("OPUS CLIENT", titleFont);
-        renderer.monoText("READY", x + titleWidth + renderer.monoCellWidth(titleFont) * 2, y + (titleFont - bodyFont) * 0.5F, bodyFont, ACCENT);
-        // Header rule under the title.
-        int ruleY = panel.y + Math.round(44 * layoutScale);
-        renderer.fill(new UiBounds(panel.x, ruleY, panel.width, Math.max(1, Math.round(layoutScale))), BORDER_SOFT);
+        renderer.monoText("|", x + titleWidth + cell, y, titleFont, BORDER_STRONG);
+        renderer.monoText("READY", x + titleWidth + cell * 3, y, titleFont, ACCENT);
+
+        String right = "UNIFIED CLIENT v0.0.1";
+        float rightWidth = renderer.measureMonoText(right, bodyFont);
+        renderer.monoText(right, headerBounds.right() - Math.round(14 * uiScale) - rightWidth,
+                headerBounds.y + (headerBounds.height - bodyFont) / 2.0F, bodyFont, MUTED);
     }
 
-    private void renderMenu(UiRenderer renderer) {
-        renderPaneLabel(renderer, menuPane, "MENU");
+    private void renderPane(UiRenderer renderer, UiBounds pane, String label) {
+        renderer.fill(pane, SURFACE);
+        renderer.border(pane, Math.max(1, Math.round(uiScale)), BORDER_STRONG);
+        // Header rule + label inside the pane, echoing the launcher pane header.
+        float labelFont = Math.max(9.0F, 10.0F * uiScale);
+        int headerH = Math.round(24 * uiScale);
+        renderer.monoText(label, pane.x + renderer.monoCellWidth(labelFont) + Math.round(4 * uiScale),
+                pane.y + (headerH - labelFont) / 2.0F, labelFont, QUIET);
+        renderer.fill(new UiBounds(pane.x + 1, pane.y + headerH, pane.width - 2, Math.max(1, Math.round(uiScale))), BORDER_SOFT);
+    }
+
+    private void renderMenuRows(UiRenderer renderer) {
         for (int index = 0; index < actions.length; index++) {
             UiBounds row = rowBounds[index];
             boolean selected = index == focusedIndex;
             if (selected) {
                 renderer.fill(row, SELECT_BG);
-                renderer.fill(new UiBounds(row.x, row.y, Math.max(2, Math.round(2 * layoutScale)), row.height), ACCENT);
+                renderer.fill(new UiBounds(row.x, row.y, Math.max(2, Math.round(2 * uiScale)), row.height), ACCENT);
             }
             float textY = row.y + (row.height - bodyFont) / 2.0F;
-            float caretX = row.x + renderer.monoCellWidth(bodyFont);
+            float cell = renderer.monoCellWidth(bodyFont);
+            float caretX = row.x + cell;
             renderer.monoText(selected ? "\u25B8" : " ", caretX, textY, bodyFont, ACCENT);
-            float labelX = caretX + renderer.monoCellWidth(bodyFont) * 2;
             String label = "[" + (index + 1) + "] " + actions[index].label;
-            renderer.monoText(label, labelX, textY, bodyFont, selected ? FOREGROUND : MUTED);
+            renderer.monoText(label, caretX + cell * 2, textY, bodyFont, selected ? FOREGROUND : MUTED);
         }
     }
 
-    private void renderStatus(UiRenderer renderer) {
-        renderPaneLabel(renderer, statusPane, "STATUS");
+    private void renderStatusRows(UiRenderer renderer) {
         String[][] rows = {
             {"Client", "Opus v0.0.1"},
             {"Minecraft", "1.8.9"},
             {"Forge", "11.15.1.2318"},
             {"OptiFine", "HD U M5"},
             {"Session", "In game"},
+            {"Isolation", "Per identity"},
         };
-        float rowHeight = renderer.monoLineHeight(bodyFont) + Math.round(3 * layoutScale);
-        float top = statusPane.y + Math.round(14 * layoutScale);
-        float labelX = statusPane.x + renderer.monoCellWidth(bodyFont);
+        float cell = renderer.monoCellWidth(bodyFont);
+        float rowHeight = renderer.monoLineHeight(bodyFont) + Math.round(4 * uiScale);
+        float top = statusPane.y + Math.round(34 * uiScale);
+        float labelX = statusPane.x + cell + Math.round(4 * uiScale);
         for (int index = 0; index < rows.length; index++) {
             float rowY = top + index * rowHeight;
             renderer.monoText(rows[index][0], labelX, rowY, bodyFont, QUIET);
             float valueWidth = renderer.measureMonoText(rows[index][1], bodyFont);
-            renderer.monoText(rows[index][1], statusPane.right() - renderer.monoCellWidth(bodyFont) - valueWidth, rowY, bodyFont, FOREGROUND);
+            renderer.monoText(rows[index][1], statusPane.right() - cell - Math.round(4 * uiScale) - valueWidth, rowY, bodyFont, FOREGROUND);
         }
     }
 
     private void renderFooter(UiRenderer renderer) {
-        int ruleY = panel.bottom() - Math.round(30 * layoutScale);
-        renderer.fill(new UiBounds(panel.x, ruleY, panel.width, Math.max(1, Math.round(layoutScale))), BORDER_SOFT);
-        float footFont = Math.max(8.0F, 10.0F * layoutScale);
-        float y = panel.bottom() - Math.round(21 * layoutScale);
-        String hint = "UP/DOWN navigate   ENTER select   1-5 quick   ESC back";
-        renderer.monoText(hint, panel.x + Math.round(16 * layoutScale), y, footFont, QUIET);
-    }
-
-    private void renderPaneLabel(UiRenderer renderer, UiBounds pane, String label) {
-        float labelFont = Math.max(8.0F, 10.0F * layoutScale);
-        renderer.monoText(label, pane.x + renderer.monoCellWidth(bodyFont), pane.y - labelFont - Math.round(2 * layoutScale), labelFont, QUIET);
-        renderer.border(pane, Math.max(1, Math.round(layoutScale)), BORDER_SOFT);
+        renderer.fill(footerBounds, SURFACE);
+        renderer.fill(new UiBounds(footerBounds.x, footerBounds.y, footerBounds.width, Math.max(1, Math.round(uiScale))), BORDER_STRONG);
+        float footFont = Math.max(8.0F, 10.0F * uiScale);
+        float y = footerBounds.y + (footerBounds.height - footFont) / 2.0F;
+        String hint = "ARROW navigate   ENTER select   1-5 quick   ESC back";
+        renderer.monoText(hint, footerBounds.x + Math.round(14 * uiScale), y, footFont, QUIET);
     }
 
     @Override
