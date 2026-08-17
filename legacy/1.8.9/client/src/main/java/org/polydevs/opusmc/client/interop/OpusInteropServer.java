@@ -353,8 +353,110 @@ public final class OpusInteropServer {
             respond(out, 204, "application/json", new byte[0], null);
             return;
         }
+        if ("/api/v1/client/modules".equals(request.path)) {
+            if ("GET".equals(request.method)) {
+                respond(out, 200, "application/json", modulesJson(), null);
+                return;
+            }
+        }
+        if ("/api/v1/client/modules/toggle".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String id = OpusJson.extractString(request.body, "id");
+            String enabled = OpusJson.extractString(request.body, "enabled");
+            if (id != null && enabled != null) {
+                bridgeProvider.setModuleEnabled(id,
+                        "1".equals(enabled) || "true".equals(enabled));
+                respond(out, 204, "application/json", new byte[0], null);
+                return;
+            }
+        }
+        if ("/api/v1/client/modules/settings".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String id = OpusJson.extractString(request.body, "id");
+            String key = OpusJson.extractString(request.body, "key");
+            String value = OpusJson.extractString(request.body, "value");
+            if (id != null && key != null && value != null) {
+                bridgeProvider.setModuleSetting(id, key, value);
+                respond(out, 204, "application/json", new byte[0], null);
+                return;
+            }
+        }
         respond(out, 404, "application/json",
                 OpusJson.object("error", "Not found"), null);
+    }
+
+    private String modulesJson() {
+        StringBuilder out = new StringBuilder("{\"modules\":[");
+        List<String[]> modules = bridgeProvider == null
+                ? java.util.Collections.<String[]>emptyList()
+                : bridgeProvider.modules();
+        for (int index = 0; index < modules.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            String[] module = modules.get(index);
+            String id = module.length > 0 ? module[0] : "";
+            String name = module.length > 1 ? module[1] : id;
+            String enabled = module.length > 2 ? module[2] : "false";
+            out.append("{\"id\":\"").append(OpusJson.escape(id))
+                    .append("\",\"name\":\"").append(OpusJson.escape(name))
+                    .append("\",\"enabled\":").append(
+                            "1".equals(enabled) || "true".equals(enabled)
+                                    ? "true" : "false")
+                    .append(",\"settings\":");
+            appendSettings(out, id);
+            out.append('}');
+        }
+        out.append("]}");
+        return out.toString();
+    }
+
+    private void appendSettings(StringBuilder out, String moduleId) {
+        out.append('[');
+        List<String[]> settings = bridgeProvider == null
+                ? java.util.Collections.<String[]>emptyList()
+                : bridgeProvider.moduleSettings(moduleId);
+        for (int index = 0; index < settings.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            String[] row = settings.get(index);
+            String key = row.length > 0 ? row[0] : "";
+            String label = row.length > 1 ? row[1] : key;
+            String type = row.length > 2 ? row[2] : "string";
+            String value = row.length > 3 ? row[3] : "";
+            String min = row.length > 4 ? row[4] : "0";
+            String max = row.length > 5 ? row[5] : "1";
+            String step = row.length > 6 ? row[6] : "1";
+            String options = row.length > 7 ? row[7] : "";
+            out.append("{\"key\":\"").append(OpusJson.escape(key))
+                    .append("\",\"label\":\"").append(OpusJson.escape(label))
+                    .append("\",\"type\":\"").append(OpusJson.escape(type))
+                    .append("\",\"value\":\"").append(OpusJson.escape(value))
+                    .append("\",\"min\":\"").append(OpusJson.escape(min))
+                    .append("\",\"max\":\"").append(OpusJson.escape(max))
+                    .append("\",\"step\":\"").append(OpusJson.escape(step))
+                    .append("\",\"options\":");
+            if (options.isEmpty()) {
+                out.append("[]");
+            } else {
+                String[] parts = options.split(",");
+                out.append('[');
+                for (int optionIndex = 0; optionIndex < parts.length; optionIndex++) {
+                    if (optionIndex > 0) {
+                        out.append(',');
+                    }
+                    out.append("{\"value\":\"")
+                            .append(OpusJson.escape(parts[optionIndex]))
+                            .append("\",\"label\":\"")
+                            .append(OpusJson.escape(parts[optionIndex]))
+                            .append("\"}");
+                }
+                out.append(']');
+            }
+            out.append('}');
+        }
+        out.append(']');
     }
 
     private String optionsJson() {

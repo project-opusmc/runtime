@@ -28,4 +28,17 @@ public interface OpusBridgeProvider {
     void setGameOptionFloat(String key, float value);
 
     void leaveWorld();
+
+    /** Rows are {id, name, enabled}. */
+    List<String[]> modules();
+
+    void setModuleEnabled(String moduleId, boolean enabled);
+
+    /**
+     * Rows are {key,label,type,value,min,max,step,options}; options is a
+     * comma-separated enum storage list or empty.
+     */
+    List<String[]> moduleSettings(String moduleId);
+
+    void setModuleSetting(String moduleId, String key, String value);
 }

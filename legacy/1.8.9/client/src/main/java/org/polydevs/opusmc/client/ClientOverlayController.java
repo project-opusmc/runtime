@@ -47,6 +47,7 @@ import org.polydevs.opusmc.client.ui.UiBounds;
 import org.polydevs.opusmc.client.ui.UiInput;
 import org.polydevs.opusmc.client.ui.UiRenderer;
 import org.polydevs.opusmc.client.module.ModuleRegistry;
+import org.polydevs.opusmc.client.module.ClientModule;
 import org.polydevs.opusmc.client.ui.UiRoute;
 
 /**
@@ -700,6 +701,149 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         }
         minecraft.loadWorld(null);
         minecraft.displayGuiScreen(new OpusClientScreen(this, UiRoute.mainMenu()));
+    }
+
+    @Override
+    public List<String[]> modules() {
+        List<String[]> rows = new ArrayList<String[]>();
+        for (ClientModule module : moduleRegistry.all()) {
+            rows.add(new String[] {
+                    module.id(), module.displayName(), String.valueOf(module.isEnabled()),
+            });
+        }
+        return rows;
+    }
+
+    @Override
+    public void setModuleEnabled(String moduleId, boolean enabled) {
+        ClientModule module = moduleRegistry.byId(moduleId);
+        if (module != null) {
+            module.setEnabled(enabled);
+        }
+    }
+
+    @Override
+    public List<String[]> moduleSettings(String moduleId) {
+        List<String[]> rows = new ArrayList<String[]>();
+        if ("fps".equals(moduleId)) {
+            FpsModule module = (FpsModule) moduleRegistry.byId(moduleId);
+            if (module == null) {
+                return rows;
+            }
+            PerformanceOverlaySettings settings = module.settings();
+            rows.add(settingRow("enabled", "Enabled", "boolean",
+                    settings.enabled() ? "1" : "0", "0", "1", "1", ""));
+            rows.add(settingRow("scale", "Scale", "integer",
+                    String.valueOf(settings.scale()),
+                    String.valueOf(PerformanceOverlaySettings.MIN_SCALE),
+                    String.valueOf(PerformanceOverlaySettings.MAX_SCALE), "1", ""));
+            rows.add(settingRow("opacity", "Opacity", "integer",
+                    String.valueOf(settings.opacity()),
+                    String.valueOf(PerformanceOverlaySettings.MIN_OPACITY),
+                    String.valueOf(PerformanceOverlaySettings.MAX_OPACITY), "1", ""));
+            rows.add(settingRow("anchor", "Anchor", "enum",
+                    settings.anchor().storageValue(), "0", "0", "1",
+                    "top-left,top-right,bottom-left,bottom-right"));
+            rows.add(settingRow("offsetX", "Offset X", "integer",
+                    String.valueOf(settings.offsetX()), "0", "4096", "1", ""));
+            rows.add(settingRow("offsetY", "Offset Y", "integer",
+                    String.valueOf(settings.offsetY()), "0", "4096", "1", ""));
+        } else if ("armor-status".equals(moduleId)) {
+            ArmorStatusModule module = (ArmorStatusModule) moduleRegistry.byId(moduleId);
+            if (module == null) {
+                return rows;
+            }
+            ArmorStatusSettings settings = module.settings();
+            rows.add(settingRow("enabled", "Enabled", "boolean",
+                    settings.enabled() ? "1" : "0", "0", "1", "1", ""));
+            rows.add(settingRow("scale", "Scale", "integer",
+                    String.valueOf(settings.scale()),
+                    String.valueOf(PerformanceOverlaySettings.MIN_SCALE),
+                    String.valueOf(PerformanceOverlaySettings.MAX_SCALE), "1", ""));
+            rows.add(settingRow("opacity", "Opacity", "integer",
+                    String.valueOf(settings.opacity()),
+                    String.valueOf(PerformanceOverlaySettings.MIN_OPACITY),
+                    String.valueOf(PerformanceOverlaySettings.MAX_OPACITY), "1", ""));
+            rows.add(settingRow("anchor", "Anchor", "enum",
+                    settings.anchor().storageValue(), "0", "0", "1",
+                    "top-left,top-right,bottom-left,bottom-right"));
+            rows.add(settingRow("offsetX", "Offset X", "integer",
+                    String.valueOf(settings.offsetX()), "0", "4096", "1", ""));
+            rows.add(settingRow("offsetY", "Offset Y", "integer",
+                    String.valueOf(settings.offsetY()), "0", "4096", "1", ""));
+            rows.add(settingRow("showDurability", "Durability", "boolean",
+                    settings.showDurability() ? "1" : "0", "0", "1", "1", ""));
+        }
+        return rows;
+    }
+
+    @Override
+    public void setModuleSetting(String moduleId, String key, String value) {
+        if (key == null || value == null) {
+            return;
+        }
+        if ("enabled".equals(key)) {
+            setModuleEnabled(moduleId, "1".equals(value) || "true".equals(value));
+            return;
+        }
+        try {
+            if ("fps".equals(moduleId)) {
+                FpsModule module = (FpsModule) moduleRegistry.byId(moduleId);
+                if (module == null) {
+                    return;
+                }
+                PerformanceOverlaySettings current = module.settings();
+                PerformanceOverlaySettings next = current;
+                if ("scale".equals(key)) {
+                    next = current.withScale(Integer.parseInt(value));
+                } else if ("opacity".equals(key)) {
+                    next = current.withOpacity(Integer.parseInt(value));
+                } else if ("anchor".equals(key)) {
+                    next = current.withAnchor(PerformanceOverlaySettings.Anchor.fromStorage(value));
+                } else if ("offsetX".equals(key)) {
+                    next = current.withOffset(Integer.parseInt(value), current.offsetY());
+                } else if ("offsetY".equals(key)) {
+                    next = current.withOffset(current.offsetX(), Integer.parseInt(value));
+                }
+                module.update(next);
+            } else if ("armor-status".equals(moduleId)) {
+                ArmorStatusModule module = (ArmorStatusModule) moduleRegistry.byId(moduleId);
+                if (module == null) {
+                    return;
+                }
+                ArmorStatusSettings current = module.settings();
+                ArmorStatusSettings next = current;
+                if ("scale".equals(key)) {
+                    next = current.withScale(Integer.parseInt(value));
+                } else if ("opacity".equals(key)) {
+                    next = current.withOpacity(Integer.parseInt(value));
+                } else if ("anchor".equals(key)) {
+                    next = current.withAnchor(PerformanceOverlaySettings.Anchor.fromStorage(value));
+                } else if ("offsetX".equals(key)) {
+                    next = current.withOffset(Integer.parseInt(value), current.offsetY());
+                } else if ("offsetY".equals(key)) {
+                    next = current.withOffset(current.offsetX(), Integer.parseInt(value));
+                } else if ("showDurability".equals(key)) {
+                    next = current.withShowDurability(
+                            "1".equals(value) || "true".equals(value));
+                }
+                module.update(next);
+            }
+        } catch (NumberFormatException ignored) {
+            log.warn("Opus ignored invalid module setting {}={}", key, value);
+        }
+    }
+
+    private static String[] settingRow(
+            String key,
+            String label,
+            String type,
+            String value,
+            String min,
+            String max,
+            String step,
+            String options) {
+        return new String[] {key, label, type, value, min, max, step, options};
     }
 
     /**

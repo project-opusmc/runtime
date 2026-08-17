@@ -88,6 +88,24 @@ public final class BridgeHarness {
             @Override
             public void leaveWorld() {
             }
+
+            @Override
+            public List<String[]> modules() {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public void setModuleEnabled(String moduleId, boolean enabled) {
+            }
+
+            @Override
+            public List<String[]> moduleSettings(String moduleId) {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public void setModuleSetting(String moduleId, String key, String value) {
+            }
         });
         check("server.start", server.start());
 
@@ -124,6 +142,10 @@ public final class BridgeHarness {
         HttpURLConnection options = http(origin + "/api/v1/client/options", "GET", cookie);
         check("rest options", options.getResponseCode() == 200
                 && read(options).contains("\"options\":[]"));
+
+        HttpURLConnection modules = http(origin + "/api/v1/client/modules", "GET", cookie);
+        check("rest modules", modules.getResponseCode() == 200
+                && read(modules).contains("\"modules\":[]"));
 
         WsClient ws = new WsClient(origin, code);
         ws.connect();
