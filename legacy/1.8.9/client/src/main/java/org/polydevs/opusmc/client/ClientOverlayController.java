@@ -216,10 +216,10 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             if ("title".equals(screen)
                     && !externalUiOpened
                     && Boolean.parseBoolean(
-                            System.getProperty("opus.webui.autoOpen", "true"))
+                            System.getProperty("opus.webui.autoOpen", "false"))
                     && interopServer.port() > 0) {
                 // Companion UI opens automatically once at the title screen.
-                // Disable with -Dopus.webui.autoOpen=false.
+                // Opt-in: -Dopus.webui.autoOpen=true.
                 externalUiOpened = true;
                 OpusExternalBrowser.open(log, interopServer.url());
             }

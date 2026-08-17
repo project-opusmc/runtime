@@ -1,26 +1,20 @@
 package org.polydevs.opusmc.client.interop;
 
-import java.awt.Desktop;
-import java.net.URI;
 import java.util.Locale;
 import org.apache.logging.log4j.Logger;
 
-/** Opens URLs in the system browser (the "external" backend). */
+/**
+ * Opens URLs in the system browser (the "external" backend).
+ *
+ * <p>Deliberately avoids java.awt.Desktop: initializing AWT inside the
+ * Minecraft JVM on modern macOS is a known crash vector (objc_release during
+ * LWJGL display setup), so every platform uses a plain subprocess instead.</p>
+ */
 public final class OpusExternalBrowser {
     private OpusExternalBrowser() {
     }
 
     public static boolean open(Logger log, String url) {
-        try {
-            if (Desktop.isDesktopSupported()
-                    && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                Desktop.getDesktop().browse(URI.create(url));
-                return true;
-            }
-        } catch (Throwable failure) {
-            log.debug("AWT desktop browse unavailable", failure);
-        }
-
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         try {
             if (os.contains("mac")) {
