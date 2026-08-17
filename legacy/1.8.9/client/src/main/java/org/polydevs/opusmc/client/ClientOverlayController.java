@@ -41,6 +41,7 @@ import java.util.Comparator;
 import org.polydevs.opusmc.client.hud.HudManager;
 import org.polydevs.opusmc.client.interop.OpusExternalBrowser;
 import org.polydevs.opusmc.client.interop.OpusInteropServer;
+import org.polydevs.opusmc.client.interop.OpusBridgeProvider;
 import org.polydevs.opusmc.client.interop.OpusVirtualScreenManager;
 import org.polydevs.opusmc.client.ui.UiBounds;
 import org.polydevs.opusmc.client.ui.UiInput;
@@ -58,7 +59,7 @@ import org.polydevs.opusmc.client.ui.UiRoute;
  * handler from invoking the subscribed methods and crashes Minecraft during
  * the first pause-menu initialization.
  */
-public final class ClientOverlayController {
+public final class ClientOverlayController implements OpusBridgeProvider {
     private static final int CLIENT_OPTIONS_BUTTON_ID = 0x524257;
     private static final String CLIENT_OPTIONS_LABEL = "Client Options";
 
@@ -98,6 +99,7 @@ public final class ClientOverlayController {
         this.interopServer = new OpusInteropServer(log);
         this.virtualScreens = new OpusVirtualScreenManager(log, interopServer);
         this.interopServer.setScreenManager(virtualScreens);
+        this.interopServer.setBridgeProvider(this);
     }
 
     void initialize() {
@@ -314,7 +316,8 @@ public final class ClientOverlayController {
      * Each row is {fileName, displayName}. Failures degrade to an empty list so
      * the terminal always renders.
      */
-    java.util.List<String[]> listWorlds() {
+    @Override
+    public java.util.List<String[]> listWorlds() {
         java.util.List<String[]> worlds = new java.util.ArrayList<String[]>();
         try {
             ISaveFormat saveFormat = Minecraft.getMinecraft().getSaveLoader();
@@ -334,7 +337,8 @@ public final class ClientOverlayController {
      * FML's loader (so mod save data and conversions are handled). After this
      * the world loads and the Opus terminal closes.
      */
-    void loadWorld(String fileName, String displayName) {
+    @Override
+    public void loadWorld(String fileName, String displayName) {
         if (fileName == null || fileName.trim().isEmpty()) {
             return;
         }
@@ -355,7 +359,8 @@ public final class ClientOverlayController {
      * Read the saved multiplayer server list through the typed ServerList API.
      * Each row is {name, ip}. Failures degrade to an empty list.
      */
-    java.util.List<String[]> listServers() {
+    @Override
+    public java.util.List<String[]> listServers() {
         java.util.List<String[]> servers = new java.util.ArrayList<String[]>();
         try {
             ServerList serverList = new ServerList(Minecraft.getMinecraft());
@@ -375,7 +380,8 @@ public final class ClientOverlayController {
      * GuiConnecting flow (host/port parsing, ping, join). Cancelling connect
      * returns to the Opus TUI multiplayer page rather than a vanilla screen.
      */
-    void connectServer(String address) {
+    @Override
+    public void connectServer(String address) {
         if (address == null || address.trim().isEmpty()) {
             return;
         }
@@ -390,7 +396,8 @@ public final class ClientOverlayController {
     }
 
     /** Persist a new server entry so it appears in the Opus TUI server list. */
-    void addServer(String name, String address) {
+    @Override
+    public void addServer(String name, String address) {
         if (address == null || address.trim().isEmpty()) {
             return;
         }

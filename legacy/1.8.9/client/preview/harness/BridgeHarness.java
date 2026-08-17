@@ -11,9 +11,12 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
 import java.util.Random;
 import org.apache.logging.log4j.Logger;
 import org.polydevs.opusmc.client.interop.OpusInteropServer;
+import org.polydevs.opusmc.client.interop.OpusBridgeProvider;
 import org.polydevs.opusmc.client.interop.OpusVirtualScreenManager;
 
 /**
@@ -46,6 +49,29 @@ public final class BridgeHarness {
         OpusInteropServer server = new OpusInteropServer(log);
         OpusVirtualScreenManager screens = new OpusVirtualScreenManager(log, server);
         server.setScreenManager(screens);
+        server.setBridgeProvider(new OpusBridgeProvider() {
+            @Override
+            public List<String[]> listWorlds() {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public void loadWorld(String fileName, String displayName) {
+            }
+
+            @Override
+            public List<String[]> listServers() {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public void connectServer(String address) {
+            }
+
+            @Override
+            public void addServer(String name, String address) {
+            }
+        });
         check("server.start", server.start());
 
         String url = server.url();
@@ -69,6 +95,14 @@ public final class BridgeHarness {
         HttpURLConnection hello = http(origin + "/api/v1/client", "GET", cookie);
         check("rest hello", hello.getResponseCode() == 200);
         check("rest hello body", read(hello).contains("Opus Client"));
+
+        HttpURLConnection worlds = http(origin + "/api/v1/client/worlds", "GET", cookie);
+        check("rest worlds", worlds.getResponseCode() == 200
+                && read(worlds).contains("\"worlds\":[]"));
+
+        HttpURLConnection servers = http(origin + "/api/v1/client/servers", "GET", cookie);
+        check("rest servers", servers.getResponseCode() == 200
+                && read(servers).contains("\"servers\":[]"));
 
         WsClient ws = new WsClient(origin, code);
         ws.connect();

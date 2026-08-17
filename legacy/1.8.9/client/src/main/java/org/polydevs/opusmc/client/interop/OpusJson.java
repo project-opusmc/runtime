@@ -1,5 +1,6 @@
 package org.polydevs.opusmc.client.interop;
 
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -62,6 +63,19 @@ final class OpusJson {
                     .append(escape(keyValues[index + 1])).append('"');
         }
         out.append('}');
+        return out.toString();
+    }
+
+    static String array(List<String> values) {
+        StringBuilder out = new StringBuilder();
+        out.append('[');
+        for (int index = 0; index < values.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            out.append('"').append(escape(values.get(index))).append('"');
+        }
+        out.append(']');
         return out.toString();
     }
 

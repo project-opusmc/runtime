@@ -21,6 +21,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.List;
 import org.apache.logging.log4j.Logger;
 
 /**
@@ -42,6 +43,7 @@ public final class OpusInteropServer {
     private volatile int port = -1;
     private volatile boolean running;
     private OpusVirtualScreenManager screenManager;
+    private OpusBridgeProvider bridgeProvider;
 
     public OpusInteropServer(Logger log) {
         this.log = log;
@@ -51,6 +53,10 @@ public final class OpusInteropServer {
 
     public void setScreenManager(OpusVirtualScreenManager screenManager) {
         this.screenManager = screenManager;
+    }
+
+    public void setBridgeProvider(OpusBridgeProvider bridgeProvider) {
+        this.bridgeProvider = bridgeProvider;
     }
 
     public boolean start() {
@@ -265,8 +271,84 @@ public final class OpusInteropServer {
                 return;
             }
         }
+        if ("/api/v1/client/worlds".equals(request.path)) {
+            if ("GET".equals(request.method)) {
+                respond(out, 200, "application/json", worldsJson(), null);
+                return;
+            }
+        }
+        if ("/api/v1/client/worlds/load".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String file = OpusJson.extractString(request.body, "file");
+            String name = OpusJson.extractString(request.body, "name");
+            if (file != null && !file.isEmpty()) {
+                bridgeProvider.loadWorld(file, name == null ? file : name);
+                respond(out, 204, "application/json", new byte[0], null);
+                return;
+            }
+        }
+        if ("/api/v1/client/servers".equals(request.path)) {
+            if ("GET".equals(request.method)) {
+                respond(out, 200, "application/json", serversJson(), null);
+                return;
+            }
+            if ("POST".equals(request.method) && bridgeProvider != null) {
+                String name = OpusJson.extractString(request.body, "name");
+                String address = OpusJson.extractString(request.body, "address");
+                if (address != null && !address.isEmpty()) {
+                    bridgeProvider.addServer(name == null ? "" : name, address);
+                    respond(out, 204, "application/json", new byte[0], null);
+                    return;
+                }
+            }
+        }
+        if ("/api/v1/client/servers/connect".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String address = OpusJson.extractString(request.body, "address");
+            if (address != null && !address.isEmpty()) {
+                bridgeProvider.connectServer(address);
+                respond(out, 204, "application/json", new byte[0], null);
+                return;
+            }
+        }
         respond(out, 404, "application/json",
                 OpusJson.object("error", "Not found"), null);
+    }
+
+    private String worldsJson() {
+        StringBuilder out = new StringBuilder("{\"worlds\":[");
+        List<String[]> worlds = bridgeProvider == null
+                ? java.util.Collections.<String[]>emptyList()
+                : bridgeProvider.listWorlds();
+        for (int index = 0; index < worlds.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            String[] row = worlds.get(index);
+            String file = row.length > 0 ? row[0] : "";
+            String name = row.length > 1 ? row[1] : file;
+            out.append(OpusJson.object("file", file, "name", name));
+        }
+        out.append("]}");
+        return out.toString();
+    }
+
+    private String serversJson() {
+        StringBuilder out = new StringBuilder("{\"servers\":[");
+        List<String[]> servers = bridgeProvider == null
+                ? java.util.Collections.<String[]>emptyList()
+                : bridgeProvider.listServers();
+        for (int index = 0; index < servers.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            String[] row = servers.get(index);
+            String name = row.length > 0 ? row[0] : "";
+            String address = row.length > 1 ? row[1] : "";
+            out.append(OpusJson.object("name", name, "address", address));
+        }
+        out.append("]}");
+        return out.toString();
     }
 
     private void serveSpa(
