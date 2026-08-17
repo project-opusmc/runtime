@@ -19,4 +19,13 @@ public interface OpusBridgeProvider {
     void connectServer(String address);
 
     void addServer(String name, String address);
+
+    /** Rows are {key,label,type,value,min,max,step}. */
+    List<String[]> gameOptions();
+
+    void adjustGameOption(String key, int delta);
+
+    void setGameOptionFloat(String key, float value);
+
+    void leaveWorld();
 }

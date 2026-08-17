@@ -71,6 +71,23 @@ public final class BridgeHarness {
             @Override
             public void addServer(String name, String address) {
             }
+
+            @Override
+            public List<String[]> gameOptions() {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public void adjustGameOption(String key, int delta) {
+            }
+
+            @Override
+            public void setGameOptionFloat(String key, float value) {
+            }
+
+            @Override
+            public void leaveWorld() {
+            }
         });
         check("server.start", server.start());
 
@@ -103,6 +120,10 @@ public final class BridgeHarness {
         HttpURLConnection servers = http(origin + "/api/v1/client/servers", "GET", cookie);
         check("rest servers", servers.getResponseCode() == 200
                 && read(servers).contains("\"servers\":[]"));
+
+        HttpURLConnection options = http(origin + "/api/v1/client/options", "GET", cookie);
+        check("rest options", options.getResponseCode() == 200
+                && read(options).contains("\"options\":[]"));
 
         WsClient ws = new WsClient(origin, code);
         ws.connect();

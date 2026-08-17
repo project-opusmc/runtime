@@ -311,8 +311,80 @@ public final class OpusInteropServer {
                 return;
             }
         }
+        if ("/api/v1/client/options".equals(request.path)) {
+            if ("GET".equals(request.method)) {
+                respond(out, 200, "application/json", optionsJson(), null);
+                return;
+            }
+        }
+        if ("/api/v1/client/options/adjust".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String key = OpusJson.extractString(request.body, "key");
+            String delta = OpusJson.extractString(request.body, "delta");
+            if (key != null && delta != null) {
+                try {
+                    bridgeProvider.adjustGameOption(key, Integer.parseInt(delta));
+                    respond(out, 204, "application/json", new byte[0], null);
+                } catch (NumberFormatException ignored) {
+                    respond(out, 400, "application/json",
+                            OpusJson.object("error", "Bad delta"), null);
+                }
+                return;
+            }
+        }
+        if ("/api/v1/client/options/set".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String key = OpusJson.extractString(request.body, "key");
+            String value = OpusJson.extractString(request.body, "value");
+            if (key != null && value != null) {
+                try {
+                    bridgeProvider.setGameOptionFloat(key, Float.parseFloat(value));
+                    respond(out, 204, "application/json", new byte[0], null);
+                } catch (NumberFormatException ignored) {
+                    respond(out, 400, "application/json",
+                            OpusJson.object("error", "Bad value"), null);
+                }
+                return;
+            }
+        }
+        if ("/api/v1/client/screen/leave-world".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            bridgeProvider.leaveWorld();
+            respond(out, 204, "application/json", new byte[0], null);
+            return;
+        }
         respond(out, 404, "application/json",
                 OpusJson.object("error", "Not found"), null);
+    }
+
+    private String optionsJson() {
+        StringBuilder out = new StringBuilder("{\"options\":[");
+        List<String[]> options = bridgeProvider == null
+                ? java.util.Collections.<String[]>emptyList()
+                : bridgeProvider.gameOptions();
+        for (int index = 0; index < options.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            String[] row = options.get(index);
+            String key = row.length > 0 ? row[0] : "";
+            String label = row.length > 1 ? row[1] : key;
+            String type = row.length > 2 ? row[2] : "enum";
+            String value = row.length > 3 ? row[3] : "0";
+            String min = row.length > 4 ? row[4] : "0";
+            String max = row.length > 5 ? row[5] : "1";
+            String step = row.length > 6 ? row[6] : "1";
+            out.append("{\"key\":\"").append(OpusJson.escape(key))
+                    .append("\",\"label\":\"").append(OpusJson.escape(label))
+                    .append("\",\"type\":\"").append(OpusJson.escape(type))
+                    .append("\",\"value\":\"").append(OpusJson.escape(value))
+                    .append("\",\"min\":\"").append(OpusJson.escape(min))
+                    .append("\",\"max\":\"").append(OpusJson.escape(max))
+                    .append("\",\"step\":\"").append(OpusJson.escape(step))
+                    .append("\"}");
+        }
+        out.append("]}");
+        return out.toString();
     }
 
     private String worldsJson() {

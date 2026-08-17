@@ -477,7 +477,8 @@ public final class ClientOverlayController implements OpusBridgeProvider {
      * Cycle a boolean/enum option (delta ignored) or nudge a float slider by
      * delta steps. Persists immediately, matching vanilla's button behavior.
      */
-    void adjustGameOption(String key, int delta) {
+    @Override
+    public void adjustGameOption(String key, int delta) {
         try {
             GameSettings settings = Minecraft.getMinecraft().gameSettings;
             GameSettings.Options option = gameOption(key);
@@ -492,6 +493,48 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             settings.saveOptions();
         } catch (Throwable failure) {
             log.warn("Opus failed to adjust option {}", key, failure);
+        }
+    }
+
+    @Override
+    public List<String[]> gameOptions() {
+        List<String[]> rows = new ArrayList<String[]>(OPTION_KEYS.length);
+        try {
+            GameSettings settings = Minecraft.getMinecraft().gameSettings;
+            for (String key : OPTION_KEYS) {
+                GameSettings.Options option = gameOption(key);
+                boolean slider = option.getEnumFloat();
+                boolean bool = option.getEnumBoolean();
+                String type = slider ? "float" : (bool ? "boolean" : "enum");
+                // Normalized 0..1 contract so the web UI never needs to know
+                // per-option min/max; the client denormalizes on write.
+                String value = String.valueOf(
+                        option.normalizeValue(settings.getOptionFloatValue(option)));
+                String min = "0";
+                String max = "1";
+                String step = slider ? "0.05" : "1";
+                rows.add(new String[] {
+                        key, option.name(), type, value, min, max, step,
+                });
+            }
+        } catch (Throwable failure) {
+            log.warn("Opus could not read game options", failure);
+        }
+        return rows;
+    }
+
+    @Override
+    public void setGameOptionFloat(String key, float value) {
+        try {
+            GameSettings settings = Minecraft.getMinecraft().gameSettings;
+            GameSettings.Options option = gameOption(key);
+            if (!option.getEnumFloat()) {
+                return;
+            }
+            settings.setOptionFloatValue(option, option.denormalizeValue(value));
+            settings.saveOptions();
+        } catch (Throwable failure) {
+            log.warn("Opus could not set option {}", key, failure);
         }
     }
 
@@ -649,7 +692,8 @@ public final class ClientOverlayController implements OpusBridgeProvider {
      * API and return to the Opus TUI title, mirroring vanilla's flow without a
      * vanilla screen. Works for both integrated (singleplayer) and remote play.
      */
-    void leaveWorld() {
+    @Override
+    public void leaveWorld() {
         Minecraft minecraft = Minecraft.getMinecraft();
         if (minecraft.theWorld != null) {
             minecraft.theWorld.sendQuittingDisconnectingPacket();
