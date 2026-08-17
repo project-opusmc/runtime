@@ -106,6 +106,15 @@ public final class BridgeHarness {
             @Override
             public void setModuleSetting(String moduleId, String key, String value) {
             }
+
+            @Override
+            public List<String[]> hudModules() {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public void moveHudModule(String moduleId, int x, int y) {
+            }
         });
         check("server.start", server.start());
 
@@ -146,6 +155,10 @@ public final class BridgeHarness {
         HttpURLConnection modules = http(origin + "/api/v1/client/modules", "GET", cookie);
         check("rest modules", modules.getResponseCode() == 200
                 && read(modules).contains("\"modules\":[]"));
+
+        HttpURLConnection hud = http(origin + "/api/v1/client/hud", "GET", cookie);
+        check("rest hud", hud.getResponseCode() == 200
+                && read(hud).contains("\"hud\":[]"));
 
         WsClient ws = new WsClient(origin, code);
         ws.connect();

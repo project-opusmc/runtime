@@ -84,6 +84,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     private boolean captureRouteOpened;
     private boolean captureComplete;
     private int captureTicks;
+    private boolean externalUiOpened;
 
     ClientOverlayController(Logger log) {
         this.log = log;
@@ -212,6 +213,16 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         String screen = virtualScreenName(kind);
         if (screen != null) {
             virtualScreens.open(screen);
+            if ("title".equals(screen)
+                    && !externalUiOpened
+                    && Boolean.parseBoolean(
+                            System.getProperty("opus.webui.autoOpen", "true"))
+                    && interopServer.port() > 0) {
+                // Companion UI opens automatically once at the title screen.
+                // Disable with -Dopus.webui.autoOpen=false.
+                externalUiOpened = true;
+                OpusExternalBrowser.open(log, interopServer.url());
+            }
         }
     }
 
@@ -844,6 +855,44 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             String step,
             String options) {
         return new String[] {key, label, type, value, min, max, step, options};
+    }
+
+    @Override
+    public List<String[]> hudModules() {
+        List<String[]> rows = new ArrayList<String[]>();
+        for (String[] module : modules()) {
+            String id = module[0];
+            String name = module[1];
+            String enabled = module[2];
+            String offsetX = "12";
+            String offsetY = "12";
+            String scale = "100";
+            String anchor = "top-left";
+            List<String[]> settings = moduleSettings(id);
+            for (String[] setting : settings) {
+                String key = setting[0];
+                String value = setting[3];
+                if ("offsetX".equals(key)) {
+                    offsetX = value;
+                } else if ("offsetY".equals(key)) {
+                    offsetY = value;
+                } else if ("scale".equals(key)) {
+                    scale = value;
+                } else if ("anchor".equals(key)) {
+                    anchor = value;
+                }
+            }
+            rows.add(new String[] {
+                    id, name, enabled, offsetX, offsetY, scale, anchor,
+            });
+        }
+        return rows;
+    }
+
+    @Override
+    public void moveHudModule(String moduleId, int x, int y) {
+        setModuleSetting(moduleId, "offsetX", String.valueOf(Math.max(0, x)));
+        setModuleSetting(moduleId, "offsetY", String.valueOf(Math.max(0, y)));
     }
 
     /**

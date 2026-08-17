@@ -41,4 +41,9 @@ public interface OpusBridgeProvider {
     List<String[]> moduleSettings(String moduleId);
 
     void setModuleSetting(String moduleId, String key, String value);
+
+    /** Rows are {id,name,enabled,offsetX,offsetY,scale,anchor}. */
+    List<String[]> hudModules();
+
+    void moveHudModule(String moduleId, int x, int y);
 }

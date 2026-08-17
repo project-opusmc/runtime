@@ -381,8 +381,63 @@ public final class OpusInteropServer {
                 return;
             }
         }
+        if ("/api/v1/client/hud".equals(request.path)) {
+            if ("GET".equals(request.method)) {
+                respond(out, 200, "application/json", hudJson(), null);
+                return;
+            }
+        }
+        if ("/api/v1/client/hud/move".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String id = OpusJson.extractString(request.body, "id");
+            String x = OpusJson.extractString(request.body, "x");
+            String y = OpusJson.extractString(request.body, "y");
+            if (id != null && x != null && y != null) {
+                try {
+                    bridgeProvider.moveHudModule(
+                            id, Integer.parseInt(x), Integer.parseInt(y));
+                    respond(out, 204, "application/json", new byte[0], null);
+                } catch (NumberFormatException ignored) {
+                    respond(out, 400, "application/json",
+                            OpusJson.object("error", "Bad position"), null);
+                }
+                return;
+            }
+        }
         respond(out, 404, "application/json",
                 OpusJson.object("error", "Not found"), null);
+    }
+
+    private String hudJson() {
+        StringBuilder out = new StringBuilder("{\"hud\":[");
+        List<String[]> hud = bridgeProvider == null
+                ? java.util.Collections.<String[]>emptyList()
+                : bridgeProvider.hudModules();
+        for (int index = 0; index < hud.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            String[] row = hud.get(index);
+            String id = row.length > 0 ? row[0] : "";
+            String name = row.length > 1 ? row[1] : id;
+            String enabled = row.length > 2 ? row[2] : "false";
+            String offsetX = row.length > 3 ? row[3] : "12";
+            String offsetY = row.length > 4 ? row[4] : "12";
+            String scale = row.length > 5 ? row[5] : "100";
+            String anchor = row.length > 6 ? row[6] : "top-left";
+            out.append("{\"id\":\"").append(OpusJson.escape(id))
+                    .append("\",\"name\":\"").append(OpusJson.escape(name))
+                    .append("\",\"enabled\":")
+                    .append("1".equals(enabled) || "true".equals(enabled)
+                            ? "true" : "false")
+                    .append(",\"offsetX\":\"").append(OpusJson.escape(offsetX))
+                    .append("\",\"offsetY\":\"").append(OpusJson.escape(offsetY))
+                    .append("\",\"scale\":\"").append(OpusJson.escape(scale))
+                    .append("\",\"anchor\":\"").append(OpusJson.escape(anchor))
+                    .append("\"}");
+        }
+        out.append("]}");
+        return out.toString();
     }
 
     private String modulesJson() {
