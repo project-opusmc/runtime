@@ -11,7 +11,7 @@ import java.nio.file.Path;
 
 /** Parsed, revisioned command sent to a local real-game UI preview session. */
 final class UiPreviewSpec {
-    static final int SCHEMA_VERSION = 1;
+    static final int SCHEMA_VERSION = 2;
 
     enum Fixture {
         CURRENT,
@@ -23,7 +23,8 @@ final class UiPreviewSpec {
     enum InputKind {
         NONE,
         CLICK,
-        DRAG
+        DRAG,
+        KEY
     }
 
     static final class Pointer {
@@ -37,7 +38,8 @@ final class UiPreviewSpec {
     }
 
     static final class Input {
-        static final Input NONE = new Input(InputKind.NONE, 0, 0, 0, 0, 0, false, 0, 0);
+        static final Input NONE = new Input(
+                InputKind.NONE, 0, 0, 0, 0, 0, false, 0, 0, null);
 
         final InputKind kind;
         final int x;
@@ -48,6 +50,7 @@ final class UiPreviewSpec {
         final boolean hasPrimeClick;
         final int primeX;
         final int primeY;
+        final String key;
 
         Input(
                 InputKind kind,
@@ -58,7 +61,8 @@ final class UiPreviewSpec {
                 int button,
                 boolean hasPrimeClick,
                 int primeX,
-                int primeY) {
+                int primeY,
+                String key) {
             this.kind = kind;
             this.x = x;
             this.y = y;
@@ -68,6 +72,7 @@ final class UiPreviewSpec {
             this.hasPrimeClick = hasPrimeClick;
             this.primeX = primeX;
             this.primeY = primeY;
+            this.key = key;
         }
     }
 
@@ -110,7 +115,7 @@ final class UiPreviewSpec {
         requireSchema(root);
         long revision = requiredLong(root, "revision", 0L, Long.MAX_VALUE);
         Fixture fixture = fixture(string(root, "fixture", "current"));
-        UiRoute route = route(string(root, "route", "mods"));
+        UiRoute route = route(object(root, "route"));
         Pointer pointer = pointer(object(root, "pointer"));
         Input input = input(object(root, "input"));
         JsonObject capture = object(root, "capture");
@@ -142,23 +147,52 @@ final class UiPreviewSpec {
         throw new IllegalArgumentException("fixture must be current, world, pause-menu or right-shift");
     }
 
-    private static UiRoute route(String raw) {
-        if ("main".equalsIgnoreCase(raw)) {
+    private static UiRoute route(JsonObject route) {
+        if (route == null) {
+            throw new IllegalArgumentException("route must be an object with a canonical id");
+        }
+        String id = string(route, "id", null);
+        if ("title".equals(id)) {
             return UiRoute.mainMenu();
         }
-        if ("hud".equalsIgnoreCase(raw)) {
+        if ("singleplayer".equals(id)) {
+            return UiRoute.singleplayer();
+        }
+        if ("multiplayer".equals(id)) {
+            return UiRoute.multiplayer();
+        }
+        if ("settings".equals(id)) {
+            JsonObject params = object(route, "params");
+            String section = params == null ? null : string(params, "settingsSection", null);
+            UiRoute.SettingsSection settingsSection = section == null
+                    ? UiRoute.SettingsSection.GAME
+                    : UiRoute.SettingsSection.fromWireValue(section);
+            if (settingsSection == null) {
+                throw new IllegalArgumentException("settings.params.settingsSection is invalid");
+            }
+            return UiRoute.gameOptions(settingsSection);
+        }
+        if ("accounts".equals(id)) {
+            return UiRoute.accounts();
+        }
+        if ("game_menu".equals(id)) {
+            return UiRoute.pauseMenu();
+        }
+        if ("quick_hub".equals(id)) {
+            return UiRoute.quickHub();
+        }
+        if ("hud_editor".equals(id)) {
             return UiRoute.hudEditor();
         }
-        if ("mods".equalsIgnoreCase(raw)) {
+        if ("mods_catalog".equals(id)) {
             return UiRoute.modHub();
         }
-        if ("detail".equalsIgnoreCase(raw) || "performance".equalsIgnoreCase(raw)) {
-            return UiRoute.moduleDetail(FpsModule.ID);
+        if ("module_detail".equals(id)) {
+            JsonObject params = object(route, "params");
+            String moduleId = params == null ? null : string(params, "moduleId", null);
+            return UiRoute.moduleDetail(moduleId);
         }
-        if ("armor".equalsIgnoreCase(raw) || "armor-status".equalsIgnoreCase(raw)) {
-            return UiRoute.moduleDetail(ArmorStatusModule.ID);
-        }
-        throw new IllegalArgumentException("route must be main, hud, mods, detail or armor");
+        throw new IllegalArgumentException("route.id is not a canonical product route");
     }
 
     private static Pointer pointer(JsonObject object) {
@@ -175,6 +209,9 @@ final class UiPreviewSpec {
             return Input.NONE;
         }
         String type = string(object, "type", "");
+        if (type.isEmpty() || "none".equalsIgnoreCase(type)) {
+            return Input.NONE;
+        }
         int button = integer(object, "button", 0, 0, 2);
         JsonObject prime = object(object, "prime");
         boolean hasPrime = prime != null;
@@ -190,7 +227,8 @@ final class UiPreviewSpec {
                     button,
                     hasPrime,
                     primeX,
-                    primeY);
+                    primeY,
+                    null);
         }
         if ("drag".equalsIgnoreCase(type)) {
             return new Input(
@@ -202,9 +240,17 @@ final class UiPreviewSpec {
                     button,
                     hasPrime,
                     primeX,
-                    primeY);
+                    primeY,
+                    null);
         }
-        throw new IllegalArgumentException("input.type must be click or drag");
+        if ("key".equalsIgnoreCase(type)) {
+            String key = string(object, "key", "").toLowerCase(java.util.Locale.ROOT);
+            if (!"escape".equals(key) && !"retry".equals(key)) {
+                throw new IllegalArgumentException("input.key must be escape or retry");
+            }
+            return new Input(InputKind.KEY, 0, 0, 0, 0, 0, false, 0, 0, key);
+        }
+        throw new IllegalArgumentException("input.type must be none, click, drag or key");
     }
 
     private static String safePngName(String name) {

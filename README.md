@@ -1,20 +1,36 @@
 # Opus Runtime
 
 Opus Runtime contains the Java-side bootstrap, shared runtime services, and
-Minecraft Java Edition integrations used by Opus Launcher. This repository is
-independently buildable and publishes a deterministic artifact contract for the
-Opus superproject.
+the supported Minecraft Java Edition 1.8.9 Forge integration used by Opus
+Launcher. This repository is independently buildable and publishes a
+deterministic artifact contract for the Opus superproject.
+
+## Current production boundary
+
+```text
+Opus Launcher -> Forge 1.8.9 + OptiFine HD U M5 -> OPUS Core Mod -> vanilla Minecraft UI
+```
+
+The Core Mod is the only OPUS mod staged into a production game directory. It
+owns lifecycle/telemetry and narrowly verified non-UI patches; it must not own
+a GUI, HUD product surface, key binding, browser process, or input route.
+
+The legacy CEF/product-client source remains quarantined in the working tree
+for later review. It is not built into the Runtime artifact set, bundled with
+the desktop launcher, staged, or launched in production.
 
 ## Modules
 
 - `bootstrap/` starts the managed game process and owns the launcher/runtime
   argument protocol.
-- `common/` provides lifecycle, telemetry, and shared client hooks.
+- `common/` provides lifecycle and local telemetry services without product UI
+  hooks.
 - `legacy/1.8.9/` contains the supported Forge 1.8.9 runtime, mappings,
-  transformers, and typed client mod.
+  and Core Mod transformers.
+- `legacy/1.8.9/client/` is quarantined research source only. It is outside the
+  production build/package/staging/launch contract.
 
-All Java packages use the `org.polydevs.opusmc` namespace. The Forge client mod
-ID and resource namespace are `opusclient`.
+All Java packages use the `org.polydevs.opusmc` namespace.
 
 ## Build
 
@@ -39,13 +55,15 @@ Verified release inputs are written to `build/runtime/`:
 ```text
 artifacts/opus-bootstrap-<version>.jar
 artifacts/opus-runtime-legacy-1.8.9-<version>.jar
-artifacts/opus-client-legacy-1.8.9-<version>.jar
 runtime-manifest.json
 runtime-checksums.json
 ```
 
 Launcher consumes the manifest and checksum files instead of discovering JARs
-by filename or build-directory layout.
+by filename or build-directory layout. A valid production manifest has exactly
+those two OPUS artifacts. The managed Forge `mods/` directory must contain only
+the verified OptiFine JAR and the verified OPUS Core Mod; stale
+`opus-client-legacy-1.8.9.jar` files are removed before Forge scans it.
 
 ## License
 

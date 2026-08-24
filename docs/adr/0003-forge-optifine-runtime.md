@@ -38,7 +38,8 @@ LaunchWrapper ownership of tweakers and transformed Minecraft classes.
 ## Consequences
 
 - The legacy standalone `BootstrapMain` / `TransformingClassLoader` route is
-  not a supported Premium or QA launch path.
+  quarantined source only: it is excluded from production artifacts and cannot
+  be selected by Premium or QA.
 - Installer, desktop, CLI, package assets, tests, and documentation must agree
   on the Forge profile and on the two-artifact QA mod set.
 - A missing, altered, or unsupported OptiFine JAR is a launch blocker, not a

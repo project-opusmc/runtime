@@ -204,7 +204,6 @@ public final class ClientTelemetry {
 
     /** Records a local left-click action before the controller decides if it can attack. */
     public static void attackInput() {
-        ClientConfigUi.recordClick();
         if (!ENABLED.get()) {
             return;
         }

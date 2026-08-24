@@ -5,8 +5,8 @@ import org.polydevs.opusmc.bootstrap.TransformerChain;
 import org.polydevs.opusmc.patches.CombatTelemetryTransformer;
 import org.polydevs.opusmc.patches.MinecraftTelemetryTransformer;
 import org.polydevs.opusmc.patches.NetworkTelemetryTransformer;
+import org.polydevs.opusmc.patches.OptiFineCloudRendererTransformer;
 import org.polydevs.opusmc.patches.RenderTelemetryTransformer;
-import org.polydevs.opusmc.patches.WindowTitleTransformer;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -15,7 +15,7 @@ import net.minecraft.launchwrapper.IClassTransformer;
 
 /** Adapts Opus's verified 1.8.9 bytecode patches to Forge's class loader. */
 public final class OpusForgeClassTransformer implements IClassTransformer {
-    private static final int BASE_TRANSFORMER_COUNT = 8;
+    private static final int BASE_TRANSFORMER_COUNT = 6;
     private static final Set<String> BASE_TARGET_CLASSES = Collections.unmodifiableSet(new HashSet<String>(
             Arrays.asList(
                     "ave",
@@ -23,7 +23,8 @@ public final class OpusForgeClassTransformer implements IClassTransformer {
                     "bfk",
                     "bda",
                     "bcy",
-                    "ek")));
+                    "ek",
+                    OptiFineCloudRendererTransformer.TARGET_CLASS)));
     private final TransformerChain transformerChain;
 
     public OpusForgeClassTransformer() {
@@ -98,18 +99,12 @@ public final class OpusForgeClassTransformer implements IClassTransformer {
 
     private static java.util.List<ClassTransformer> transformers() {
         java.util.List<ClassTransformer> transformers = new java.util.ArrayList<ClassTransformer>();
-        transformers.add(new WindowTitleTransformer());
         transformers.add(new ForgeLifecycleTransformer());
         transformers.add(new MinecraftTelemetryTransformer());
         transformers.add(new RenderTelemetryTransformer());
         transformers.add(new CombatTelemetryTransformer());
         transformers.add(new NetworkTelemetryTransformer());
-        // Replaces the vanilla Mojang splash with the Opus terminal boot
-        // screen. Fail-soft so it never blocks a launch if the anchor moves.
-        transformers.add(new BootTerminalTransformer());
-        // Replaces the later world/resource loading dirt texture with the same
-        // full-screen Opus terminal language.
-        transformers.add(new LoadingTerminalTransformer());
+        transformers.add(new OptiFineCloudRendererTransformer());
         return transformers;
     }
 

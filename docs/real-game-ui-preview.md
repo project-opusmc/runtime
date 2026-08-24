@@ -1,126 +1,218 @@
-# Real-game UI Preview Mode
+# Real-game UI Preview Mode — historical CEF evidence
+
+> **Superseded on 2026-08-22.** This document records the CEF preview route and
+> its test evidence. It is not part of the production launch contract. The
+> active real-game acceptance path is
+> [Forge + OptiFine + OPUS Core Mod + vanilla Minecraft UI](../../docs/coremod-first-goal-and-plan.md).
 
 ## Purpose
 
-This is OPUS's replacement for HTML mockups, desktop-window screenshots, and
-manual Computer Use while iterating on Minecraft UI. The Forge client mod
-renders the normal OPUS page tree, then captures the **same OpenGL framebuffer**
-that a player sees. There is no second renderer.
+Preview Mode drives the production in-game UI and captures Minecraft's real
+OpenGL framebuffer. It does not render a mock, open an external browser, or
+restore the retired Java T-UI.
 
-Preview Mode is deliberately opt-in. It exists only when the development JVM
-receives explicit local file paths. A packaged Opus Launcher or Opus Launcher QA
-does not watch arbitrary theme/control files.
+The ownership boundary is the same as production:
 
-## Run it
+```text
+Svelte/CEF OSR  -> product compositor
+Java/Core       -> route, state, lifecycle and input authority
+Native Java     -> live HUD and HUD-editor hit testing only
+```
 
-From `game/client-mod`:
+A browser preview remains useful for fast visual iteration, but only this mode
+can provide automated evidence from the integrated compositor. Final acceptance
+still requires a person to run Minecraft and verify resize, fullscreen, Retina,
+Escape, helper failure/reopen and HUD persistence.
+
+The CEF helper is also non-interactive with respect to macOS credentials. Opus
+does not use Chromium for password/cookie storage; the browser process starts
+with `use-mock-keychain` and `password-store=basic`, and the same switches are
+applied by the renderer/GPU/plugin subprocess entry point. Microsoft refresh
+tokens belong to the separate Opus local vault. A CEF test must fail if its log
+reports an OS Keychain lookup or unavailable browser encryption.
+
+## Stale-install guard
+
+Existing launcher data roots can contain an older OPUS coremod/client pair and
+their logs. Those sessions are not evidence for the current UI. Before a real
+acceptance run, verify that the staged artifacts are the current pair:
+
+```text
+coremod  SHA-1 31c36fc84aec040cbfc30bd86f54b7be27ec1bb8
+client   SHA-1 74873f2c4b996f49365f9b38a4c4b2c6d9cc71a3
+```
+
+The current 2026-08-21 Runtime release manifest also records these SHA-256
+values: client `ea979a0b6a65e32a9eb10c535d5bc7bcecdcb91511cf5a45e49b5aeccfc59ccb`
+and runtime/coremod `cf6d72e2c63d368cd6f445b0f2c28773a6f66c0a77d388d28d722e0085115c49`.
+Do not treat a preview status file or screenshot with another artifact hash as
+evidence for this release.
+
+If the session log still reports `Opus virtual screen`, `ClientConfigUi`, or
+`opus.client-options`, it is using a retired artifact and must not be used to
+judge the former CEF UI.
+
+## Run It
+
+From `runtime/legacy/1.8.9/client`:
 
 ```sh
 ./gradlew runUiPreview
 ```
 
-The task launches a 1440 x 900 Forge development client and enables:
+This is an explicit, one-shot launch. The task reads:
 
-- `preview/opus-ui-preview.json` — revisioned route/input/capture command;
-- `preview/opus-ui-theme.json` — visual tokens and selected layout ratios.
-- `preview/opus-utility-settings.json` — local preferences for the currently
-  implemented live utilities. It begins empty; preview fixtures never inject
-  player equipment or sample telemetry to make a module look populated.
+- `preview/opus-ui-preview.json` for the revisioned route/input/capture command;
+- `preview/opus-utility-settings.json` for real locally persisted utility state.
 
-The client creates or opens a local creative fixture world only when the
-control file requests `"fixture": "world"` or `"fixture": "pause-menu"`.
-The latter opens Minecraft's actual `GuiIngameMenu` before dispatching the
-production Client Options route; it is evidence for the pause-menu flow, not
-a second renderer or a mock menu. The FPS HUD always reads the running
-client's actual frame rate and no fixture manufactures module data. Captures
-are written to:
+There is no native UI theme file. Product visuals are owned by the Svelte bundle
+under `/Users/zvwgvx/Project/Opus/ui` and are packaged into the client artifact.
 
-`game/client-mod/run/screenshots/<capture.file>`
+Captures are written below the Forge run directory:
 
-The adjacent status file is written by the real client:
+```text
+runtime/legacy/1.8.9/client/run/screenshots/<capture.file>
+```
 
-`game/client-mod/preview/opus-ui-preview.json.status.json`
+The adjacent status file is:
 
-## Fast iteration loop
+```text
+runtime/legacy/1.8.9/client/preview/opus-ui-preview.json.status.json
+```
 
-1. Keep the preview client open once.
-2. Save `opus-ui-theme.json`; its valid visual token changes reload on the next
-   client tick and relayout the real open page.
-3. Edit `opus-ui-preview.json`, increment `revision`, select a route and a
-   capture filename.
-4. The game opens the real route, waits for it to render, then writes its
-   framebuffer PNG. Inspect that PNG; do not judge a separate mockup.
+After a capture or terminal preview error, the preview client shuts down so the
+Gradle process and Minecraft files are released deterministically.
 
-Java behavior/layout changes still require a mod rebuild/restart. The next
-phase is to move page geometry into a validated declarative layout document;
-until then only theme tokens and the listed layout ratios are hot-reloaded.
+## Readiness Contract
 
-## Delivery gates
+Preview Mode does not trust a fixed number of ticks as proof that UI exists. Its
+state machine is:
 
-1. **Foundation — complete:** use the same in-game renderer, real fixture
-   world, route driver, hover/click/drag dispatch, framebuffer capture and
-   status protocol.
-2. **Visual iteration — started:** theme colors and primary frame/menu ratios
-   hot-reload. The next layout work must move screen geometry from Java into a
-   validated document before visual implementation resumes.
-3. **Interaction proof:** each new route must have a revisioned control-file
-   scenario that opens it, invokes each real action, captures the result and
-   reports its route/status.
-4. **Release proof:** rebuild the exact client-mod JAR, stage those exact
-   bytes in each product bundle, then rerun the capture suite from that JAR.
+```text
+open production route
+  -> wait for CEF READY and a current-viewport texture
+  -> allow the route to settle
+  -> dispatch input through the production owner
+  -> wait for a post-input CEF frame or an intentional close
+  -> capture the Minecraft framebuffer
+```
 
-### Armor Status release gate
+`starting` and `failed` surfaces cannot be captured. A `closed` surface is valid
+only after an action such as Escape intentionally closes the product UI and the
+requested evidence is the resulting game frame.
 
-Armor Status may be catalogued only because it reads the local player's actual
-equipped `armorInventory` and real item durability. A preview world starts
-without armor, so an enabled Armor Status widget must remain absent there.
-Do not fill the inventory, produce rows, or manufacture durability simply to
-make a capture. Before its bytes are staged in a product bundle, capture the
-HUD editor and normal HUD while a player has equipped real armor, then verify:
-
-1. the rendered rows match the worn slots and item durability;
-2. the editor gear resolves `ModuleDetail(armor-status)`;
-3. an enable/configure/restart cycle retains only persisted settings.
-
-## Control file contract
-
-Every command must increase `revision`. A repeated revision is intentionally
-ignored, so the client cannot accidentally repeat a click or drag every tick.
+The status document records the compositor and geometry explicitly:
 
 ```json
 {
-  "schemaVersion": 1,
-  "revision": 2,
-  "fixture": "world",
-  "route": "mods",
-  "pointer": { "x": 320, "y": 140 },
-  "input": { "type": "click", "x": 320, "y": 140, "button": 0 },
-  "capture": { "file": "opus-mods-hover.png", "afterFrames": 10 }
+  "schemaVersion": 2,
+  "state": "rendering",
+  "message": "CEF product frame ready",
+  "revision": 181,
+  "productCompositor": "cef",
+  "surfaceState": "ready",
+  "viewport": { "width": 960, "height": 600 },
+  "route": "quick_hub"
 }
 ```
 
-Supported routes: `main`, `hud`, `mods`, `detail`, `armor`.
+## Control Contract
 
-Supported fixtures: `current` (do not launch a world), `world` (the local
-creative fixture world), and `pause-menu` (the fixture world followed by the
-real vanilla pause menu and the production Client Options destination), and
-`right-shift` (the fixture world followed by the exact production route method
-used by the Right Shift key binding).
+Every command must increase `revision`; repeating a revision never repeats its
+click, drag or key event.
 
-`pointer` makes the real UI render its actual hover state. `input` is optional
-and is dispatched to the existing `UiRuntime`; only a real control can handle
-it. Supported types are `click` and `drag`. Coordinates are OPUS logical UI
-coordinates, not desktop pixels.
+Schema version 2 uses the same canonical route IDs as the integrated bridge:
 
-`capture.file` must be a simple `.png` filename. It is saved by Minecraft's
-`ScreenShotHelper` from the active framebuffer.
+```json
+{
+  "schemaVersion": 2,
+  "revision": 181,
+  "fixture": "right-shift",
+  "route": { "id": "quick_hub" },
+  "input": { "type": "key", "key": "escape" },
+  "capture": { "file": "opus-quick-hub-escape.png", "afterFrames": 14 }
+}
+```
+
+Canonical route IDs are:
+
+- `title`
+- `singleplayer`
+- `multiplayer`
+- `settings`
+- `accounts`
+- `game_menu`
+- `quick_hub`
+- `mods_catalog`
+- `module_detail`
+- `hud_editor`
+
+Module detail carries its real module ID in route parameters:
+
+```json
+{
+  "id": "module_detail",
+  "params": { "moduleId": "fps" }
+}
+```
+
+Routes remain subject to production context rules. For example, `quick_hub`,
+`game_menu` and `hud_editor` require a live world, while `title`, world lists and
+accounts require no live world.
+
+Supported fixtures are:
+
+- `current`: keep the current Minecraft world context;
+- `world`: open the deterministic local creative fixture world if necessary;
+- `pause-menu`: open the real FML pause-menu lifecycle, then enter the canonical
+  CEF pause route and navigate to `mods_catalog`;
+- `right-shift`: invoke the same production hotkey flow that opens `quick_hub`.
+
+Input types are:
+
+```json
+{ "type": "none" }
+```
+
+Use `none` when the route itself is the scenario under review and no
+post-route input should be dispatched. Other input types are:
+
+```json
+{ "type": "click", "x": 320, "y": 140, "button": 0 }
+```
+
+```json
+{
+  "type": "drag",
+  "x": 320,
+  "y": 140,
+  "toX": 520,
+  "toY": 260,
+  "button": 0
+}
+```
+
+```json
+{ "type": "key", "key": "escape" }
+```
+
+`retry` is also accepted as a key command for the minimal CEF failure shell.
+Pointer coordinates are OPUS logical UI coordinates and must be inside the
+current product viewport. HUD-editor canvas ownership remains revision-scoped;
+one event is never dispatched to both CEF and the native editor.
+
+The responsive Minecraft acceptance run at revision `201` used a `480 x 300`
+logical viewport (`1440 x 900` framebuffer at device scale `3`). It confirmed
+that the native FPS widget remains visible while the CEF HUD Editor sidebar
+keeps its settings and close controls inside the product surface.
 
 ## Invariants
 
-- The preview calls the same `OpusClientScreen`, `UiRuntime`, pages, assets,
-  font renderer, blur path and framebuffer as the shipped client.
-- A visible route/control requires real production behavior; Preview Mode does
-  not manufacture module state or telemetry.
-- The control protocol is local, revisioned and fail-closed.
-- A final product screenshot must be recaptured from the exact packaged JAR;
-  development captures are iteration evidence, not release proof.
+1. CEF is the only product compositor used by Preview Mode.
+2. A missing or failed helper shows only the minimal lifecycle shell.
+3. Preview input uses the same Java-owned Escape/history and CEF/native ownership
+   rules as a player input event.
+4. Preview data never invents worlds, servers, accounts, modules, ping, equipment
+   or telemetry.
+5. A development capture is evidence for iteration, not proof that the packaged
+   release works on the target Minecraft installation.

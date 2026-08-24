@@ -3,10 +3,8 @@ package org.polydevs.opusmc.client.hud;
 import org.polydevs.opusmc.client.ui.UiBounds;
 import org.polydevs.opusmc.client.ui.UiInput;
 import org.polydevs.opusmc.client.ui.UiRenderer;
-import org.polydevs.opusmc.client.ui.UiFontWeight;
 import org.polydevs.opusmc.client.ui.render.MinecraftUiRenderer;
 import org.polydevs.opusmc.client.ui.render.MinecraftUiScale;
-import org.polydevs.opusmc.client.UiTheme;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -76,29 +74,11 @@ public final class HudManager {
         HudRenderContext context = new HudRenderContext(minecraft, renderer, viewport);
         editorBounds.clear();
         renderWidgets(context);
-
-        String hoveredModuleId = findModuleAt(input.mouseX, input.mouseY);
-        String previousChromeModuleId = chromeModuleId;
-        String chromeModuleId = selectedModuleId != null ? selectedModuleId : hoveredModuleId;
-        // The toolbar sits just outside the widget bounds. Retain its owner
-        // while crossing that small gap, otherwise the S/X/resize controls
-        // disappear at the exact moment the player tries to use one.
-        if (chromeModuleId == null && previousChromeModuleId != null && isOverEditorControl(input.mouseX, input.mouseY)) {
-            chromeModuleId = previousChromeModuleId;
-        }
-        this.chromeModuleId = chromeModuleId;
-        if (chromeModuleId == null) {
-            clearControls();
+        UiBounds outline = preparePointer(input.mouseX, input.mouseY);
+        if (outline == null) {
             return;
         }
 
-        UiBounds bounds = editorBounds.get(chromeModuleId);
-        if (bounds == null) {
-            clearControls();
-            return;
-        }
-
-        UiBounds outline = bounds.inset(-3);
         renderer.border(outline, 1, 0xFFE6E7EB);
         // Match the observed HUD-editor anatomy: a compact resize handle at
         // the corner and low-profile settings/remove controls on the widget
@@ -115,6 +95,9 @@ public final class HudManager {
         if (button != 0) {
             return null;
         }
+        // Mouse events can arrive before the next draw pass (notably during
+        // route changes), so derive native hit targets from this exact point.
+        preparePointer(mouseX, mouseY);
         if (closeControl.contains(mouseX, mouseY)) {
             HudWidget widget = selectedOrHoveredWidget(mouseX, mouseY);
             if (widget != null) {
@@ -155,6 +138,16 @@ public final class HudManager {
         return null;
     }
 
+    /** Whether the native editor, rather than CEF chrome, owns this point. */
+    public boolean editorOwnsPoint(int mouseX, int mouseY) {
+        return findModuleAt(mouseX, mouseY) != null || isOverEditorControl(mouseX, mouseY);
+    }
+
+    /** True while a native widget body or resize handle owns a left-button drag. */
+    public boolean hasPointerCapture() {
+        return dragMode != DragMode.NONE && activeModuleId != null;
+    }
+
     public boolean editorMouseDrag(UiBounds viewport, int mouseX, int mouseY, int button) {
         if (button != 0 || dragMode == DragMode.NONE || activeModuleId == null) {
             return false;
@@ -169,7 +162,7 @@ public final class HudManager {
         lastMouseX = mouseX;
         lastMouseY = mouseY;
         if (dragMode == DragMode.MOVE) {
-            return widget.moveBy(viewport, deltaX, deltaY);
+            return widget.moveBy(viewport, bounds, deltaX, deltaY);
         }
         return widget.resizeBy(bounds, deltaX);
     }
@@ -182,6 +175,18 @@ public final class HudManager {
         activeModuleId = null;
         dragMode = DragMode.NONE;
         return widget != null && widget.commitEditorChange();
+    }
+
+    /** Cancels any native drag/resize ownership when its route or screen closes. */
+    public void cancelPointerCapture() {
+        HudWidget widget = widgetById(activeModuleId);
+        if (widget != null) {
+            widget.cancelEditorChange();
+        }
+        activeModuleId = null;
+        dragMode = DragMode.NONE;
+        selectedModuleId = null;
+        clearControls();
     }
 
     private void renderWidgets(HudRenderContext context) {
@@ -230,6 +235,36 @@ public final class HudManager {
         closeControl = new UiBounds(0, 0, 0, 0);
         settingsControl = new UiBounds(0, 0, 0, 0);
         resizeControl = new UiBounds(0, 0, 0, 0);
+    }
+
+    /** Recomputes the native editor chrome and returns its outline. */
+    private UiBounds preparePointer(int mouseX, int mouseY) {
+        String hoveredModuleId = findModuleAt(mouseX, mouseY);
+        String previousChromeModuleId = chromeModuleId;
+        String nextChromeModuleId = selectedModuleId != null ? selectedModuleId : hoveredModuleId;
+        // The controls sit just outside the widget bounds. Retain their owner
+        // while the pointer crosses that small gap.
+        if (nextChromeModuleId == null
+                && previousChromeModuleId != null
+                && isOverEditorControl(mouseX, mouseY)) {
+            nextChromeModuleId = previousChromeModuleId;
+        }
+        chromeModuleId = nextChromeModuleId;
+        if (nextChromeModuleId == null) {
+            clearControls();
+            return null;
+        }
+
+        UiBounds bounds = editorBounds.get(nextChromeModuleId);
+        if (bounds == null) {
+            clearControls();
+            return null;
+        }
+        UiBounds outline = bounds.inset(-3);
+        resizeControl = new UiBounds(outline.x - 3, outline.y - 3, 10, 10);
+        settingsControl = new UiBounds(outline.x + 2, outline.bottom() - 12, 10, 10);
+        closeControl = new UiBounds(outline.right() - 12, outline.bottom() - 12, 10, 10);
+        return outline;
     }
 
     /**

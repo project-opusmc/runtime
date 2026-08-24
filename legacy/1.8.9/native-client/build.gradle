@@ -1,0 +1,594 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import java.util.jar.JarFile
+import org.gradle.api.tasks.compile.JavaCompile
+
+buildscript {
+    configurations.classpath {
+        resolutionStrategy.cacheChangingModulesFor 36500, 'days'
+    }
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.1.3'
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle.forge'
+
+version = '0.1.0-proof.2'
+group = 'org.polydevs.opusmc'
+archivesBaseName = 'opus-native-ui-proof-1.8.9'
+sourceCompatibility = targetCompatibility = '1.8'
+
+minecraft {
+    version = '1.8.9-11.15.1.2318-1.8.9'
+    mappings = 'stable_22'
+    runDir = 'run'
+}
+
+def opusToolchainFile = file('../client/toolchain.lock')
+def opusNativeUiLockFile = file('../client/native-ui-dependencies.lock.json')
+if (!opusToolchainFile.isFile() || !opusNativeUiLockFile.isFile()) {
+    throw new GradleException('Native client requires the audited client toolchain and native UI lock files.')
+}
+
+def opusToolchain = new Properties()
+opusToolchainFile.withInputStream { stream -> opusToolchain.load(stream) }
+def opusNativeUiLock = new JsonSlurper().parse(opusNativeUiLockFile)
+def opusLockedArtifacts = opusNativeUiLock.artifacts.collectEntries { artifact ->
+    [(artifact.id): artifact]
+}
+def opusSelectedArtifactIds = [
+        'oneconfig-full',
+        'elementa',
+        'universalcraft-current-candidate',
+]
+def opusNativeUiCacheDir = file(System.getenv('OPUS_NATIVE_UI_CACHE_DIR')
+        ?: "${System.getProperty('user.home')}/.cache/opus-native-ui")
+def opusSelectedArtifacts = opusSelectedArtifactIds.collect { artifactId ->
+    def artifact = opusLockedArtifacts[artifactId]
+    if (artifact == null) {
+        throw new GradleException("Native UI lock is missing ${artifactId}.")
+    }
+    [record: artifact, file: new File(opusNativeUiCacheDir, artifact.file)]
+}
+
+def opusSha256 = { File artifact ->
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+    artifact.withInputStream { stream ->
+        byte[] buffer = new byte[16 * 1024]
+        int count
+        while ((count = stream.read(buffer)) >= 0) {
+            if (count > 0) digest.update(buffer, 0, count)
+        }
+    }
+    digest.digest().collect { byte value -> String.format('%02x', value & 0xff) }.join()
+}
+
+def opusSha1 = { File artifact ->
+    MessageDigest digest = MessageDigest.getInstance('SHA-1')
+    artifact.withInputStream { stream ->
+        byte[] buffer = new byte[16 * 1024]
+        int count
+        while ((count = stream.read(buffer)) >= 0) {
+            if (count > 0) digest.update(buffer, 0, count)
+        }
+    }
+    digest.digest().collect { byte value -> String.format('%02x', value & 0xff) }.join()
+}
+
+def opusExpectedToolchainHash = { String key ->
+    def expected = opusToolchain.getProperty(key)
+    if (expected == null || !expected.matches('[0-9a-f]{64}')) {
+        throw new GradleException("Missing or invalid ${key} in ${opusToolchainFile}.")
+    }
+    expected
+}
+
+configurations {
+    nativeUiCompile
+}
+
+dependencies {
+    nativeUiCompile files(opusSelectedArtifacts.collect { it.file })
+    // ForgeGradle 2.1 builds runClient's launch classpath from the legacy
+    // runtime configuration, not sourceSets.main.runtimeClasspath. OneConfig's
+    // tweaker must therefore be present here before LaunchWrapper starts.
+    runtime files(opusSelectedArtifacts.collect { it.file })
+}
+
+sourceSets.main.compileClasspath += configurations.nativeUiCompile
+sourceSets.main.runtimeClasspath += configurations.nativeUiCompile
+
+def opusJavac = System.getenv('OPUS_FORGE_UI_JAVAC')
+if (opusJavac == null || opusJavac.trim().isEmpty()) {
+    throw new GradleException('OPUS_FORGE_UI_JAVAC must identify the compiler for this legacy build lane.')
+}
+def opusJavacFile = file(opusJavac)
+if (!opusJavacFile.isFile() || !opusJavacFile.canExecute()) {
+    throw new GradleException("OPUS_FORGE_UI_JAVAC is not executable: ${opusJavacFile}")
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.fork = true
+    options.forkOptions.executable = opusJavacFile.absolutePath
+}
+
+processResources {
+    inputs.property 'version', project.version
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+        expand version: project.version
+    }
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
+
+jar {
+    includeEmptyDirs = false
+    manifest {
+        attributes(
+                'Implementation-Title': 'Opus Native UI Compatibility Proof',
+                'Implementation-Version': project.version,
+                'ModSide': 'CLIENT')
+    }
+}
+
+task verifyToolchainInputs {
+    group = 'verification'
+    description = 'Checks the pinned ForgeGradle artifacts used by the isolated proof lane.'
+    doLast {
+        def artifacts = buildscript.configurations.classpath.resolvedConfiguration.resolvedArtifacts
+        def forgeGradle = artifacts.find {
+            it.moduleVersion.id.group == 'net.minecraftforge.gradle' &&
+                    it.name == 'ForgeGradle' && it.moduleVersion.id.version == '2.1.3'
+        }
+        if (forgeGradle == null || opusSha256(forgeGradle.file) != opusExpectedToolchainHash('forgegradle.jar.sha256')) {
+            throw new GradleException('ForgeGradle 2.1.3 did not match toolchain.lock.')
+        }
+        def fernflower = artifacts.find {
+            it.moduleVersion.id.group == 'net.minecraftforge' &&
+                    it.name == 'fernflower' && it.moduleVersion.id.version == '2.0-SNAPSHOT'
+        }
+        if (fernflower == null || opusSha256(fernflower.file) != opusExpectedToolchainHash('forgegradle.fernflower.jar.sha256')) {
+            throw new GradleException('ForgeGradle fernflower did not match toolchain.lock.')
+        }
+        def unexpectedSnapshots = artifacts.findAll {
+            it.moduleVersion.id.version.endsWith('-SNAPSHOT') && it != fernflower
+        }
+        if (!unexpectedSnapshots.isEmpty()) {
+            throw new GradleException("Unexpected changing build dependencies: ${unexpectedSnapshots}")
+        }
+    }
+}
+
+task verifyNativeUiDependencies {
+    group = 'verification'
+    description = 'Verifies selected OneConfig, Elementa, and UniversalCraft bytes against the immutable lock.'
+    doLast {
+        opusSelectedArtifacts.each { selected ->
+            File artifact = selected.file
+            def record = selected.record
+            if (!artifact.isFile()) {
+                throw new GradleException("Locked native UI artifact is missing: ${artifact}")
+            }
+            if (artifact.length() != record.size) {
+                throw new GradleException("Locked native UI artifact size mismatch: ${artifact.name}")
+            }
+            def actualHash = opusSha256(artifact)
+            if (actualHash != record.sha256) {
+                throw new GradleException("Locked native UI artifact SHA-256 mismatch: ${artifact.name}")
+            }
+        }
+    }
+}
+
+task verifyDependencyClassCollisions(dependsOn: verifyNativeUiDependencies) {
+    group = 'verification'
+    description = 'Rejects duplicate classes across the separately managed native UI dependencies.'
+    doLast {
+        def owners = [:].withDefault { [] }
+        opusSelectedArtifacts.each { selected ->
+            JarFile archive = new JarFile(selected.file)
+            try {
+                def entries = archive.entries()
+                while (entries.hasMoreElements()) {
+                    def name = entries.nextElement().name
+                    if (name.endsWith('.class')) owners[name] << selected.record.id
+                }
+            } finally {
+                archive.close()
+            }
+        }
+        def collisions = owners.findAll { name, artifactOwners -> artifactOwners.size() > 1 }
+        if (!collisions.isEmpty()) {
+            throw new GradleException("Duplicate dependency classes: ${collisions}")
+        }
+    }
+}
+
+task verifyNativeClientSources {
+    group = 'verification'
+    description = 'Rejects retired web-composited and parallel renderer paths from the clean proof client.'
+    doLast {
+        def forbiddenTokens = [
+                'OpusInteropServer',
+                'OpusWebViewClient',
+                'OpusWebTextureSurface',
+                'UiRuntime',
+                'opusui',
+                'jcef',
+                'svelte',
+        ]
+        def violations = []
+        fileTree('src') { include '**/*' }.files.findAll { it.isFile() }.each { source ->
+            def normalized = source.path.replace(File.separator, '/')
+            def text = source.getText('UTF-8')
+            forbiddenTokens.each { token ->
+                def tokenPattern = token.matches('[A-Za-z0-9_]+')
+                        ? "(?<![A-Za-z0-9_])${java.util.regex.Pattern.quote(token)}(?![A-Za-z0-9_])"
+                        : java.util.regex.Pattern.quote(token)
+                def pattern = java.util.regex.Pattern.compile(
+                        tokenPattern,
+                        java.util.regex.Pattern.CASE_INSENSITIVE)
+                if (pattern.matcher(normalized).find() || pattern.matcher(text).find()) {
+                    violations << "${source}: ${token}"
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Retired UI path found in native proof client: ${violations.unique()}")
+        }
+    }
+}
+
+task verifyOpusDesignNeutrality {
+    group = 'verification'
+    description = 'Rejects renderer and game imports from the neutral OpusDesign core.'
+    doLast {
+        def neutralSources = [
+                file('src/main/java/org/polydevs/opusmc/nativeui/design/OpusColor.java'),
+                file('src/main/java/org/polydevs/opusmc/nativeui/design/OpusDesign.java'),
+        ]
+        def forbiddenImports = [
+                'java.awt.',
+                'cc.polyfrost.',
+                'gg.essential.',
+                'net.minecraft.',
+                'net.minecraftforge.',
+                'org.lwjgl.',
+                'org.polydevs.opusmc.nativeui.',
+        ]
+        def violations = []
+        neutralSources.each { source ->
+            if (!source.isFile()) {
+                violations << "missing neutral source: ${source}"
+                return
+            }
+            source.eachLine { line, lineNumber ->
+                def trimmed = line.trim()
+                if (!trimmed.startsWith('import ')) return
+                forbiddenImports.each { prefix ->
+                    if (trimmed.startsWith("import ${prefix}")) {
+                        violations << "${source}:${lineNumber}: ${trimmed}"
+                    }
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("OpusDesign neutral-core import violation: ${violations}")
+        }
+    }
+}
+
+task verifyNativeClientArtifact(dependsOn: [
+        'reobfJar',
+        verifyToolchainInputs,
+        verifyNativeUiDependencies,
+        verifyDependencyClassCollisions,
+        verifyNativeClientSources,
+]) {
+    group = 'verification'
+    description = 'Verifies the proof JAR is a thin Forge mod with no shaded UI dependencies or retired UI assets.'
+    doLast {
+        def artifact = tasks.jar.archivePath
+        if (!artifact.isFile()) {
+            throw new GradleException("Expected reobfuscated proof JAR at ${artifact}")
+        }
+        JarFile archive = new JarFile(artifact)
+        try {
+            for (required in [
+                    'org/polydevs/opusmc/nativeui/OpusNativeUiProofMod.class',
+                    'org/polydevs/opusmc/nativeui/OpusElementaProofScreen.class',
+                    'org/polydevs/opusmc/nativeui/OpusOneConfigProof.class',
+                    'org/polydevs/opusmc/nativeui/NativeUiRuntimeDiagnostics.class',
+                    'org/polydevs/opusmc/nativeui/design/OpusColor.class',
+                    'org/polydevs/opusmc/nativeui/design/OpusDesign.class',
+                    'org/polydevs/opusmc/nativeui/design/OpusDesignParity.class',
+                    'org/polydevs/opusmc/nativeui/design/ElementaThemeAdapter.class',
+                    'org/polydevs/opusmc/nativeui/design/OneConfigThemeAdapter.class',
+                    'mcmod.info',
+            ]) {
+                if (archive.getEntry(required) == null) {
+                    throw new GradleException("Native proof artifact is missing ${required}")
+                }
+            }
+            def forbiddenPrefixes = [
+                    'cc/polyfrost/oneconfig/',
+                    'gg/essential/elementa/',
+                    'gg/essential/universal/',
+                    'kotlin/',
+                    'kotlinx/',
+                    'org/spongepowered/asm/',
+                    'opusui/',
+            ]
+            def forbiddenEntries = []
+            def entries = archive.entries()
+            while (entries.hasMoreElements()) {
+                def name = entries.nextElement().name
+                if (forbiddenPrefixes.any { name.startsWith(it) }) forbiddenEntries << name
+                def lower = name.toLowerCase()
+                if (lower.contains('webview') || lower.contains('jcef') || lower.contains('svelte')) {
+                    forbiddenEntries << name
+                }
+            }
+            if (!forbiddenEntries.isEmpty()) {
+                throw new GradleException("Dependency or retired UI entries leaked into proof JAR: ${forbiddenEntries}")
+            }
+            def manifest = archive.manifest.mainAttributes
+            for (forbiddenAttribute in ['FMLCorePlugin', 'FMLCorePluginContainsFMLMod', 'TweakClass', 'MixinConfigs']) {
+                if (manifest.getValue(forbiddenAttribute) != null) {
+                    throw new GradleException("Proof JAR must not own ${forbiddenAttribute}; OneConfig remains separate.")
+                }
+            }
+        } finally {
+            archive.close()
+        }
+    }
+}
+
+task writeStaticCompatibilityReport(dependsOn: verifyNativeClientArtifact) {
+    group = 'verification'
+    description = 'Persists hashes, class counts, manifests, and collision results for the selected native UI set.'
+    doLast {
+        def designEvidence = file("${buildDir}/reports/native-ui/opus-design-report.json")
+        if (!designEvidence.isFile()) {
+            throw new GradleException("OpusDesign evidence is missing: ${designEvidence}")
+        }
+        def designReport = new JsonSlurper().parse(designEvidence)
+        def requiredDesignShape = [
+                schemaVersion: 2,
+                designVersion: 'proof-baseline.2',
+                rendererNeutral: true,
+                densityPolicy: 'NEAREST_FRAMEBUFFER_PIXEL',
+                parity: 'pass',
+        ]
+        requiredDesignShape.each { key, expected ->
+            if (designReport[key] != expected) {
+                throw new GradleException(
+                        "OpusDesign report ${key} must be ${expected}, got ${designReport[key]}")
+            }
+        }
+        def requiredDesignCounts = [
+                colors: 16,
+                spacing: 8,
+                radii: 4,
+                motionSeconds: 6,
+                reducedMotionSeconds: 6,
+                componentSizes: 6,
+                typography: 11,
+                icons: 3,
+                elevation: 3,
+                accessibility: 3,
+                framebufferRounding: 20,
+                canonicalComponentStates: 32,
+        ]
+        requiredDesignCounts.each { key, expected ->
+            def value = designReport[key]
+            def actual = value instanceof Map || value instanceof List ? value.size() : -1
+            if (actual != expected) {
+                throw new GradleException(
+                        "OpusDesign report ${key} count must be ${expected}, got ${actual}")
+            }
+        }
+        if (designReport.framebufferRounding.any { sample -> sample.layout != sample.hitTest }) {
+            throw new GradleException('OpusDesign layout and hit-test framebuffer rounding diverged.')
+        }
+        def artifactReports = opusSelectedArtifacts.collect { selected ->
+            JarFile archive = new JarFile(selected.file)
+            try {
+                def classCount = 0
+                def entries = archive.entries()
+                while (entries.hasMoreElements()) {
+                    if (entries.nextElement().name.endsWith('.class')) classCount++
+                }
+                def attributes = [:]
+                archive.manifest?.mainAttributes?.each { key, value ->
+                    attributes[key.toString()] = value.toString()
+                }
+                [
+                        id: selected.record.id,
+                        coordinate: selected.record.coordinate,
+                        file: selected.file.name,
+                        size: selected.file.length(),
+                        sha256: opusSha256(selected.file),
+                        classCount: classCount,
+                        manifest: attributes,
+                ]
+            } finally {
+                archive.close()
+            }
+        }
+        def report = [
+                schemaVersion: 1,
+                generatedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+                minecraft: minecraft.version,
+                mappings: minecraft.mappings,
+                javaTarget: 8,
+                selectedElementaUniversalCraft: opusNativeUiLock.compatibility.selectedElementaUniversalCraft,
+                candidateElementaUniversalCraft: 516,
+                dependenciesRemainSeparate: true,
+                duplicateClassCount: 0,
+                artifacts: artifactReports,
+                proofArtifact: [
+                        file: tasks.jar.archivePath.name,
+                        size: tasks.jar.archivePath.length(),
+                        sha256: opusSha256(tasks.jar.archivePath),
+                ],
+                designEvidence: [
+                        file: designEvidence.name,
+                        sha256: opusSha256(designEvidence),
+                        schemaVersion: designReport.schemaVersion,
+                        designVersion: designReport.designVersion,
+                        rendererNeutral: designReport.rendererNeutral,
+                        densityPolicy: designReport.densityPolicy,
+                        parity: designReport.parity,
+                        canonicalComponentStateCount: designReport.canonicalComponentStates.size(),
+                        typographyCount: designReport.typography.size(),
+                        iconCount: designReport.icons.size(),
+                        elevationCount: designReport.elevation.size(),
+                        accessibilityCount: designReport.accessibility.size(),
+                        framebufferRoundingCount: designReport.framebufferRounding.size(),
+                ],
+        ]
+        def destination = file("${buildDir}/reports/native-ui/static-compatibility-report.json")
+        destination.parentFile.mkdirs()
+        destination.setText(JsonOutput.prettyPrint(JsonOutput.toJson(report)) + '\n', 'UTF-8')
+        logger.lifecycle("Native UI compatibility report: ${destination}")
+    }
+}
+
+def opusOptifineFile = System.getenv('OPUS_OPTIFINE_JAR')?.trim()
+def opusProofHeapMibValue = (findProperty('opusProofHeapMib')
+        ?: System.getenv('OPUS_NATIVE_UI_MAX_HEAP_MIB')
+        ?: '1536').toString()
+if (!opusProofHeapMibValue.matches('[0-9]+')) {
+    throw new GradleException('opusProofHeapMib must be an integer MiB value.')
+}
+def opusProofHeapMib = opusProofHeapMibValue as int
+if (opusProofHeapMib < 768 || opusProofHeapMib > 2048) {
+    throw new GradleException('opusProofHeapMib must stay between 768 and 2048 MiB for the isolated proof lane.')
+}
+def opusRuntimeSessionFile = file("${minecraft.runDir}/native-ui-runtime-session.txt")
+task stageNativeUiRunMods(dependsOn: [verifyNativeClientArtifact, verifyNativeUiDependencies]) {
+    group = 'run'
+    description = 'Stages locked UI JARs and optional user-provided OptiFine as separate run/mods artifacts.'
+    doLast {
+        def modsDir = file("${minecraft.runDir}/mods")
+        modsDir.mkdirs()
+        def expectedNames = opusSelectedArtifacts.collect { it.file.name } as Set
+        if (opusOptifineFile != null && !opusOptifineFile.isEmpty()) {
+            expectedNames << 'OptiFine_1.8.9_HD_U_M5.jar'
+        }
+        def unexpectedJars = fileTree(modsDir) { include '*.jar' }.files.findAll {
+            !expectedNames.contains(it.name)
+        }
+        if (!unexpectedJars.isEmpty()) {
+            throw new GradleException(
+                    "Unexpected JARs in the isolated native UI run directory: ${unexpectedJars*.name.sort()}")
+        }
+        copy {
+            from opusSelectedArtifacts.collect { it.file }
+            into modsDir
+        }
+        logger.lifecycle("Staged locked native UI artifacts in ${modsDir}.")
+        if (opusOptifineFile != null && !opusOptifineFile.isEmpty()) {
+            def optifine = file(opusOptifineFile)
+            if (!optifine.isFile() || optifine.length() != 2585014L ||
+                    opusSha1(optifine) != 'd362d58a28f5373b141b9e426e8e160638bfafcd') {
+                throw new GradleException('OPUS_OPTIFINE_JAR is not the locked OptiFine 1.8.9 HD U M5 artifact.')
+            }
+            copy {
+                from optifine
+                into modsDir
+                rename { 'OptiFine_1.8.9_HD_U_M5.jar' }
+            }
+        } else if ((findProperty('opusRequireOptifine') ?: 'false').toString().toBoolean()) {
+            throw new GradleException('Set OPUS_OPTIFINE_JAR to the user-provided OptiFine 1.8.9 HD U M5 JAR.')
+        } else {
+            logger.lifecycle('OptiFine was not staged; this run cannot close the exact-runtime compatibility gate.')
+        }
+        def stagedNames = fileTree(modsDir) { include '*.jar' }.files.collect { it.name } as Set
+        if (stagedNames != expectedNames) {
+            throw new GradleException(
+                    "Native UI run artifacts do not match the expected set: ${stagedNames.sort()}")
+        }
+    }
+}
+
+tasks.getByName('runClient').dependsOn stageNativeUiRunMods
+tasks.getByName('runClient').doFirst {
+    def session = UUID.randomUUID().toString()
+    opusRuntimeSessionFile.parentFile.mkdirs()
+    opusRuntimeSessionFile.setText(session + '\n', 'UTF-8')
+    jvmArgs "-Dopus.native.proof.session=${session}"
+    logger.lifecycle("Native UI runtime evidence session: ${session}")
+}
+tasks.getByName('runClient').args(
+        '--tweakClass', 'cc.polyfrost.oneconfig.internal.plugin.asm.OneConfigTweaker',
+        '--width', (findProperty('opusProofWidth') ?: '1440').toString(),
+        '--height', (findProperty('opusProofHeight') ?: '900').toString())
+tasks.getByName('runClient').jvmArgs(
+        '-Xms256M',
+        "-Xmx${opusProofHeapMib}M",
+        '-Dopus.native.proof.enabled=true',
+        "-Dopus.native.proof.requireOptifine=${(findProperty('opusRequireOptifine') ?: 'false').toString()}",
+        '-Dforge.logging.console.level=info')
+if ((findProperty('opusForgeConsoleDebug') ?: 'false').toString().toBoolean()) {
+    tasks.getByName('runClient').jvmArgs('-Dforge.logging.console.level=debug')
+}
+if ((findProperty('opusMixinDebugExport') ?: 'false').toString().toBoolean()) {
+    tasks.getByName('runClient').jvmArgs('-Dmixin.debug.export=true')
+}
+
+task verifyNativeUiRuntimeVerifier(type: Exec) {
+    group = 'verification'
+    description = 'Runs deterministic positive and negative fixtures for the runtime report verifier.'
+    commandLine 'node', file('../../../scripts/test-native-ui-runtime-report.mjs').absolutePath
+}
+
+task verifyOpusDesignContract(type: JavaExec) {
+    group = 'verification'
+    description = 'Checks renderer-neutral OpusDesign parity and writes its development report.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    main = 'org.polydevs.opusmc.nativeui.design.OpusDesignContractTest'
+    systemProperty 'opus.design.report', file(
+            "${buildDir}/reports/native-ui/opus-design-report.json").absolutePath
+}
+
+verifyOpusDesignContract.dependsOn verifyOpusDesignNeutrality
+tasks.getByName('writeStaticCompatibilityReport').dependsOn verifyOpusDesignContract
+
+check.dependsOn writeStaticCompatibilityReport, verifyNativeUiRuntimeVerifier, verifyOpusDesignContract
+
+task verifyNativeUiRuntimeReport {
+    group = 'verification'
+    description = 'Verifies explicit interactive evidence captured by the native UI proof client.'
+    doLast {
+        def report = file("${minecraft.runDir}/native-ui-runtime-report.json")
+        if (!report.isFile()) {
+            throw new GradleException("Native UI runtime report is missing: ${report}")
+        }
+        if (!opusRuntimeSessionFile.isFile()) {
+            throw new GradleException("Native UI runtime session marker is missing: ${opusRuntimeSessionFile}")
+        }
+        def expectedSession = opusRuntimeSessionFile.getText('UTF-8').trim()
+        if (expectedSession.isEmpty()) {
+            throw new GradleException('Native UI runtime session marker is empty.')
+        }
+        exec {
+            commandLine 'node', file('../../../scripts/verify-native-ui-runtime-report.mjs').absolutePath,
+                    '--expected-session', expectedSession,
+                    '--require-fullscreen-toggle',
+                    '--require-gui-scale-change',
+                    report.absolutePath
+        }
+    }
+}

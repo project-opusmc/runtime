@@ -14,6 +14,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.WorldSettings;
 import net.minecraft.world.WorldType;
 import org.apache.logging.log4j.Logger;
+import org.polydevs.opusmc.client.ui.UiBounds;
+import org.polydevs.opusmc.client.ui.UiRoute;
 
 /**
  * A local, opt-in driver for the real Forge client UI. It deliberately sends
@@ -25,12 +27,16 @@ final class UiPreviewSession {
     private static final String FIXTURE_WORLD_ID = "opus-ui-preview";
     private static final String FIXTURE_WORLD_NAME = "Opus UI Preview";
     private static final int ROUTE_SETTLE_TICKS = 6;
+    private static final int POST_INPUT_SETTLE_TICKS = 6;
+    private static final int PRODUCT_READY_TIMEOUT_TICKS = 20 * 30;
 
     private enum State {
         IDLE,
         PENDING_ROUTE,
         WAITING_FOR_WORLD,
+        WAITING_FOR_PRODUCT,
         WAITING_FOR_ROUTE,
+        WAITING_FOR_POST_INPUT,
         WAITING_FOR_CAPTURE,
         STOPPING
     }
@@ -43,8 +49,13 @@ final class UiPreviewSession {
     private UiPreviewSpec active;
     private State state = State.IDLE;
     private int remainingTicks;
+    private int nativeHudRegionTimeoutTicks;
+    private int postInputSettleTicks;
     private boolean worldLaunchRequested;
     private String renderedRoute;
+    private String surfaceState = "closed";
+    private int viewportWidth;
+    private int viewportHeight;
 
     private UiPreviewSession(Logger log, Path controlPath) {
         this.log = log;
@@ -60,11 +71,18 @@ final class UiPreviewSession {
             return new UiPreviewSession(log, null);
         }
         try {
-            return new UiPreviewSession(log, Paths.get(rawPath));
+            Path controlPath = Paths.get(rawPath);
+            log.info("Opus UI Preview control enabled: {}", controlPath);
+            return new UiPreviewSession(log, controlPath);
         } catch (RuntimeException exception) {
             log.warn("Opus UI preview control path is invalid; Preview Mode is disabled.", exception);
             return new UiPreviewSession(log, null);
         }
+    }
+
+    /** Preview-only controls are never active unless the launch property exists. */
+    boolean isEnabled() {
+        return controlPath != null;
     }
 
     void tick(ClientOverlayController controller) {
@@ -75,6 +93,7 @@ final class UiPreviewSession {
         if (active == null) {
             return;
         }
+        updateSurfaceDiagnostics(controller);
 
         if (state == State.WAITING_FOR_WORLD) {
             if (Minecraft.getMinecraft().theWorld != null) {
@@ -86,10 +105,34 @@ final class UiPreviewSession {
             applyRoute(controller);
             return;
         }
+        if (state == State.WAITING_FOR_PRODUCT) {
+            waitForProductFrame(controller);
+            return;
+        }
         if (state == State.WAITING_FOR_ROUTE) {
+            if (controller.previewProductSurfaceFailed()) {
+                failAndStop("CEF product surface failed after becoming ready");
+                return;
+            }
+            if (!controller.previewProductSurfaceReady()) {
+                state = State.WAITING_FOR_PRODUCT;
+                remainingTicks = PRODUCT_READY_TIMEOUT_TICKS;
+                return;
+            }
+            if (active.route.kind() == UiRoute.Kind.HUD_EDITOR
+                    && !controller.previewNativeHudCanvasReady()) {
+                if (--nativeHudRegionTimeoutTicks <= 0) {
+                    failAndStop("timed out waiting for the native HUD editor input region");
+                }
+                return;
+            }
             if (--remainingTicks <= 0) {
                 applyInput(controller);
             }
+            return;
+        }
+        if (state == State.WAITING_FOR_POST_INPUT) {
+            waitAfterInput(controller);
             return;
         }
         if (state == State.WAITING_FOR_CAPTURE && --remainingTicks <= 0) {
@@ -117,7 +160,11 @@ final class UiPreviewSession {
             }
             active = next;
             appliedRevision = next.revision;
+            log.info("Opus UI Preview accepted revision {} for {}", next.revision, next.route.kind());
             worldLaunchRequested = false;
+            surfaceState = "closed";
+            viewportWidth = 0;
+            viewportHeight = 0;
             writeStatus("accepted", "revision accepted", null);
             beginActiveSpec();
         } catch (Exception exception) {
@@ -178,14 +225,14 @@ final class UiPreviewSession {
                 Minecraft.getMinecraft().displayGuiScreen(new OpusPreviewPauseMenu());
                 return;
             }
-            if (!controller.previewOpenPauseMenuClientOptions()) {
-                writeStatus("error", "pause-menu Client Options button was unavailable", null);
+            if (!controller.previewOpenPauseMenuCatalog()) {
+                writeStatus("error", "pause-menu canonical Mods route was unavailable", null);
                 state = State.STOPPING;
                 remainingTicks = 2;
                 return;
             }
         } else if (active.fixture == UiPreviewSpec.Fixture.RIGHT_SHIFT) {
-            if (!controller.previewOpenRightShiftHudEditor()) {
+            if (!controller.previewOpenRightShiftQuickHub()) {
                 writeStatus("error", "Right Shift route did not open", null);
                 state = State.STOPPING;
                 remainingTicks = 2;
@@ -200,9 +247,27 @@ final class UiPreviewSession {
         } else {
             controller.setPreviewPointer(active.pointer.x, active.pointer.y);
         }
-        state = State.WAITING_FOR_ROUTE;
-        remainingTicks = ROUTE_SETTLE_TICKS;
-        writeStatus("rendering", "route opened", null);
+        state = State.WAITING_FOR_PRODUCT;
+        remainingTicks = PRODUCT_READY_TIMEOUT_TICKS;
+        writeStatus("waiting", "waiting for CEF product frame", null);
+    }
+
+    private void waitForProductFrame(ClientOverlayController controller) {
+        renderedRoute = controller.previewRouteName();
+        if (controller.previewProductSurfaceFailed()) {
+            failAndStop("CEF product surface entered failed state");
+            return;
+        }
+        if (controller.previewProductSurfaceReady()) {
+            state = State.WAITING_FOR_ROUTE;
+            remainingTicks = ROUTE_SETTLE_TICKS;
+            nativeHudRegionTimeoutTicks = PRODUCT_READY_TIMEOUT_TICKS;
+            writeStatus("rendering", "CEF product frame ready", null);
+            return;
+        }
+        if (--remainingTicks <= 0) {
+            failAndStop("timed out waiting for CEF product frame");
+        }
     }
 
     private void applyInput(ClientOverlayController controller) {
@@ -224,20 +289,50 @@ final class UiPreviewSession {
                     active.input.toX,
                     active.input.toY,
                     active.input.button);
+        } else if (active.input.kind == UiPreviewSpec.InputKind.KEY) {
+            handled = controller.previewKey(active.input.key);
         }
         if (!handled && active.input.kind != UiPreviewSpec.InputKind.NONE) {
-            writeStatus("error", "input did not hit a real control", null);
-            // An invalid preview command must still terminate the client.
-            // Leaving it idle leaked a Forge/Gradle process and its PID lock.
-            state = State.STOPPING;
-            remainingTicks = 2;
+            failAndStop("input could not be dispatched to the active product surface");
             return;
         }
         // A real click may replace the Opus screen with a vanilla destination.
         // Record the result after dispatch rather than the source route.
         renderedRoute = controller.previewRouteName();
-        if (active.captureFile == null) {
-            writeStatus("ready", "route rendered", null);
+        if (active.input.kind == UiPreviewSpec.InputKind.NONE) {
+            completeOrWaitForCapture();
+            return;
+        }
+        state = State.WAITING_FOR_POST_INPUT;
+        remainingTicks = PRODUCT_READY_TIMEOUT_TICKS;
+        postInputSettleTicks = POST_INPUT_SETTLE_TICKS;
+        writeStatus("input", "production input dispatched", null);
+    }
+
+    private void waitAfterInput(ClientOverlayController controller) {
+        renderedRoute = controller.previewRouteName();
+        if (postInputSettleTicks > 0) {
+            postInputSettleTicks--;
+            return;
+        }
+        if (controller.previewProductSurfaceFailed()) {
+            failAndStop("CEF product surface failed after input");
+            return;
+        }
+        String currentSurfaceState = controller.previewProductSurfaceState();
+        if ("closed".equals(currentSurfaceState)
+                || controller.previewProductSurfaceReady()) {
+            completeOrWaitForCapture();
+            return;
+        }
+        if (--remainingTicks <= 0) {
+            failAndStop("timed out waiting for the post-input product frame");
+        }
+    }
+
+    private void completeOrWaitForCapture() {
+        if (active == null || active.captureFile == null) {
+            writeStatus("ready", "route and input settled", null);
             state = State.IDLE;
             return;
         }
@@ -248,6 +343,11 @@ final class UiPreviewSession {
     private void capture(ClientOverlayController controller) {
         if (active == null || active.captureFile == null) {
             state = State.IDLE;
+            return;
+        }
+        updateSurfaceDiagnostics(controller);
+        if (!canCaptureSurfaceState(surfaceState)) {
+            failAndStop("capture refused because the CEF product frame is not ready");
             return;
         }
         try {
@@ -265,6 +365,26 @@ final class UiPreviewSession {
         }
     }
 
+    static boolean canCaptureSurfaceState(String state) {
+        // A ready compositor can be captured normally. A closed compositor is
+        // also valid after an input such as Escape closes the product surface
+        // and the preview intentionally captures the resulting game frame.
+        return "ready".equals(state) || "closed".equals(state);
+    }
+
+    private void updateSurfaceDiagnostics(ClientOverlayController controller) {
+        surfaceState = controller.previewProductSurfaceState();
+        UiBounds viewport = controller.previewProductViewport();
+        viewportWidth = viewport.width;
+        viewportHeight = viewport.height;
+    }
+
+    private void failAndStop(String message) {
+        writeStatus("error", message, null);
+        state = State.STOPPING;
+        remainingTicks = 2;
+    }
+
     private void writeStatus(String stateName, String message, String captureFile) {
         if (statusPath == null) {
             return;
@@ -275,6 +395,12 @@ final class UiPreviewSession {
             status.addProperty("state", stateName);
             status.addProperty("message", message);
             status.addProperty("revision", appliedRevision);
+            status.addProperty("productCompositor", "cef");
+            status.addProperty("surfaceState", surfaceState);
+            JsonObject viewport = new JsonObject();
+            viewport.addProperty("width", viewportWidth);
+            viewport.addProperty("height", viewportHeight);
+            status.add("viewport", viewport);
             if (renderedRoute != null) {
                 status.addProperty("route", renderedRoute);
             } else if (active != null) {

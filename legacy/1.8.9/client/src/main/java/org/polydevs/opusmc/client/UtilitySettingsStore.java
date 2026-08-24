@@ -39,6 +39,8 @@ final class UtilitySettingsStore {
     private JsonObject document = new JsonObject();
     private PerformanceOverlaySettings performanceOverlay = PerformanceOverlaySettings.defaults();
     private ArmorStatusSettings armorStatus = ArmorStatusSettings.defaults();
+    private PerformanceOverlaySettings persistedPerformanceOverlay = performanceOverlay;
+    private ArmorStatusSettings persistedArmorStatus = armorStatus;
     private String lastSaveError;
 
     private UtilitySettingsStore(Logger log, Path settingsPath) {
@@ -65,6 +67,8 @@ final class UtilitySettingsStore {
         document = new JsonObject();
         performanceOverlay = PerformanceOverlaySettings.defaults();
         armorStatus = ArmorStatusSettings.defaults();
+        persistedPerformanceOverlay = performanceOverlay;
+        persistedArmorStatus = armorStatus;
         lastSaveError = null;
 
         if (settingsPath == null || !Files.isRegularFile(settingsPath)) {
@@ -95,11 +99,16 @@ final class UtilitySettingsStore {
             if (armor != null) {
                 armorStatus = readArmorStatus(armor);
             }
+            persistedPerformanceOverlay = performanceOverlay;
+            persistedArmorStatus = armorStatus;
         } catch (Exception exception) {
             // A damaged preferences file is never allowed to take down the
             // game or manufacture a plausible-looking HUD. It fails closed.
             document = new JsonObject();
             performanceOverlay = PerformanceOverlaySettings.defaults();
+            armorStatus = ArmorStatusSettings.defaults();
+            persistedPerformanceOverlay = performanceOverlay;
+            persistedArmorStatus = armorStatus;
             log.warn("Unable to read Opus utility settings; the Performance Overlay remains disabled.", exception);
         }
     }
@@ -136,6 +145,14 @@ final class UtilitySettingsStore {
         lastSaveError = null;
     }
 
+    synchronized void cancelPerformanceOverlayPreview() {
+        performanceOverlay = persistedPerformanceOverlay;
+    }
+
+    synchronized void cancelArmorStatusPreview() {
+        armorStatus = persistedArmorStatus;
+    }
+
     synchronized boolean persistPerformanceOverlay() {
         if (settingsPath == null) {
             lastSaveError = "The launcher did not provide a settings file.";
@@ -152,6 +169,7 @@ final class UtilitySettingsStore {
             fps.addProperty("scale", performanceOverlay.scale());
             fps.addProperty("opacity", performanceOverlay.opacity());
             writeAtomically(gson.toJson(document));
+            persistedPerformanceOverlay = performanceOverlay;
             return true;
         } catch (Exception exception) {
             lastSaveError = "Could not save the Performance Overlay setting.";
@@ -176,6 +194,7 @@ final class UtilitySettingsStore {
             armor.addProperty("opacity", armorStatus.opacity());
             armor.addProperty("showDurability", armorStatus.showDurability());
             writeAtomically(gson.toJson(document));
+            persistedArmorStatus = armorStatus;
             return true;
         } catch (Exception exception) {
             lastSaveError = "Could not save the Armor Status setting.";

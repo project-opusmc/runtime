@@ -12,6 +12,10 @@ import java.util.regex.Pattern;
 final class OpusJson {
     private static final Pattern STRING_VALUE = Pattern.compile(
             "\"([A-Za-z0-9_]+)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+    private static final Pattern LONG_VALUE = Pattern.compile(
+            "\"([A-Za-z0-9_]+)\"\\s*:\\s*(-?[0-9]+)");
+    private static final Pattern SCALAR_VALUE = Pattern.compile(
+            "\"([A-Za-z0-9_]+)\"\\s*:\\s*(true|false|-?[0-9]+(?:\\.[0-9]+)?|null)");
 
     private OpusJson() {
     }
@@ -87,6 +91,46 @@ final class OpusJson {
         while (matcher.find()) {
             if (key.equals(matcher.group(1))) {
                 return unescape(matcher.group(2));
+            }
+        }
+        return null;
+    }
+
+    static Long extractLong(String json, String key) {
+        if (json == null || key == null) {
+            return null;
+        }
+        Matcher matcher = LONG_VALUE.matcher(json);
+        while (matcher.find()) {
+            if (key.equals(matcher.group(1))) {
+                try {
+                    return Long.valueOf(matcher.group(2));
+                } catch (NumberFormatException ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reads a JSON string or primitive scalar as text for compact bridge
+     * mutation endpoints. The browser sends booleans and numbers without
+     * quotes, while the legacy bridge also accepts quoted values.
+     */
+    static String extractScalar(String json, String key) {
+        String quoted = extractString(json, key);
+        if (quoted != null) {
+            return quoted;
+        }
+        if (json == null || key == null) {
+            return null;
+        }
+        Matcher matcher = SCALAR_VALUE.matcher(json);
+        while (matcher.find()) {
+            if (key.equals(matcher.group(1))) {
+                String value = matcher.group(2);
+                return "null".equals(value) ? null : value;
             }
         }
         return null;

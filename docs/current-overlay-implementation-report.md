@@ -1,5 +1,12 @@
 # Báo cáo kỹ thuật: phương pháp overlay UI hiện tại
 
+> **Historical report.** This report describes a rejected client-side overlay
+> implementation. The active architecture is defined by
+> [`docs/coremod-first-goal-and-plan.md`](../../docs/coremod-first-goal-and-plan.md):
+> Forge + OptiFine + OPUS Core Mod with vanilla Minecraft UI. Do not treat the
+> old Client Options/button or Java page flow below as an instruction to restore
+> it.
+
 **Dự án:** OPUS Client
 **Mục đích:** mô tả trung thực implementation hiện tại để expert review.  
 **Trạng thái:** technical vertical slice đang chạy; chưa phải implementation đạt yêu cầu UI/flow tham chiếu Lunar Client.

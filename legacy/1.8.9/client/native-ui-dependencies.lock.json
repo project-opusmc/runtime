@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-23",
+  "runtime": {
+    "minecraft": "1.8.9",
+    "forge": "11.15.1.2318",
+    "optifine": "HD U M5",
+    "javaBytecode": 8
+  },
+  "sourceBuilds": {
+    "oneConfig": {
+      "host": {
+        "os": "macos",
+        "architecture": "x86_64"
+      },
+      "gradle": {
+        "version": "8.7",
+        "file": "gradle-8.7-bin.zip",
+        "url": "https://services.gradle.org/distributions/gradle-8.7-bin.zip",
+        "size": 134184980,
+        "sha256": "544c35d6bd849ae8a5ed0bcea39ba677dc40f49df7d1835561582da2009b961d"
+      },
+      "launcherJdk": {
+        "vendor": "Eclipse Temurin",
+        "version": "17.0.17+10",
+        "file": "OpenJDK17U-jdk_x64_mac_hotspot_17.0.17_10.tar.gz",
+        "url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.17%2B10/OpenJDK17U-jdk_x64_mac_hotspot_17.0.17_10.tar.gz",
+        "size": 180324092,
+        "sha256": "a2a7bfd3a767fcaf35a2e96cc562e6a63cd695e08c1a896222303c4e978da3d6"
+      },
+      "java8Toolchain": {
+        "vendor": "Eclipse Temurin",
+        "version": "8u502-b07",
+        "file": "OpenJDK8U-jdk_x64_mac_hotspot_8u502b07.tar.gz",
+        "url": "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u502-b07/OpenJDK8U-jdk_x64_mac_hotspot_8u502b07.tar.gz",
+        "size": 108024763,
+        "sha256": "66565d468f4a48e9defa7420bbe522bf811a00609f618da1a85fc4ff149683b1"
+      },
+      "task": ":platform:1.8.9-forge:build",
+      "artifactPath": "versions/1.8.9-forge/build/libs/oneconfig-1.8.9-forge-0.2.2-alpha228.jar",
+      "publishedArtifactId": "oneconfig",
+      "expectedExtractedFiles": 1550,
+      "gradleProjectProperties": {
+        "org.gradle.java.installations.auto-detect": "false",
+        "org.gradle.java.installations.auto-download": "false"
+      }
+    }
+  },
+  "sources": [
+    {
+      "id": "oneconfig",
+      "repository": "https://github.com/Polyfrost/OneConfig.git",
+      "branch": "develop-v0",
+      "commit": "233452661e6d273f130230bb8e1813fb0a28b80a",
+      "license": {
+        "path": "LICENSE",
+        "sha256": "2afc780cec59015c7c6b0c022924798376414fb9ae64955cfd1b00d82c9c3b99"
+      }
+    },
+    {
+      "id": "elementa",
+      "repository": "https://github.com/EssentialGG/Elementa.git",
+      "commit": "01392527e98e83026e52f27396775cf042f3e922",
+      "license": {
+        "path": "LICENSE",
+        "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+      }
+    },
+    {
+      "id": "universalcraft",
+      "repository": "https://github.com/EssentialGG/UniversalCraft.git",
+      "commit": "e507b65e6bd76c88d6d461db8a5f8a0cdf066c85",
+      "license": {
+        "path": "LICENSE",
+        "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "oneconfig",
+      "status": "frozen-fork-baseline",
+      "source": "oneconfig",
+      "coordinate": "cc.polyfrost:oneconfig-1.8.9-forge:0.2.2-alpha228",
+      "repository": "https://repo.polyfrost.org/releases",
+      "file": "oneconfig-1.8.9-forge-0.2.2-alpha228.jar",
+      "url": "https://repo.polyfrost.org/releases/cc/polyfrost/oneconfig-1.8.9-forge/0.2.2-alpha228/oneconfig-1.8.9-forge-0.2.2-alpha228.jar",
+      "size": 8736779,
+      "sha256": "bf44d346a6a53df3f1f9813de9c6f028cc93adf9c8cb1276c694863a7e1136de",
+      "metadata": {
+        "file": "oneconfig-1.8.9-forge-0.2.2-alpha228.module",
+        "url": "https://repo.polyfrost.org/releases/cc/polyfrost/oneconfig-1.8.9-forge/0.2.2-alpha228/oneconfig-1.8.9-forge-0.2.2-alpha228.module",
+        "size": 10474,
+        "sha256": "d08a4500c9ad9cac1bb30098851707b290302ce7e360bdd0d50c042cb0e1cfdf"
+      }
+    },
+    {
+      "id": "oneconfig-full",
+      "status": "frozen-runtime-baseline",
+      "source": "oneconfig",
+      "coordinate": "cc.polyfrost:oneconfig-1.8.9-forge:0.2.2-alpha228:full",
+      "repository": "https://repo.polyfrost.org/releases",
+      "file": "oneconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
+      "url": "https://repo.polyfrost.org/releases/cc/polyfrost/oneconfig-1.8.9-forge/0.2.2-alpha228/oneconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
+      "size": 17899857,
+      "sha256": "1e2c78270e40771fb76a014e0d64dff349baef24b17c55a5f3bff491cc77dd0f"
+    },
+    {
+      "id": "oneconfig-universalcraft",
+      "status": "frozen-transitive-baseline",
+      "coordinate": "cc.polyfrost:universalcraft-1.8.9-forge:246",
+      "repository": "https://repo.polyfrost.org/releases",
+      "file": "universalcraft-1.8.9-forge-246.jar",
+      "url": "https://repo.polyfrost.org/releases/cc/polyfrost/universalcraft-1.8.9-forge/246/universalcraft-1.8.9-forge-246.jar",
+      "size": 138165,
+      "sha256": "54db02756d4ea21896ba455d602eebdd1e63d257ddf36ded41a5206a6faced3a"
+    },
+    {
+      "id": "elementa",
+      "status": "candidate",
+      "source": "elementa",
+      "coordinate": "gg.essential:elementa:762",
+      "repository": "https://repo.essential.gg/repository/maven-public",
+      "file": "elementa-762.jar",
+      "url": "https://repo.essential.gg/repository/maven-public/gg/essential/elementa/762/elementa-762.jar",
+      "size": 2508054,
+      "sha256": "f95f8c2a4b1049fe29f11da9d05bca051d854cfe60abf3be4d0472308bf3c38d",
+      "metadata": {
+        "file": "elementa-762.module",
+        "url": "https://repo.essential.gg/repository/maven-public/gg/essential/elementa/762/elementa-762.module",
+        "size": 2864,
+        "sha256": "7996aa9032e11a142f16f04b8db855b83d8cb6551876c285a27ef7d53ca62cfb"
+      }
+    },
+    {
+      "id": "universalcraft-source-matched",
+      "status": "candidate-fallback",
+      "source": "universalcraft",
+      "coordinate": "gg.essential:universalcraft-1.8.9-forge:494",
+      "repository": "https://repo.essential.gg/repository/maven-public",
+      "file": "universalcraft-1.8.9-forge-494.jar",
+      "url": "https://repo.essential.gg/repository/maven-public/gg/essential/universalcraft-1.8.9-forge/494/universalcraft-1.8.9-forge-494.jar",
+      "size": 246091,
+      "sha256": "de2b19801c4f90502c66e1fd030aaab8f3d4d78e99fd8338e58148b900be62ca"
+    },
+    {
+      "id": "universalcraft-current-candidate",
+      "status": "candidate",
+      "source": "universalcraft",
+      "coordinate": "gg.essential:universalcraft-1.8.9-forge:516",
+      "repository": "https://repo.essential.gg/repository/maven-public",
+      "file": "universalcraft-1.8.9-forge-516.jar",
+      "url": "https://repo.essential.gg/repository/maven-public/gg/essential/universalcraft-1.8.9-forge/516/universalcraft-1.8.9-forge-516.jar",
+      "size": 249305,
+      "sha256": "7e0ba2bafe5197fe5fdc520f5de419161dc3897fc0578c41b6fe5827413a6e97",
+      "metadata": {
+        "file": "universalcraft-1.8.9-forge-516.module",
+        "url": "https://repo.essential.gg/repository/maven-public/gg/essential/universalcraft-1.8.9-forge/516/universalcraft-1.8.9-forge-516.module",
+        "size": 3193,
+        "sha256": "040371f67d9cf282db681c6e897506da6dc009639ef0ce1edae7a087f9480196"
+      }
+    }
+  ],
+  "compatibility": {
+    "oneConfigDeclaredUniversalCraft": 246,
+    "elementaSourceDeclaredUniversalCraft": 494,
+    "universalCraftCandidates": [
+      494,
+      516
+    ],
+    "selectedElementaUniversalCraft": null,
+    "requiredProofs": [
+      "compile a minimal Elementa screen against the exact Forge 1.8.9 client lane",
+      "run the screen with OptiFine HD U M5",
+      "open Elementa then OneConfig and OneConfig then Elementa",
+      "verify duplicate classes and relocated packages in the final client artifact",
+      "verify framebuffer, scissor, input, and OpenGL state restoration"
+    ]
+  },
+  "releaseGates": {
+    "oneConfigAttributionDecision": "open",
+    "transitiveLicenseInventory": "open",
+    "elementaUniversalCraftRuntimeProof": "open"
+  }
+}

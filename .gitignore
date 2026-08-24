@@ -4,8 +4,11 @@
 /common/build/
 /legacy/**/build/
 /legacy/1.8.9/client/.gradle/
+/legacy/1.8.9/client/logs/
 /legacy/1.8.9/client/preview/*.status.json
 /legacy/1.8.9/client/run/
+/legacy/1.8.9/native-client/.gradle/
+/legacy/1.8.9/native-client/run/
 /logs/
 /crash-reports/
 /saves/

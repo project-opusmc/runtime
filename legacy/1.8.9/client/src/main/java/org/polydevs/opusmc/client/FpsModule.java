@@ -106,7 +106,7 @@ final class FpsModule implements ClientModule {
         }
 
         @Override
-        public boolean moveBy(UiBounds viewport, int deltaX, int deltaY) {
+        public boolean moveBy(UiBounds viewport, UiBounds renderedBounds, int deltaX, int deltaY) {
             PerformanceOverlaySettings current = settings();
             int offsetX = isRight(current.anchor())
                     ? current.offsetX() - deltaX
@@ -114,7 +114,11 @@ final class FpsModule implements ClientModule {
             int offsetY = isBottom(current.anchor())
                     ? current.offsetY() - deltaY
                     : current.offsetY() + deltaY;
-            preview(current.withOffset(offsetX, offsetY));
+            int maxX = Math.max(0, viewport.width - renderedBounds.width);
+            int maxY = Math.max(0, viewport.height - renderedBounds.height);
+            preview(current.withOffset(
+                    Math.max(0, Math.min(maxX, offsetX)),
+                    Math.max(0, Math.min(maxY, offsetY))));
             return true;
         }
 
@@ -140,6 +144,11 @@ final class FpsModule implements ClientModule {
         @Override
         public boolean commitEditorChange() {
             return commitPreview();
+        }
+
+        @Override
+        public void cancelEditorChange() {
+            settingsStore.cancelPerformanceOverlayPreview();
         }
     }
 

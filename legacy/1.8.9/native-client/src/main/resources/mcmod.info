@@ -1,0 +1,16 @@
+[
+  {
+    "modid": "opusnativeuiproof",
+    "name": "Opus Native UI Compatibility Proof",
+    "description": "Development-only OneConfig and Elementa compatibility lab for Opus.",
+    "version": "${version}",
+    "mcversion": "1.8.9",
+    "url": "",
+    "updateUrl": "",
+    "authorList": ["Opus"],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": ["required-after:oneconfig"]
+  }
+]

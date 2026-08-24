@@ -14,7 +14,7 @@ public interface HudWidget {
     UiBounds bounds(HudRenderContext context);
 
     /** Applies an in-memory movement preview; persistence happens on mouse-up. */
-    boolean moveBy(UiBounds viewport, int deltaX, int deltaY);
+    boolean moveBy(UiBounds viewport, UiBounds renderedBounds, int deltaX, int deltaY);
 
     /** Applies an in-memory size preview; persistence happens on mouse-up. */
     boolean resizeBy(UiBounds renderedBounds, int deltaX);
@@ -22,4 +22,7 @@ public interface HudWidget {
     boolean disable();
 
     boolean commitEditorChange();
+
+    /** Restores the last persisted layout when an editor drag is abandoned. */
+    void cancelEditorChange();
 }

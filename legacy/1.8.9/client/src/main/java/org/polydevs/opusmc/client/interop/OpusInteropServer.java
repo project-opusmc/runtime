@@ -21,7 +21,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
-import java.util.List;
 import org.apache.logging.log4j.Logger;
 
 /**
@@ -42,7 +41,7 @@ public final class OpusInteropServer {
     private Thread acceptThread;
     private volatile int port = -1;
     private volatile boolean running;
-    private OpusVirtualScreenManager screenManager;
+    private UiNavigationManager navigationManager;
     private OpusBridgeProvider bridgeProvider;
 
     public OpusInteropServer(Logger log) {
@@ -51,8 +50,8 @@ public final class OpusInteropServer {
         this.workers = Executors.newCachedThreadPool(daemonThreads("opus-bridge"));
     }
 
-    public void setScreenManager(OpusVirtualScreenManager screenManager) {
-        this.screenManager = screenManager;
+    public void setNavigationManager(UiNavigationManager navigationManager) {
+        this.navigationManager = navigationManager;
     }
 
     public void setBridgeProvider(OpusBridgeProvider bridgeProvider) {
@@ -96,7 +95,52 @@ public final class OpusInteropServer {
     }
 
     public String url() {
-        return "http://127.0.0.1:" + port + "/?code=" + authCode + "#/title";
+        return "http://127.0.0.1:" + port + "/?code=" + authCode + "&port=" + port + "#/title";
+    }
+
+    /**
+     * Builds a loopback SPA URL for a specific canonical route (for example
+     * {@code title} or {@code settings}). Used by the embedded web-view surface
+     * so the in-game browser opens directly on the active Opus route.
+     */
+    public String urlForRoute(String route) {
+        return urlForRoute(route, null);
+    }
+
+    public String urlForRoute(String route, String moduleId) {
+        return urlForRoute(route, moduleId, null);
+    }
+
+    public String urlForRoute(String route, String moduleId, String settingsSection) {
+        String target = (route == null || route.isEmpty()) ? "title" : route;
+        StringBuilder url = new StringBuilder("http://127.0.0.1:")
+                .append(port)
+                .append("/?code=").append(authCode)
+                .append("&port=").append(port)
+                .append("#/").append(target);
+        boolean hasModule = moduleId != null && !moduleId.isEmpty();
+        boolean hasSettings = settingsSection != null && !settingsSection.isEmpty();
+        if (hasModule || hasSettings) {
+            try {
+                boolean needsAmpersand = false;
+                url.append('?');
+                if (hasModule) {
+                    url.append("moduleId=")
+                            .append(java.net.URLEncoder.encode(moduleId, "UTF-8"));
+                    needsAmpersand = true;
+                }
+                if (hasSettings) {
+                    if (needsAmpersand) {
+                        url.append('&');
+                    }
+                    url.append("settingsSection=")
+                            .append(java.net.URLEncoder.encode(settingsSection, "UTF-8"));
+                }
+            } catch (java.io.UnsupportedEncodingException impossible) {
+                url.append("moduleId=").append(moduleId);
+            }
+        }
+        return url.toString();
     }
 
     public void broadcast(String message) {
@@ -150,6 +194,7 @@ public final class OpusInteropServer {
                 socket.close();
                 return;
             }
+            log.debug("Opus bridge request {} {}", request.method, request.path);
             if ("/ws".equals(request.path)) {
                 if (!authorized(request)) {
                     respond(out, 401, "application/json",
@@ -174,6 +219,7 @@ public final class OpusInteropServer {
                 // broadcast immediately after connect() can never miss it.
                 OpusWebSocket session = new OpusWebSocket(log, in, out, this);
                 attach(session);
+                log.debug("Opus bridge WebSocket authenticated");
                 out.write(response.getBytes(StandardCharsets.ISO_8859_1));
                 out.flush();
                 workers.execute(session);
@@ -237,39 +283,92 @@ public final class OpusInteropServer {
                             "version", "0.0.1",
                             "minecraft", "1.8.9",
                             "forge", "11.15.1.2318",
-                            "optifine", "HD U M5"),
+                            "optifine", "HD U M5",
+                            "session", currentSessionName(),
+                            "accountKind", currentSessionKind()),
                     null);
             return;
         }
-        if ("/api/v1/client/virtualScreen".equals(request.path)) {
-            if ("GET".equals(request.method)) {
-                String current = screenManager == null ? "" : screenManager.current();
-                respond(out, 200, "application/json",
-                        OpusJson.object("name", current),
+        if ("/api/v1/client/ui-state".equals(request.path)
+                && "GET".equals(request.method) && navigationManager != null) {
+            respond(out, 200, "application/json", navigationManager.stateJson(), null);
+            return;
+        }
+        if ("/api/v1/client/ui-state/ack".equals(request.path)
+                && "POST".equals(request.method) && navigationManager != null) {
+            Long revision = OpusJson.extractLong(request.body, "revision");
+            if (revision == null) {
+                respond(out, 400, "application/json",
+                        OpusJson.object("error", "Missing revision"), null);
+                return;
+            }
+            navigationManager.confirm(revision.longValue());
+            respond(out, 204, "application/json", new byte[0], null);
+            return;
+        }
+        if ("/api/v1/client/ui-actions".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            String action = OpusJson.extractString(request.body, "action");
+            Long expectedRevision = OpusJson.extractLong(request.body, "revision");
+            String routeJson = nestedObject(request.body, "route");
+            String routeId = OpusJson.extractString(routeJson, "id");
+            String paramsJson = nestedObject(routeJson, "params");
+            String moduleId = OpusJson.extractString(paramsJson, "moduleId");
+            String settingsSection = OpusJson.extractString(paramsJson, "settingsSection");
+            if (action == null || action.isEmpty()) {
+                respond(out, 400, "application/json",
+                        OpusJson.object("error", "Missing UI action"), null);
+                return;
+            }
+            if (!("navigate".equals(action)
+                    || "back".equals(action)
+                    || "close".equals(action)
+                    || "quit".equals(action))) {
+                respond(out, 400, "application/json",
+                        OpusJson.object("error", "Unknown UI action"), null);
+                return;
+            }
+            if (!"quit".equals(action) && expectedRevision == null) {
+                respond(out, 400, "application/json",
+                        OpusJson.object("error", "Missing navigation revision"), null);
+                return;
+            }
+            if (expectedRevision != null
+                    && navigationManager != null
+                    && !navigationManager.isCurrentRevision(expectedRevision.longValue())) {
+                respond(out, 409, "application/json",
+                        navigationManager.stateJson(), null);
+                return;
+            }
+            if ("navigate".equals(action)) {
+                String routeError = validateRoute(routeId, moduleId, settingsSection);
+                if (routeError != null) {
+                    respond(out, 400, "application/json",
+                            OpusJson.object("error", routeError), null);
+                    return;
+                }
+            }
+            boolean accepted = bridgeProvider.performUiAction(
+                    action,
+                    routeId,
+                    moduleId,
+                    settingsSection,
+                    expectedRevision == null ? -1L : expectedRevision.longValue());
+            if (!accepted) {
+                respond(out, 409, "application/json",
+                        navigationManager == null
+                                ? OpusJson.object("error", "UI action was not committed")
+                                : navigationManager.stateJson(),
                         null);
                 return;
             }
-            if ("POST".equals(request.method)) {
-                String name = OpusJson.extractString(request.body, "name");
-                if (screenManager != null) {
-                    screenManager.confirm(name == null ? "" : name);
-                }
-                respond(out, 204, "application/json", new byte[0], null);
-                return;
+            if ("quit".equals(action) || navigationManager == null) {
+                respond(out, 202, "application/json",
+                        OpusJson.object("status", "accepted"), null);
+            } else {
+                respond(out, 200, "application/json", navigationManager.stateJson(), null);
             }
-        }
-        if ("/api/v1/client/screen".equals(request.path) && screenManager != null) {
-            if ("PUT".equals(request.method)) {
-                String name = OpusJson.extractString(request.body, "name");
-                screenManager.open(name == null ? "" : name);
-                respond(out, 204, "application/json", new byte[0], null);
-                return;
-            }
-            if ("DELETE".equals(request.method)) {
-                screenManager.close();
-                respond(out, 204, "application/json", new byte[0], null);
-                return;
-            }
+            return;
         }
         if ("/api/v1/client/worlds".equals(request.path)) {
             if ("GET".equals(request.method)) {
@@ -320,7 +419,7 @@ public final class OpusInteropServer {
         if ("/api/v1/client/options/adjust".equals(request.path)
                 && "POST".equals(request.method) && bridgeProvider != null) {
             String key = OpusJson.extractString(request.body, "key");
-            String delta = OpusJson.extractString(request.body, "delta");
+            String delta = OpusJson.extractScalar(request.body, "delta");
             if (key != null && delta != null) {
                 try {
                     bridgeProvider.adjustGameOption(key, Integer.parseInt(delta));
@@ -335,7 +434,7 @@ public final class OpusInteropServer {
         if ("/api/v1/client/options/set".equals(request.path)
                 && "POST".equals(request.method) && bridgeProvider != null) {
             String key = OpusJson.extractString(request.body, "key");
-            String value = OpusJson.extractString(request.body, "value");
+            String value = OpusJson.extractScalar(request.body, "value");
             if (key != null && value != null) {
                 try {
                     bridgeProvider.setGameOptionFloat(key, Float.parseFloat(value));
@@ -347,7 +446,7 @@ public final class OpusInteropServer {
                 return;
             }
         }
-        if ("/api/v1/client/screen/leave-world".equals(request.path)
+        if ("/api/v1/client/world/leave".equals(request.path)
                 && "POST".equals(request.method) && bridgeProvider != null) {
             bridgeProvider.leaveWorld();
             respond(out, 204, "application/json", new byte[0], null);
@@ -362,7 +461,7 @@ public final class OpusInteropServer {
         if ("/api/v1/client/modules/toggle".equals(request.path)
                 && "POST".equals(request.method) && bridgeProvider != null) {
             String id = OpusJson.extractString(request.body, "id");
-            String enabled = OpusJson.extractString(request.body, "enabled");
+            String enabled = OpusJson.extractScalar(request.body, "enabled");
             if (id != null && enabled != null) {
                 bridgeProvider.setModuleEnabled(id,
                         "1".equals(enabled) || "true".equals(enabled));
@@ -390,8 +489,10 @@ public final class OpusInteropServer {
         if ("/api/v1/client/hud/move".equals(request.path)
                 && "POST".equals(request.method) && bridgeProvider != null) {
             String id = OpusJson.extractString(request.body, "id");
-            String x = OpusJson.extractString(request.body, "x");
-            String y = OpusJson.extractString(request.body, "y");
+            // The SPA sends coordinates as JSON numbers. Accept quoted values
+            // too for older clients, but do not require a string token here.
+            String x = OpusJson.extractScalar(request.body, "x");
+            String y = OpusJson.extractScalar(request.body, "y");
             if (id != null && x != null && y != null) {
                 try {
                     bridgeProvider.moveHudModule(
@@ -403,6 +504,35 @@ public final class OpusInteropServer {
                 }
                 return;
             }
+        }
+        if ("/api/v1/client/ui-input-region".equals(request.path)
+                && "POST".equals(request.method) && bridgeProvider != null) {
+            Long revision = OpusJson.extractLong(request.body, "revision");
+            Long x = OpusJson.extractLong(request.body, "x");
+            Long y = OpusJson.extractLong(request.body, "y");
+            Long width = OpusJson.extractLong(request.body, "width");
+            Long height = OpusJson.extractLong(request.body, "height");
+            if (revision == null || x == null || y == null || width == null || height == null
+                    || revision.longValue() < 0L || width.longValue() < 0L
+                    || height.longValue() < 0L
+                    || x.longValue() < Integer.MIN_VALUE || x.longValue() > Integer.MAX_VALUE
+                    || y.longValue() < Integer.MIN_VALUE || y.longValue() > Integer.MAX_VALUE
+                    || width.longValue() > Integer.MAX_VALUE
+                    || height.longValue() > Integer.MAX_VALUE) {
+                respond(out, 400, "application/json",
+                        OpusJson.object("error", "Invalid UI input region"), null);
+                return;
+            }
+            bridgeProvider.updateHudEditorCanvas(
+                    revision.longValue(),
+                    x.intValue(),
+                    y.intValue(),
+                    width.intValue(),
+                    height.intValue());
+            log.info("Opus HUD editor input region revision {}: {}x{} at {},{}",
+                    revision, width, height, x, y);
+            respond(out, 204, "application/json", new byte[0], null);
+            return;
         }
         respond(out, 404, "application/json",
                 OpusJson.object("error", "Not found"), null);
@@ -438,6 +568,122 @@ public final class OpusInteropServer {
         }
         out.append("]}");
         return out.toString();
+    }
+
+    private static String currentSessionName() {
+        try {
+            net.minecraft.client.Minecraft minecraft = net.minecraft.client.Minecraft.getMinecraft();
+            return minecraft.getSession() == null ? "" : minecraft.getSession().getUsername();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** Reports the actual launch identity without exposing the session token. */
+    private static String currentSessionKind() {
+        try {
+            net.minecraft.client.Minecraft minecraft = net.minecraft.client.Minecraft.getMinecraft();
+            net.minecraft.util.Session session = minecraft.getSession();
+            if (session == null) {
+                return "unofficial";
+            }
+            if (session.getSessionType() == net.minecraft.util.Session.Type.LEGACY) {
+                return "unofficial";
+            }
+            String token = session.getToken();
+            return token == null || token.isEmpty() || "0".equals(token)
+                    ? "unofficial"
+                    : "official";
+        } catch (Throwable ignored) {
+            // The bridge must remain usable even during early client startup.
+            return "unofficial";
+        }
+    }
+
+    private static String nestedObject(String json, String key) {
+        if (json == null || key == null) {
+            return null;
+        }
+        String marker = "\"" + key + "\"";
+        int keyIndex = json.indexOf(marker);
+        if (keyIndex < 0) {
+            return null;
+        }
+        int start = json.indexOf('{', keyIndex + marker.length());
+        if (start < 0) {
+            return null;
+        }
+        boolean quoted = false;
+        boolean escaped = false;
+        int depth = 0;
+        for (int index = start; index < json.length(); index++) {
+            char character = json.charAt(index);
+            if (quoted) {
+                if (escaped) {
+                    escaped = false;
+                } else if (character == '\\') {
+                    escaped = true;
+                } else if (character == '"') {
+                    quoted = false;
+                }
+                continue;
+            }
+            if (character == '"') {
+                quoted = true;
+            } else if (character == '{') {
+                depth++;
+            } else if (character == '}' && --depth == 0) {
+                return json.substring(start, index + 1);
+            }
+        }
+        return null;
+    }
+
+    private static String validateRoute(
+            String routeId,
+            String moduleId,
+            String settingsSection) {
+        if (routeId == null || routeId.isEmpty() || "none".equals(routeId)) {
+            return "Invalid UI route";
+        }
+        if ("module_detail".equals(routeId)) {
+            if (moduleId == null || moduleId.trim().isEmpty()) {
+                return "module_detail requires params.moduleId";
+            }
+            return settingsSection == null || settingsSection.isEmpty()
+                    ? null
+                    : "module_detail does not accept settingsSection";
+        }
+        if ("settings".equals(routeId)) {
+            if (moduleId != null && !moduleId.isEmpty()) {
+                return "settings does not accept moduleId";
+            }
+            if (settingsSection == null || settingsSection.isEmpty()
+                    || "interface".equals(settingsSection)
+                    || "game".equals(settingsSection)) {
+                return null;
+            }
+            return "Invalid settingsSection";
+        }
+        if (!isCanonicalRoute(routeId)) {
+            return "Invalid UI route";
+        }
+        if ((moduleId != null && !moduleId.isEmpty())
+                || (settingsSection != null && !settingsSection.isEmpty())) {
+            return "Route parameters are not allowed for this route";
+        }
+        return null;
+    }
+
+    private static boolean isCanonicalRoute(String routeId) {
+        return "title".equals(routeId)
+                || "singleplayer".equals(routeId)
+                || "multiplayer".equals(routeId)
+                || "accounts".equals(routeId)
+                || "game_menu".equals(routeId)
+                || "quick_hub".equals(routeId)
+                || "mods_catalog".equals(routeId)
+                || "hud_editor".equals(routeId);
     }
 
     private String modulesJson() {

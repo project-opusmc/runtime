@@ -3,6 +3,11 @@
 Status: **historical release-blocker incident; implementation resumed only
 after the user's explicit approval on 2026-08-11**
 
+The reflection UI and ASM entry path described by this incident were deleted
+from production source and artifacts on 2026-08-20. This file remains evidence
+of why a real Minecraft screenshot and a stale-artifact audit are mandatory;
+it is not an instruction to restore that implementation.
+
 Severity: **release blocker**
 
 Affected builds:

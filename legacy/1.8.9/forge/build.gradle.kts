@@ -22,9 +22,8 @@ dependencies {
     compileOnly("net.minecraft:launchwrapper:1.12") {
         isTransitive = false
     }
-    // The managed Minecraft runtime supplies LWJGL 2 at game time. The Opus
-    // boot terminal draws with plain GL11/Display, so compile against the exact
-    // 1.8.9 LWJGL version but never pack it into the coremod (compileOnly).
+    // The managed Minecraft runtime supplies LWJGL 2 at game time. Compile
+    // against the exact 1.8.9 version but never pack it into the coremod.
     compileOnly("org.lwjgl.lwjgl:lwjgl:2.9.3") {
         isTransitive = false
     }
@@ -63,13 +62,21 @@ tasks.jar {
                 .filter { artifact -> !artifact.name.startsWith("asm-") }
                 .map { artifact -> zipTree(artifact) }
     }) {
-        // The old ASM/reflection UI remains as migration evidence only. The
-        // typed Forge client mod is the sole production UI path, so none of
-        // these classes or its service registration may enter the coremod.
+        // Vanilla Minecraft is the sole production UI path. Retired UI,
+        // standalone-loader, and service-registration classes must never enter
+        // the Core Mod, even if a stale dependency is restored later.
+        exclude("org/polydevs/opusmc/core/ClientConfigUi*.class")
         exclude("org/polydevs/opusmc/core/ClientUiHooks.class")
         exclude("org/polydevs/opusmc/patches/ClientOptionsTransformer*.class")
         exclude("org/polydevs/opusmc/patches/OpusClientOptionsScreenFactory.class")
+        exclude("org/polydevs/opusmc/patches/WindowTitleTransformer*.class")
         exclude("org/polydevs/opusmc/client/gui/**")
+        exclude("org/polydevs/opusmc/forge/BootTerminalTransformer*.class")
+        exclude("org/polydevs/opusmc/forge/LoadingTerminalTransformer*.class")
+        exclude("org/polydevs/opusmc/forge/OpusBootTerminal*.class")
+        exclude("org/polydevs/opusmc/bootstrap/BootstrapArguments.class")
+        exclude("org/polydevs/opusmc/bootstrap/BootstrapMain.class")
+        exclude("org/polydevs/opusmc/bootstrap/TransformingClassLoader.class")
         exclude("META-INF/services/org.polydevs.opusmc.bootstrap.ClassTransformer")
         exclude("META-INF/MANIFEST.MF")
         exclude("META-INF/*.SF")
@@ -87,15 +94,80 @@ tasks.register("verifyCoremodArtifact") {
         val artifact = tasks.jar.get().archiveFile.get().asFile
         JarFile(artifact).use { archive ->
             val forbidden = listOf(
+                "org/polydevs/opusmc/core/ClientConfigUi.class",
                 "org/polydevs/opusmc/core/ClientUiHooks.class",
                 "org/polydevs/opusmc/patches/ClientOptionsTransformer.class",
                 "org/polydevs/opusmc/patches/OpusClientOptionsScreenFactory.class",
+                "org/polydevs/opusmc/patches/WindowTitleTransformer.class",
                 "org/polydevs/opusmc/client/gui/OpusClientOptionsScreen.class",
+                "org/polydevs/opusmc/forge/BootTerminalTransformer.class",
+                "org/polydevs/opusmc/forge/LoadingTerminalTransformer.class",
+                "org/polydevs/opusmc/forge/OpusBootTerminal.class",
+                "org/polydevs/opusmc/bootstrap/BootstrapArguments.class",
+                "org/polydevs/opusmc/bootstrap/BootstrapMain.class",
+                "org/polydevs/opusmc/bootstrap/TransformingClassLoader.class",
                 "META-INF/services/org.polydevs.opusmc.bootstrap.ClassTransformer",
             )
-            val leaked = forbidden.filter { archive.getEntry(it) != null }
+            val leaked = forbidden.filter { archive.getEntry(it) != null }.toMutableList()
+            val entries = archive.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement().name
+                if (entry.startsWith("org/polydevs/opusmc/forge/BootTerminalTransformer\$")
+                    || entry.startsWith("org/polydevs/opusmc/forge/LoadingTerminalTransformer\$")
+                    || entry.startsWith("org/polydevs/opusmc/forge/OpusBootTerminal\$")
+                    || entry.startsWith("org/polydevs/opusmc/client/gui/")
+                    || entry.startsWith("org/polydevs/opusmc/core/ClientConfigUi")
+                    || entry.startsWith("org/polydevs/opusmc/core/ClientUiHooks")
+                    || entry.startsWith("org/polydevs/opusmc/patches/ClientOptionsTransformer")
+                    || entry.startsWith("org/polydevs/opusmc/patches/OpusClientOptionsScreenFactory")
+                    || entry.startsWith("org/polydevs/opusmc/patches/WindowTitleTransformer")
+                    || entry.startsWith("org/polydevs/opusmc/bootstrap/BootstrapArguments")
+                    || entry.startsWith("org/polydevs/opusmc/bootstrap/BootstrapMain")
+                    || entry.startsWith("org/polydevs/opusmc/bootstrap/TransformingClassLoader")
+                ) {
+                    leaked.add(entry)
+                }
+            }
+            val forbiddenUiSymbols = listOf(
+                "org/polydevs/opusmc/client/gui/",
+                "org.polydevs.opusmc.client.gui.",
+                "net/minecraft/client/gui/",
+                "net/minecraftforge/client/event/GuiScreenEvent",
+                "net/minecraftforge/fml/client/registry/ClientRegistry",
+                "net/minecraft/client/settings/KeyBinding",
+                "org/lwjgl/input/Keyboard",
+                "org/lwjgl/input/Mouse",
+                "org/cef/",
+                "com/cef/",
+                "opus-webview-helper",
+                "opus.window.title",
+                // A stale UI integration can avoid a direct GUI class
+                // dependency through reflection or a string-dispatched hook.
+                // Keep the production Core Mod unable to own a screen/input
+                // path even through that escape hatch.
+                "displayGuiScreen",
+                "currentScreen",
+                "onGuiOpening",
+                "registerKeyBinding",
+                "keyTyped",
+                "mouseClicked",
+                "handleMouseInput",
+            )
+            val classEntries = archive.entries()
+            while (classEntries.hasMoreElements()) {
+                val entry = classEntries.nextElement()
+                if (!entry.name.endsWith(".class")) {
+                    continue
+                }
+                val symbols = archive.getInputStream(entry).use { input ->
+                    String(input.readBytes(), Charsets.ISO_8859_1)
+                }
+                forbiddenUiSymbols
+                    .filter { symbol -> symbols.contains(symbol) }
+                    .forEach { symbol -> leaked.add("${entry.name} references forbidden UI symbol $symbol") }
+            }
             check(leaked.isEmpty()) {
-                "Telemetry coremod contains retired UI artifacts: ${leaked.joinToString()}"
+                "Core Mod contains retired UI or standalone-loader artifacts: ${leaked.joinToString()}"
             }
         }
     }

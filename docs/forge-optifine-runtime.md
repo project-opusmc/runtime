@@ -8,7 +8,8 @@ OPUS's supported game runtime is a single, locked Minecraft 1.8.9 profile:
 | Forge | `1.8.9-11.15.1.2318-1.8.9` |
 | Forge entry point | `net.minecraft.launchwrapper.Launch` with `FMLTweaker` |
 | OptiFine | `OptiFine_1.8.9_HD_U_M5.jar` |
-| OPUS integration | verified `opus-forge-coremod` plus the normal client-only `opus-forge-client` mod loaded by Forge |
+| OPUS integration | one verified `opus-forge-coremod` loaded by Forge |
+| In-game UI | unmodified vanilla Minecraft UI and input |
 
 The authoritative contract is
 `launcher/opus-runtime/runtime-lock/forge-1.8.9-11.15.1.2318.lock.json`, parsed
@@ -57,31 +58,31 @@ The only supported product launch mode is `LaunchMode::ForgeBootstrap`:
    the imported managed mod; OPUS does not replace Forge with a second custom
    game classloader.
 5. Before starting Forge, OPUS verifies and stages the bundled
-   `opus-forge-coremod` and `opus-forge-client` artifacts beside OptiFine in the
-   isolated `game/mods/` directory. The coremod's `FMLCorePlugin` manifest
-   registers `org.polydevs.opusmc.forge.OpusLoadingPlugin`; the client artifact is a normal,
-   client-only FML mod with `mcmod.info` and no coremod manifest entry.
+   `opus-forge-coremod` beside OptiFine in the isolated `game/mods/` directory.
+   It removes the known stale `opus-client-legacy-1.8.9.jar` before Forge scans
+   this directory. The Core Mod's `FMLCorePlugin` manifest registers
+   `org.polydevs.opusmc.forge.OpusLoadingPlugin`. No CEF helper, OPUS client
+   mod, or legacy UI artifact may be packaged or staged.
 
 `BootstrapMain`, `TransformingClassLoader`, and the standalone ServiceLoader
-route remain legacy compatibility code in the source tree. They are not a
-supported Forge/OptiFine launch architecture and must not be selected by the
-desktop QA or Premium launch paths.
+route remain quarantined compatibility source only. They are excluded from
+production artifacts and cannot be selected by desktop QA or Premium launch
+paths.
 
-## Managed-mod policy for QA and UI Preview
+## Managed-mod policy
 
-The QA demo and isolated UI Preview are intentionally controlled three-artifact
-Forge mod sets:
+Production, QA, and any launcher smoke test use the same controlled
+two-artifact Forge mod set:
 
 1. the exact OptiFine JAR imported and verified above; and
-2. the checksum-verified OPUS Forge coremod staged from the packaged launcher
-   asset; and
-3. the checksum-verified normal OPUS Forge client mod staged from the packaged
-   launcher asset.
+2. the checksum-verified OPUS Forge Core Mod staged from the packaged launcher
+   asset.
 
 An unexpected visible entry in the managed `game/mods/` directory makes the
 launcher fail before Forge starts. Do not place arbitrary user mods, modpacks,
-or test JARs in QA data. This is both a reproducibility rule and a safety
-boundary for a demo that already uses offline identities.
+test JARs, or prior OPUS client artifacts in QA data. This is both a
+reproducibility rule and a diagnostic boundary: vanilla UI behavior must not be
+confused with a stale client/UI mod.
 
 Forge has more than one historical mod-discovery convention. Before adding a
 new managed location or supporting another artifact, extend the validator to
@@ -91,9 +92,8 @@ future mod is not supported merely because Forge happens to discover it.
 
 ## Changing the profile
 
-A Forge, OptiFine, OPUS coremod, or OPUS client-mod update is a runtime-contract
-change, not a settings change. Update the lock and all relevant integrity
-values, regenerate the applicable artifact deliberately, verify Forge load
-order, run the Java/Rust tests, and smoke-test a clean isolated root. Keep the
-old profile out of the new root rather than mixing artifacts from two loader
-contracts.
+A Forge, OptiFine, or OPUS Core Mod update is a runtime-contract change, not a
+settings change. Update the lock and all relevant integrity values, regenerate
+the artifact deliberately, verify Forge load order, run the Java/Rust tests,
+and smoke-test a clean isolated root. Keep old profiles out of the new root
+rather than mixing artifacts from different loader contracts.

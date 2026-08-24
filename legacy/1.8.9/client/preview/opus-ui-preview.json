@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 1,
-  "revision": 180,
-  "fixture": "current",
-  "route": "main",
-  "pointer": { "x": 360, "y": 216 },
+  "schemaVersion": 2,
+  "revision": 208,
+  "fixture": "right-shift",
+  "route": { "id": "quick_hub" },
+  "input": { "type": "key", "key": "escape" },
   "capture": {
-    "file": "opus-home-menu-blur-hero-lift-hover.png",
+    "file": "opus-right-shift-escape-real-208.png",
     "afterFrames": 14
   }
 }

@@ -5,27 +5,45 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
 
 /**
- * Keeps Opus surfaces at a stable physical size instead of inheriting the
- * player's Minecraft GUI scale. Product coordinates target two framebuffer
- * pixels per unit, which is readable on both standard and Retina displays.
+ * Defines the one logical coordinate space shared by CEF, GuiScreen input, and
+ * the native HUD editor. Logical units are the live Minecraft scaled-screen
+ * units; framebuffer/device scale affects raster density only.
  */
 public final class MinecraftUiScale {
-    private static final int TARGET_FRAMEBUFFER_SCALE = 2;
-
     private MinecraftUiScale() {
     }
 
     public static UiBounds viewport(Minecraft minecraft) {
+        if (minecraft == null) {
+            return new UiBounds(0, 0, 1, 1);
+        }
+        ScaledResolution resolution = new ScaledResolution(minecraft);
         return new UiBounds(
                 0,
                 0,
-                Math.max(1, divideRoundUp(minecraft.displayWidth, TARGET_FRAMEBUFFER_SCALE)),
-                Math.max(1, divideRoundUp(minecraft.displayHeight, TARGET_FRAMEBUFFER_SCALE)));
+                Math.max(1, resolution.getScaledWidth()),
+                Math.max(1, resolution.getScaledHeight()));
     }
 
-    static float matrixScale(Minecraft minecraft) {
-        int minecraftScale = new ScaledResolution(minecraft).getScaleFactor();
-        return TARGET_FRAMEBUFFER_SCALE / (float) Math.max(1, minecraftScale);
+    /**
+     * Maps OPUS logical units into the coordinates used by GuiScreen and the
+     * Forge overlay pass. CEF and native HUD therefore share the exact same
+     * transform at every Minecraft GUI scale.
+     */
+    public static float matrixScaleX(Minecraft minecraft, UiBounds viewport) {
+        if (minecraft == null || viewport == null || viewport.width <= 0) {
+            return 1.0F;
+        }
+        ScaledResolution resolution = new ScaledResolution(minecraft);
+        return resolution.getScaledWidth() / (float) viewport.width;
+    }
+
+    public static float matrixScaleY(Minecraft minecraft, UiBounds viewport) {
+        if (minecraft == null || viewport == null || viewport.height <= 0) {
+            return 1.0F;
+        }
+        ScaledResolution resolution = new ScaledResolution(minecraft);
+        return resolution.getScaledHeight() / (float) viewport.height;
     }
 
     public static int convertX(int minecraftGuiX, int minecraftGuiWidth, UiBounds viewport) {
@@ -43,7 +61,4 @@ public final class MinecraftUiScale {
         return Math.round(value * targetExtent / (float) sourceExtent);
     }
 
-    private static int divideRoundUp(int value, int divisor) {
-        return (value + divisor - 1) / divisor;
-    }
 }

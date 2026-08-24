@@ -1,4 +1,12 @@
-# Quyết định áp dụng kiến trúc UI overlay
+# Quyết định áp dụng kiến trúc UI overlay (historical)
+
+> **Retired historical plan.** This document describes the former native
+> `UiRuntime`/page-tree architecture and later CEF-oriented migration ideas. It
+> is preserved as failure/migration history, not as an implementation
+> instruction. The active architecture is
+> [Forge + OptiFine + OPUS Core Mod + vanilla UI](../../docs/coremod-first-goal-and-plan.md).
+> Do not reintroduce `UiRuntime`, `Opus*Page`, CEF, or a terminal overlay under
+> a fallback/debug name.
 
 **Ngày:** 2026-08-11  
 **Nguồn:** technical review độc lập về implementation Forge/OptiFine hiện tại.  

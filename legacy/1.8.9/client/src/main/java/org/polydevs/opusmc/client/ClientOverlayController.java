@@ -1,34 +1,31 @@
 package org.polydevs.opusmc.client;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiIngameMenu;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiMultiplayer;
+import net.minecraft.client.gui.GuiOptions;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiSelectWorld;
+import net.minecraft.client.gui.GuiScreenWorking;
+import net.minecraft.client.gui.GuiDisconnected;
+import net.minecraft.client.gui.GuiDownloadTerrain;
+import net.minecraft.client.gui.GuiYesNo;
 import net.minecraft.client.multiplayer.GuiConnecting;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.ServerList;
-import net.minecraft.client.resources.I18n;
-import net.minecraft.client.resources.Language;
-import net.minecraft.client.resources.LanguageManager;
 import net.minecraft.world.storage.ISaveFormat;
 import net.minecraft.world.storage.SaveFormatComparator;
 import net.minecraftforge.fml.client.FMLClientHandler;
 import net.minecraft.client.settings.GameSettings;
-import net.minecraft.client.gui.GuiVideoSettings;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.util.ScreenShotHelper;
 import net.minecraftforge.client.event.GuiOpenEvent;
-import net.minecraftforge.client.event.GuiScreenEvent;
-import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.apache.logging.log4j.Logger;
 import org.lwjgl.input.Keyboard;
@@ -36,18 +33,21 @@ import org.lwjgl.input.Keyboard;
 import java.util.List;
 import java.util.Arrays;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.polydevs.opusmc.client.hud.HudManager;
-import org.polydevs.opusmc.client.interop.OpusExternalBrowser;
 import org.polydevs.opusmc.client.interop.OpusInteropServer;
 import org.polydevs.opusmc.client.interop.OpusBridgeProvider;
-import org.polydevs.opusmc.client.interop.OpusVirtualScreenManager;
+import org.polydevs.opusmc.client.interop.UiNavigationManager;
+import org.polydevs.opusmc.client.embed.OpusWebViewClient;
 import org.polydevs.opusmc.client.ui.UiBounds;
 import org.polydevs.opusmc.client.ui.UiInput;
 import org.polydevs.opusmc.client.ui.UiRenderer;
 import org.polydevs.opusmc.client.module.ModuleRegistry;
 import org.polydevs.opusmc.client.module.ClientModule;
+import org.polydevs.opusmc.client.ui.UiNavigationState;
 import org.polydevs.opusmc.client.ui.UiRoute;
 
 /**
@@ -61,9 +61,6 @@ import org.polydevs.opusmc.client.ui.UiRoute;
  * the first pause-menu initialization.
  */
 public final class ClientOverlayController implements OpusBridgeProvider {
-    private static final int CLIENT_OPTIONS_BUTTON_ID = 0x524257;
-    private static final String CLIENT_OPTIONS_LABEL = "Client Options";
-
     private final Logger log;
     private final KeyBinding openOptionsKey = new KeyBinding(
             "key.opusclient.open_options",
@@ -74,17 +71,36 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     private final ArmorStatusModule armorStatusModule;
     private final ModuleRegistry moduleRegistry;
     private final HudManager hudManager;
-    private final UiThemeStore themeStore;
     private final UiPreviewSession previewSession;
-    private final OpusVanillaTerminalOverlay vanillaTerminal;
     private final OpusInteropServer interopServer;
-    private final OpusVirtualScreenManager virtualScreens;
+    private final UiNavigationManager uiNavigation;
     private final String[] captureRouteNames = captureRoutes(System.getProperty("opus.ui.capture.route"));
     private int captureRouteIndex;
     private boolean captureRouteOpened;
     private boolean captureComplete;
     private int captureTicks;
-    private boolean externalUiOpened;
+    /**
+     * Owns the Escape transition after a hotkey-owned product route closes.
+     *
+     * <p>Minecraft 1.8.9 can still drain a repeat or delayed Escape event after
+     * {@code currentScreen} has become {@code null}. A wall-clock cooldown is
+     * not sufficient: it either leaks a late event or eats a legitimate next
+     * press. Keep the guard until the original key is released, then allow a
+     * fresh non-repeat press to establish a new pause request.</p>
+     */
+    private boolean escapePauseGuard;
+    private boolean escapeReleaseObserved;
+
+    // Embedded web-view surface: renders the real Opus web UI inside the
+    // game window as an OpenGL texture, painted by an out-of-process CEF
+    // helper (CEF cannot be hosted in this Java 8 / macOS arm64 JVM itself).
+    // Any failure enters the explicit CEF failed state; OpusClientScreen owns
+    // the minimal loading/error shell.
+    private boolean embeddedHelperResolved;
+    private String embeddedHelperPath;
+    private OpusWebViewClient embeddedWebView;
+    private String embeddedRoute = "title";
+    private volatile boolean shuttingDown;
 
     ClientOverlayController(Logger log) {
         this.log = log;
@@ -95,31 +111,56 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         this.moduleRegistry.register(fpsModule);
         this.moduleRegistry.register(armorStatusModule);
         this.hudManager = new HudManager(Arrays.asList(fpsModule.widget(), armorStatusModule.widget()));
-        this.themeStore = UiThemeStore.fromSystemProperties(log);
         this.previewSession = UiPreviewSession.fromSystemProperties(log);
-        this.vanillaTerminal = new OpusVanillaTerminalOverlay(log);
         this.interopServer = new OpusInteropServer(log);
-        this.virtualScreens = new OpusVirtualScreenManager(log, interopServer);
-        this.interopServer.setScreenManager(virtualScreens);
-        this.interopServer.setBridgeProvider(this);
+        this.uiNavigation = new UiNavigationManager(log, interopServer);
+        this.interopServer.setNavigationManager(uiNavigation);
+        // HTTP/WebSocket handlers run on worker threads. Keep all Minecraft and
+        // FML reads/writes on the client thread before they reach this owner.
+        this.interopServer.setBridgeProvider(new ClientThreadBridge());
     }
 
     void initialize() {
         settingsStore.reload();
-        themeStore.poll();
         ClientRegistry.registerKeyBinding(openOptionsKey);
         MinecraftForge.EVENT_BUS.register(this);
         FMLCommonHandler.instance().bus().register(this);
         if (!Boolean.getBoolean("opus.interop.skip") && interopServer.start()) {
-            virtualScreens.setReloadAction(new Runnable() {
+            uiNavigation.setReloadAction(new Runnable() {
                 @Override
                 public void run() {
-                    OpusExternalBrowser.open(log, interopServer.url());
+                    // Never substitute another product surface. If the embedded
+                    // web view is live, force a genuine reload of the current
+                    // route; otherwise the CEF screen owns its failed lifecycle
+                    // shell and remains the only visible product path.
+                    if (embeddedWebView != null && !embeddedWebView.isFailed()) {
+                        embeddedWebView.reload();
+                    }
                 }
             });
             log.info("Opus web UI bridge listening on {}", interopServer.url());
         }
-        log.info("Opus client options registered: Right Shift and the pause-menu Client Options button open the real utility surface.");
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                shutdown();
+            }
+        }, "opus-client-shutdown"));
+        log.info("Opus UI route entry points registered: Right Shift and the canonical CEF pause route are ready.");
+    }
+
+    void shutdown() {
+        if (shuttingDown) {
+            return;
+        }
+        shuttingDown = true;
+        OpusWebViewClient webView = embeddedWebView;
+        embeddedWebView = null;
+        if (webView != null) {
+            webView.stop();
+        }
+        uiNavigation.shutdown();
+        interopServer.stop();
     }
 
     @SubscribeEvent
@@ -128,115 +169,371 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             return;
         }
 
+        updateEscapePauseGuard();
+
         while (openOptionsKey.isPressed()) {
             Minecraft minecraft = Minecraft.getMinecraft();
             if (minecraft.currentScreen == null) {
-                openOptions(UiRoute.hudEditor());
+                openHotkeyFlow();
+            } else if (minecraft.currentScreen instanceof OpusClientScreen) {
+                OpusClientScreen screen = (OpusClientScreen) minecraft.currentScreen;
+                if (screen.isHotkeyFlow()) {
+                    screen.closeToGame();
+                }
             }
         }
-        themeStore.poll();
         previewSession.tick(this);
         runCaptureProbe();
     }
 
     @SubscribeEvent
-    public void onPauseMenuInitialized(GuiScreenEvent.InitGuiEvent.Post event) {
-        if (!(event.gui instanceof GuiIngameMenu) || hasClientOptionsButton(event.buttonList)) {
-            return;
-        }
-
-        int x = event.gui.width / 2 - 100;
-        // This is the real unused row between Achievements/Statistics and
-        // Options/Share to LAN in Minecraft 1.8.9's pause menu.
-        int y = event.gui.height / 4 + 56;
-        event.buttonList.add(new GuiButton(CLIENT_OPTIONS_BUTTON_ID, x, y, 200, 20, CLIENT_OPTIONS_LABEL));
-    }
-
-    @SubscribeEvent
-    public void onPauseMenuAction(GuiScreenEvent.ActionPerformedEvent.Post event) {
-        if (event.gui instanceof GuiIngameMenu
-                && event.button != null
-                && event.button.id == CLIENT_OPTIONS_BUTTON_ID) {
-            openOptions(UiRoute.modHub());
-        }
-    }
-
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onVanillaGuiInitialized(GuiScreenEvent.InitGuiEvent.Post event) {
-        vanillaTerminal.initialized(event.gui, event.buttonList);
-    }
-
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onVanillaGuiDraw(GuiScreenEvent.DrawScreenEvent.Pre event) {
-        vanillaTerminal.draw(event);
-    }
-
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onVanillaGuiKeyboard(GuiScreenEvent.KeyboardInputEvent.Pre event) {
-        vanillaTerminal.keyboard(event);
-    }
-
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onVanillaGuiMouse(GuiScreenEvent.MouseInputEvent.Pre event) {
-        vanillaTerminal.mouse(event);
-    }
-
-    @SubscribeEvent
     public void onGuiOpening(GuiOpenEvent event) {
+        boolean previewPause = event.gui instanceof OpusPreviewPauseMenu
+                && previewSession.isEnabled();
         if (event.gui instanceof GuiMainMenu) {
             event.gui = new OpusClientScreen(this, UiRoute.mainMenu());
-            virtualScreens.open("title");
-        } else if (event.gui instanceof GuiIngameMenu && !(event.gui instanceof OpusPreviewPauseMenu)) {
-            // Replace the vanilla pause menu with the Opus terminal pause page.
+        } else if (event.gui instanceof GuiIngameMenu && !previewPause) {
+            if (shouldSuppressVanillaPause()) {
+                log.info("Opus suppressed a queued vanilla Escape pause request after Quick Hub close");
+                event.gui = null;
+                return;
+            }
+            // Replace the vanilla pause menu with the canonical CEF product screen.
             // The preview-only subclass is excluded so Preview Mode still drives
             // the genuine FML-populated controls.
+            log.info("Opus intercepted vanilla pause request (currentScreen={})",
+                    Minecraft.getMinecraft().currentScreen == null
+                            ? "none"
+                            : Minecraft.getMinecraft().currentScreen.getClass().getName());
             event.gui = new OpusClientScreen(this, UiRoute.pauseMenu());
-            virtualScreens.open("game_menu");
         } else if (event.gui instanceof GuiSelectWorld) {
-            // Any path that would show the vanilla world list (including other
-            // mods) is redirected to the Opus terminal singleplayer page.
+            // Any path that would show the vanilla world list is redirected to
+            // the canonical CEF singleplayer route.
             event.gui = new OpusClientScreen(this, UiRoute.singleplayer());
-            virtualScreens.open("singleplayer");
         } else if (event.gui instanceof GuiMultiplayer) {
-            // Same for the vanilla server list.
+            // Same for the canonical CEF multiplayer route.
             event.gui = new OpusClientScreen(this, UiRoute.multiplayer());
-            virtualScreens.open("multiplayer");
+        } else if (event.gui instanceof GuiOptions) {
+            // Vanilla options is a product-owned entry point. Its child pages
+            // are not intercepted here; the CEF settings route is authoritative.
+            event.gui = new OpusClientScreen(this, UiRoute.gameOptions());
+        } else if (event.gui != null && isSystemScreen(event.gui)) {
+            // Loading/disconnect/confirmation screens take ownership from the
+            // product surface. Clear bridge state before Minecraft replaces it.
+            if (Minecraft.getMinecraft().currentScreen instanceof OpusClientScreen) {
+                uiNavigation.close();
+            }
+        } else if (event.gui != null
+                && !(event.gui instanceof OpusClientScreen)
+                && !previewPause
+                && !isSystemScreen(event.gui)) {
+            // Gameplay-owned screens such as inventory/container, sign editing,
+            // merchant, and chat-adjacent dialogs must retain their vanilla or
+            // mod owner. CEF owns only the explicit product entry points above.
+            log.debug("Opus preserved non-product GUI screen {}",
+                    event.gui.getClass().getName());
         }
     }
 
     /**
-     * Mirrors an in-game Opus route change to the web UI. Route names follow
-     * the LiquidBounce virtual-screen contract (title, singleplayer,
-     * multiplayer, settings, hud...).
+     * Screens Opus must NOT replace even in strict mode: transitional and
+     * system dialogs whose absence would break connecting, disconnecting,
+     * world load, or confirm prompts. Product settings, including video
+     * settings, remain CEF-owned routes.
      */
-    void onRouteChanged(UiRoute.Kind kind) {
-        String screen = virtualScreenName(kind);
+    private static boolean isSystemScreen(GuiScreen gui) {
+        return gui instanceof GuiConnecting
+                || gui instanceof GuiDisconnected
+                || gui instanceof GuiScreenWorking
+                || gui instanceof GuiDownloadTerrain
+                || gui instanceof GuiYesNo;
+    }
+
+    /**
+     * Mirrors an in-game Opus route change to the web UI. Route IDs are the
+     * same structured IDs exposed by ui-state; there is no second screen-name
+     * contract.
+     */
+    void onNavigationChanged(UiNavigationState navigation) {
+        UiRoute route = navigation.current();
+        String screen = routeId(route);
         if (screen != null) {
-            virtualScreens.open(screen);
-            if ("title".equals(screen)
-                    && !externalUiOpened
-                    && Boolean.parseBoolean(
-                            System.getProperty("opus.webui.autoOpen", "false"))
-                    && interopServer.port() > 0) {
-                // Companion UI opens automatically once at the title screen.
-                // Opt-in: -Dopus.webui.autoOpen=true.
-                externalUiOpened = true;
-                OpusExternalBrowser.open(log, interopServer.url());
-            }
+            uiNavigation.commit(
+                    navigation,
+                    worldContext(),
+                    presentation(route),
+                    pausePolicy(navigation),
+                    canCloseToGame(route));
         }
     }
 
-    void onScreenClosed() {
-        virtualScreens.close();
+    long currentUiNavigationRevision() {
+        return uiNavigation.revision();
     }
 
-    /** Dev entry point: opens the bundled Opus web UI in the system browser. */
-    void openExternalUi() {
-        OpusExternalBrowser.open(log, interopServer.url());
+    /**
+     * Whether the in-game embedded web-view surface should be attempted. True
+     * only when a native helper is available (macOS) and the loopback bridge is
+     * running. Missing CEF enters the explicit lifecycle shell; it never
+     * selects another product compositor.
+     */
+    boolean isEmbeddedUiEnabled() {
+        if (interopServer.port() <= 0) {
+            return false;
+        }
+        return resolveEmbeddedHelper() != null;
     }
 
-    private static String virtualScreenName(UiRoute.Kind kind) {
-        switch (kind) {
+    /**
+     * Returns the shared embedded web-view client, starting the helper process
+     * on first use. Returns null if the helper cannot start; the screen then
+     * renders the minimal failed-state shell.
+     *
+     * @param scale device scale factor the browser should rasterize at, so the
+     *              texture matches the game's framebuffer resolution.
+     */
+    OpusWebViewClient acquireEmbeddedWebView(
+            int width,
+            int height,
+            float scale,
+            String route,
+            String moduleId,
+            String settingsSection) {
+        if (!isEmbeddedUiEnabled()) {
+            return null;
+        }
+        embeddedRoute = (route == null || route.isEmpty()) ? "title" : route;
+        String url = interopServer.urlForRoute(embeddedRoute, moduleId, settingsSection);
+        if (embeddedWebView == null) {
+            OpusWebViewClient client = new OpusWebViewClient(log, resolveEmbeddedHelper());
+            if (!client.start(width, height, scale, url)) {
+                return null;
+            }
+            embeddedWebView = client;
+        } else if (embeddedWebView.isFailed()) {
+            // Tear the dead helper down (freeing its shared buffer). Retry is an
+            // explicit lifecycle action; normal draw/open paths never respawn it.
+            log.warn("Opus embedded web view failed; entering the UI error state");
+            embeddedWebView.stop();
+            embeddedWebView = null;
+            return null;
+        } else {
+            embeddedWebView.resize(width, height, scale);
+            embeddedWebView.navigate(url);
+        }
+        return embeddedWebView;
+    }
+
+    /** Explicitly tears down a failed helper so the lifecycle shell can retry. */
+    void retryEmbeddedWebView() {
+        if (embeddedWebView != null) {
+            embeddedWebView.stop();
+            embeddedWebView = null;
+        }
+        embeddedHelperResolved = false;
+        embeddedHelperPath = null;
+    }
+
+    private String resolveEmbeddedHelper() {
+        if (!embeddedHelperResolved) {
+            embeddedHelperPath = OpusWebViewClient.resolveHelperPath(log);
+            embeddedHelperResolved = true;
+        }
+        return embeddedHelperPath;
+    }
+
+    String embeddedUrlFor(UiRoute route) {
+        return interopServer.urlForRoute(
+                routeId(route),
+                route.moduleId(),
+                route.settingsSection() == null ? null : route.settingsSection().wireValue());
+    }
+
+    /** Single Java-side close owner after the navigation stack is exhausted. */
+    void closeNavigation(UiNavigationState navigation) {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.theWorld != null) {
+            log.info("Opus closing product route {} to gameplay",
+                    navigation == null || navigation.current() == null
+                            ? "none"
+                            : routeId(navigation.current()));
+            uiNavigation.close();
+            minecraft.displayGuiScreen(null);
+            minecraft.setIngameFocus();
+        } else if (navigation.current().kind() != UiRoute.Kind.MAIN_MENU) {
+            minecraft.displayGuiScreen(new OpusClientScreen(this, UiRoute.mainMenu()));
+        }
+    }
+
+    /** Close invoked by the product screen's Escape handler. */
+    void closeNavigationFromEscape(UiNavigationState navigation) {
+        if (isHotkeyQuickHub(navigation)) {
+            armEscapePauseGuard();
+        }
+        closeNavigation(navigation);
+    }
+
+    private void armEscapePauseGuard() {
+        escapePauseGuard = true;
+        // Preview mode calls the same screen method without a native keyboard
+        // event. In that case the release has already happened conceptually;
+        // a stale vanilla request is still suppressed until a fresh press.
+        escapeReleaseObserved = !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE);
+    }
+
+    private void updateEscapePauseGuard() {
+        if (escapePauseGuard && !Keyboard.isKeyDown(Keyboard.KEY_ESCAPE)) {
+            escapeReleaseObserved = true;
+        }
+    }
+
+    private boolean shouldSuppressVanillaPause() {
+        if (!escapePauseGuard) {
+            return false;
+        }
+        boolean escapeDown = Keyboard.isKeyDown(Keyboard.KEY_ESCAPE);
+        if (escapeReleaseObserved && escapeDown && !Keyboard.isRepeatEvent()) {
+            // The original key was released and this is a new physical press;
+            // let the normal canonical pause route handle it.
+            escapePauseGuard = false;
+            escapeReleaseObserved = false;
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean isHotkeyQuickHub(UiNavigationState navigation) {
+        return navigation != null
+                && navigation.isRootHotkeyFlow()
+                && navigation.current() != null
+                && navigation.current().kind() == UiRoute.Kind.QUICK_HUB;
+    }
+
+    void navigateFromHudEditorToModule(String moduleId) {
+        if (moduleId == null || moduleId.trim().isEmpty()) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.currentScreen instanceof OpusClientScreen) {
+            ((OpusClientScreen) minecraft.currentScreen).navigate(UiRoute.moduleDetail(moduleId));
+        }
+    }
+
+    @Override
+    public boolean performUiAction(
+            final String action,
+            final String routeId,
+            final String moduleId,
+            final String settingsSection,
+            final long expectedRevision) {
+        // The loopback bridge normally calls from its worker thread, but a
+        // preview/in-process caller can already be on the Minecraft thread.
+        // Queueing and then waiting in that case deadlocks until the timeout,
+        // leaving CEF navigation one action behind the authoritative screen.
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.isCallingFromMinecraftThread()) {
+            return applyUiAction(action, routeId, moduleId, settingsSection, expectedRevision);
+        }
+        final CountDownLatch completed = new CountDownLatch(1);
+        final AtomicBoolean accepted = new AtomicBoolean(false);
+        try {
+            minecraft.addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        accepted.set(applyUiAction(
+                                action,
+                                routeId,
+                                moduleId,
+                                settingsSection,
+                                expectedRevision));
+                    } finally {
+                        completed.countDown();
+                    }
+                }
+            });
+            if (!completed.await(2L, TimeUnit.SECONDS)) {
+                log.warn("Opus UI action timed out before the Minecraft client thread committed it");
+                return false;
+            }
+            return accepted.get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Throwable failure) {
+            log.warn("Opus UI action could not be scheduled", failure);
+            return false;
+        }
+    }
+
+    private boolean applyUiAction(
+            String action,
+            String routeId,
+            String moduleId,
+            String settingsSection,
+            long expectedRevision) {
+        if (!"quit".equals(action)
+                && !uiNavigation.isCurrentRevision(expectedRevision)) {
+            log.info("Opus rejected stale UI action at revision {} (current {})",
+                    expectedRevision, uiNavigation.revision());
+            return false;
+        }
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if ("quit".equals(action)) {
+            minecraft.shutdown();
+            return true;
+        }
+        if (!(minecraft.currentScreen instanceof OpusClientScreen)) {
+            return false;
+        }
+        OpusClientScreen screen = (OpusClientScreen) minecraft.currentScreen;
+        if ("back".equals(action)) {
+            // The SPA's global Escape handler uses the same bridge action as a
+            // visible Back control. History navigation is unaffected, while a
+            // root Quick Hub close must retain the escape guard so Minecraft's
+            // delayed vanilla pause event cannot reopen another screen.
+            screen.backOrClose(true);
+            return true;
+        } else if ("close".equals(action)) {
+            screen.closeToGame();
+            return true;
+        } else if ("navigate".equals(action)) {
+            UiRoute route = routeFromWeb(routeId, moduleId, settingsSection);
+            if (route != null) {
+                screen.navigate(route);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    boolean canNavigateTo(UiRoute route) {
+        if (route == null) {
+            return false;
+        }
+        boolean inWorld = Minecraft.getMinecraft().theWorld != null;
+        switch (route.kind()) {
+            case HUD_EDITOR:
+            case QUICK_HUB:
+            case PAUSE_MENU:
+                return inWorld;
+            case MAIN_MENU:
+            case SINGLEPLAYER:
+            case MULTIPLAYER:
+            case ACCOUNTS:
+                return !inWorld;
+            default:
+                return true;
+        }
+    }
+
+    /** Package accessor so the in-game screen can resolve its own route name. */
+    String routeIdFor(UiRoute route) {
+        return routeId(route);
+    }
+
+    private static String routeId(UiRoute route) {
+        switch (route.kind()) {
             case MAIN_MENU:
                 return "title";
             case SINGLEPLAYER:
@@ -244,38 +541,118 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             case MULTIPLAYER:
                 return "multiplayer";
             case GAME_OPTIONS:
-            case CONTROLS:
-            case LANGUAGE:
                 return "settings";
+            case ACCOUNTS:
+                return "accounts";
             case PAUSE_MENU:
                 return "game_menu";
+            case QUICK_HUB:
+                return "quick_hub";
             case HUD_EDITOR:
-                return "hud";
+                return "hud_editor";
             case MOD_HUB:
+                return "mods_catalog";
             case MODULE_DETAIL:
-                return "settings";
+                return "module_detail";
             default:
                 return null;
         }
     }
 
+    private static UiRoute routeFromWeb(
+            String routeId,
+            String moduleId,
+            String settingsSection) {
+        if ("title".equals(routeId)) return UiRoute.mainMenu();
+        if ("singleplayer".equals(routeId)) return UiRoute.singleplayer();
+        if ("multiplayer".equals(routeId)) return UiRoute.multiplayer();
+        if ("settings".equals(routeId)) {
+            UiRoute.SettingsSection section = UiRoute.SettingsSection.fromWireValue(settingsSection);
+            return UiRoute.gameOptions(section == null ? UiRoute.SettingsSection.GAME : section);
+        }
+        if ("accounts".equals(routeId)) return UiRoute.accounts();
+        if ("game_menu".equals(routeId)) return UiRoute.pauseMenu();
+        if ("quick_hub".equals(routeId)) return UiRoute.quickHub();
+        if ("mods_catalog".equals(routeId)) return UiRoute.modHub();
+        if ("hud_editor".equals(routeId)) return UiRoute.hudEditor();
+        if ("module_detail".equals(routeId)
+                && moduleId != null && !moduleId.trim().isEmpty()) {
+            return UiRoute.moduleDetail(moduleId);
+        }
+        return null;
+    }
+
+    private static boolean canCloseToGame(UiRoute route) {
+        if (Minecraft.getMinecraft().theWorld == null || route == null) {
+            return false;
+        }
+        switch (route.kind()) {
+            case MAIN_MENU:
+            case SINGLEPLAYER:
+            case MULTIPLAYER:
+            case ACCOUNTS:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    private static String presentation(UiRoute route) {
+        switch (route.kind()) {
+            case QUICK_HUB:
+                return "quick";
+            case HUD_EDITOR:
+                return "hud_editor";
+            case MOD_HUB:
+            case MODULE_DETAIL:
+            case GAME_OPTIONS:
+                return Minecraft.getMinecraft().theWorld == null ? "opaque" : "workspace";
+            default:
+                return "opaque";
+        }
+    }
+
+    private static String pausePolicy(UiNavigationState navigation) {
+        UiRoute route = navigation == null ? null : navigation.current();
+        if (route == null) {
+            return "not_applicable";
+        }
+        if (Minecraft.getMinecraft().theWorld == null) {
+            return "not_applicable";
+        }
+        return route.kind() == UiRoute.Kind.PAUSE_MENU
+                || (route.kind() == UiRoute.Kind.GAME_OPTIONS
+                        && navigation.entryPoint() == UiNavigationState.EntryPoint.PAUSE)
+                ? "paused"
+                : "live";
+    }
+
+    private static String worldContext() {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.theWorld == null) {
+            return "none";
+        }
+        return minecraft.isSingleplayer() ? "singleplayer" : "multiplayer";
+    }
+
     @SubscribeEvent
     public void onRenderHudText(RenderGameOverlayEvent.Text event) {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        // The native layer is the live in-world HUD only. Never paint it over
+        // opaque title/list/settings routes when a Forge overlay event happens
+        // to fire during a no-world transition.
+        if (minecraft.theWorld == null) {
+            return;
+        }
         // The workspace is translucent live context, not a modal blackout:
         // enabled Opus widgets remain part of the player's HUD beneath it.
         // The editor draws the same widget itself so it can attach its hover
         // controls without a second FPS pass.
-        if (Minecraft.getMinecraft().currentScreen instanceof OpusClientScreen
-                && ((OpusClientScreen) Minecraft.getMinecraft().currentScreen).isHudEditor()) {
+        if (minecraft.currentScreen instanceof OpusClientScreen
+                && ((OpusClientScreen) minecraft.currentScreen).isHudEditor()) {
             return;
         }
-        hudManager.render(Minecraft.getMinecraft(), event.resolution);
-    }
-
-    @SubscribeEvent
-    public void onRenderHudPre(RenderGameOverlayEvent.Pre event) {
-        // Deliberately left intact. Vanilla HUD is live world context and
-        // must stay visible around the Opus workspace, like the HUD editor.
+        hudManager.render(minecraft, event.resolution);
     }
 
     PerformanceOverlaySettings performanceOverlay() {
@@ -306,6 +683,14 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         return hudManager.editorMouseDown(mouseX, mouseY, button);
     }
 
+    boolean hudEditorOwnsPoint(int mouseX, int mouseY) {
+        return hudManager.editorOwnsPoint(mouseX, mouseY);
+    }
+
+    boolean hudEditorHasPointerCapture() {
+        return hudManager.hasPointerCapture();
+    }
+
     boolean hudEditorMouseDrag(UiBounds viewport, int mouseX, int mouseY, int button) {
         return hudManager.editorMouseDrag(viewport, mouseX, mouseY, button);
     }
@@ -314,19 +699,62 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         return hudManager.editorMouseUp(button);
     }
 
-    void openSingleplayer() {
-        Minecraft.getMinecraft().displayGuiScreen(new GuiSelectWorld(mainMenuScreen()));
+    void cancelHudEditorPointerCapture() {
+        hudManager.cancelPointerCapture();
     }
 
-    void openMultiplayer() {
-        Minecraft.getMinecraft().displayGuiScreen(new GuiMultiplayer(mainMenuScreen()));
+    /**
+     * Stops the product compositor when no Opus screen owns it. A later screen
+     * starts a fresh helper and mapping; no browser frame or input owner remains
+     * alive behind gameplay or a system screen.
+     */
+    void releaseEmbeddedWebView(OpusWebViewClient owner) {
+        if (owner == null || embeddedWebView != owner) {
+            return;
+        }
+        embeddedWebView = null;
+        owner.stop();
+    }
+
+    @Override
+    public void updateHudEditorCanvas(
+            final long navigationRevision,
+            final int x,
+            final int y,
+            final int width,
+            final int height) {
+        log.info("Opus HUD editor input region queued: revision {} at {}x{}+{},{}",
+                navigationRevision, width, height, x, y);
+        Minecraft.getMinecraft().addScheduledTask(new Runnable() {
+            @Override
+            public void run() {
+                if (Minecraft.getMinecraft().currentScreen instanceof OpusClientScreen) {
+                    log.info("Opus HUD editor input region applying to current screen: revision {}",
+                            navigationRevision);
+                    OpusClientScreen screen = (OpusClientScreen) Minecraft.getMinecraft().currentScreen;
+                    long currentRevision = screen.previewNavigationRevision();
+                    boolean hudEditorRoute = screen.isHudEditor();
+                    screen.acceptHudEditorCanvas(
+                            navigationRevision,
+                            new UiBounds(x, y, width, height));
+                    log.info("Opus HUD editor input region accepted: {} (route={}, currentRevision={}, reportRevision={})",
+                            screen.previewNativeHudCanvasReady(), hudEditorRoute,
+                            currentRevision, navigationRevision);
+                } else {
+                    log.info("Opus HUD editor input region dropped; current screen is {}",
+                            Minecraft.getMinecraft().currentScreen == null
+                                    ? "none"
+                                    : Minecraft.getMinecraft().currentScreen.getClass().getName());
+                }
+            }
+        });
     }
 
     /**
      * Read the real singleplayer save list through the typed save-format API so
-     * the Opus TUI can list worlds without any vanilla GuiSelectWorld screen.
+     * the canonical CEF route can list worlds without a mock data source.
      * Each row is {fileName, displayName}. Failures degrade to an empty list so
-     * the terminal always renders.
+     * the CEF route can show an explicit empty/error state.
      */
     @Override
     public java.util.List<String[]> listWorlds() {
@@ -346,8 +774,8 @@ public final class ClientOverlayController implements OpusBridgeProvider {
 
     /**
      * Load a singleplayer world exactly as vanilla's world list would, through
-     * FML's loader (so mod save data and conversions are handled). After this
-     * the world loads and the Opus terminal closes.
+     * FML's loader (so mod save data and conversions are handled). The product
+     * screen then gives way to Minecraft's loading lifecycle.
      */
     @Override
     public void loadWorld(String fileName, String displayName) {
@@ -361,6 +789,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
                 return;
             }
             String label = displayName == null || displayName.trim().isEmpty() ? fileName : displayName;
+            uiNavigation.close();
             FMLClientHandler.instance().tryLoadExistingWorld(null, fileName, label);
         } catch (Throwable failure) {
             log.warn("Opus failed to load world {}", fileName, failure);
@@ -390,7 +819,8 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     /**
      * Connect to a multiplayer server by address through the typed
      * GuiConnecting flow (host/port parsing, ping, join). Cancelling connect
-     * returns to the Opus TUI multiplayer page rather than a vanilla screen.
+     * returns to the canonical CEF multiplayer route rather than a vanilla
+     * multiplayer list.
      */
     @Override
     public void connectServer(String address) {
@@ -400,6 +830,10 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         try {
             Minecraft minecraft = Minecraft.getMinecraft();
             ServerData data = new ServerData("Opus Server", address.trim(), false);
+            // The connection progress screen is a system surface, not an Opus
+            // product route. Close the acknowledged route before handing
+            // ownership to it; a later Opus screen commits its own route.
+            uiNavigation.close();
             minecraft.displayGuiScreen(
                     new GuiConnecting(new OpusClientScreen(this, UiRoute.multiplayer()), minecraft, data));
         } catch (Throwable failure) {
@@ -407,7 +841,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         }
     }
 
-    /** Persist a new server entry so it appears in the Opus TUI server list. */
+    /** Persist a new server entry so it appears in the CEF server list. */
     @Override
     public void addServer(String name, String address) {
         if (address == null || address.trim().isEmpty()) {
@@ -424,19 +858,15 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         }
     }
 
-    // ---- Opus terminal Game Options (typed GameSettings access) -------------
+    // ---- CEF game-options bridge (typed GameSettings access) ----------------
     // These option keys map to net.minecraft GameSettings.Options constants by
     // name. Rendering, cycling and persistence all go through the typed public
-    // API, so the Opus terminal never needs the vanilla GuiOptions screen.
+    // API, so the CEF route never needs the vanilla GuiOptions screen.
     private static final String[] OPTION_KEYS = {
         "FOV", "GAMMA", "SENSITIVITY", "RENDER_DISTANCE", "FRAMERATE_LIMIT",
         "GUI_SCALE", "PARTICLES", "GRAPHICS", "RENDER_CLOUDS", "AMBIENT_OCCLUSION",
         "VIEW_BOBBING", "ENABLE_VSYNC", "USE_VBO", "ENTITY_SHADOWS", "USE_FULLSCREEN",
     };
-
-    String[] gameOptionKeys() {
-        return OPTION_KEYS.clone();
-    }
 
     private static GameSettings.Options gameOption(String key) {
         if ("FOV".equals(key)) return GameSettings.Options.FOV;
@@ -455,34 +885,6 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         if ("ENTITY_SHADOWS".equals(key)) return GameSettings.Options.ENTITY_SHADOWS;
         if ("USE_FULLSCREEN".equals(key)) return GameSettings.Options.USE_FULLSCREEN;
         throw new IllegalArgumentException("Unknown game option: " + key);
-    }
-
-    /**
-     * Where the terminal Game Options should return on Back/ESC: the pause menu
-     * while a world is loaded, otherwise the title. Keeps the flow correct for
-     * both in-game and main-menu entry without a vanilla screen.
-     */
-    UiRoute optionsBackRoute() {
-        return Minecraft.getMinecraft().theWorld != null ? UiRoute.pauseMenu() : UiRoute.mainMenu();
-    }
-
-    /** Human label + current value string for an option key, via getKeyBinding. */
-    String gameOptionDisplay(String key) {
-        try {
-            GameSettings settings = Minecraft.getMinecraft().gameSettings;
-            GameSettings.Options option = gameOption(key);
-            return settings.getKeyBinding(option);
-        } catch (Throwable failure) {
-            return key;
-        }
-    }
-
-    boolean gameOptionIsSlider(String key) {
-        try {
-            return gameOption(key).getEnumFloat();
-        } catch (Throwable failure) {
-            return false;
-        }
     }
 
     /**
@@ -551,162 +953,17 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     }
 
     /**
-     * OptiFine owns the runtime behavior of its video settings tree. The
-     * original screen object stays active, but OpusVanillaTerminalOverlay
-     * cancels its complete draw pass and exposes its controls as terminal rows.
-     */
-    void openVideoScreen() {
-        Minecraft minecraft = Minecraft.getMinecraft();
-        minecraft.displayGuiScreen(new GuiVideoSettings(new OpusClientScreen(this, UiRoute.gameOptions()), minecraft.gameSettings));
-    }
-
-    // ---- Opus terminal Controls -------------------------------------------
-
-    List<String[]> keyBindingRows() {
-        List<KeyBinding> bindings = sortedKeyBindings();
-        List<String[]> rows = new ArrayList<String[]>(bindings.size());
-        for (KeyBinding binding : bindings) {
-            rows.add(new String[] {
-                translated(binding.getKeyDescription()),
-                GameSettings.getKeyDisplayString(binding.getKeyCode()),
-            });
-        }
-        return rows;
-    }
-
-    String keyBindingCategory(int index) {
-        KeyBinding binding = keyBinding(index);
-        return binding == null ? "" : translated(binding.getKeyCategory());
-    }
-
-    String keyBindingConflict(int index) {
-        KeyBinding selected = keyBinding(index);
-        if (selected == null || selected.getKeyCode() == 0) {
-            return "none";
-        }
-        for (KeyBinding candidate : sortedKeyBindings()) {
-            if (candidate != selected && candidate.getKeyCode() == selected.getKeyCode()) {
-                return translated(candidate.getKeyDescription());
-            }
-        }
-        return "none";
-    }
-
-    void rebindKey(int index, int keyCode) {
-        KeyBinding binding = keyBinding(index);
-        if (binding == null) {
-            return;
-        }
-        GameSettings settings = Minecraft.getMinecraft().gameSettings;
-        settings.setOptionKeyBinding(binding, keyCode);
-        KeyBinding.resetKeyBindingArrayAndHash();
-        settings.saveOptions();
-    }
-
-    void resetKeyBinding(int index) {
-        KeyBinding binding = keyBinding(index);
-        if (binding != null) {
-            rebindKey(index, binding.getKeyCodeDefault());
-        }
-    }
-
-    void resetAllKeyBindings() {
-        GameSettings settings = Minecraft.getMinecraft().gameSettings;
-        for (KeyBinding binding : settings.keyBindings) {
-            settings.setOptionKeyBinding(binding, binding.getKeyCodeDefault());
-        }
-        KeyBinding.resetKeyBindingArrayAndHash();
-        settings.saveOptions();
-    }
-
-    private KeyBinding keyBinding(int index) {
-        List<KeyBinding> bindings = sortedKeyBindings();
-        return index >= 0 && index < bindings.size() ? bindings.get(index) : null;
-    }
-
-    private List<KeyBinding> sortedKeyBindings() {
-        KeyBinding[] source = Minecraft.getMinecraft().gameSettings.keyBindings;
-        List<KeyBinding> bindings = new ArrayList<KeyBinding>(Arrays.asList(source));
-        Collections.sort(bindings, new Comparator<KeyBinding>() {
-            @Override
-            public int compare(KeyBinding left, KeyBinding right) {
-                int category = left.getKeyCategory().compareTo(right.getKeyCategory());
-                return category != 0
-                        ? category
-                        : left.getKeyDescription().compareTo(right.getKeyDescription());
-            }
-        });
-        return bindings;
-    }
-
-    // ---- Opus terminal Language -------------------------------------------
-
-    List<String[]> languageRows() {
-        List<Language> languages = languages();
-        List<String[]> rows = new ArrayList<String[]>(languages.size());
-        for (Language language : languages) {
-            rows.add(new String[] {language.toString(), language.getLanguageCode()});
-        }
-        return rows;
-    }
-
-    String currentLanguageCode() {
-        Language current = Minecraft.getMinecraft().getLanguageManager().getCurrentLanguage();
-        return current == null ? Minecraft.getMinecraft().gameSettings.language : current.getLanguageCode();
-    }
-
-    void selectLanguage(int index) {
-        List<Language> languages = languages();
-        if (index < 0 || index >= languages.size()) {
-            return;
-        }
-        Minecraft minecraft = Minecraft.getMinecraft();
-        LanguageManager manager = minecraft.getLanguageManager();
-        Language selected = languages.get(index);
-        manager.setCurrentLanguage(selected);
-        minecraft.gameSettings.language = selected.getLanguageCode();
-        minecraft.refreshResources();
-        minecraft.fontRendererObj.setUnicodeFlag(
-                manager.isCurrentLocaleUnicode() || minecraft.gameSettings.forceUnicodeFont);
-        minecraft.fontRendererObj.setBidiFlag(manager.isCurrentLanguageBidirectional());
-        minecraft.gameSettings.saveOptions();
-    }
-
-    private List<Language> languages() {
-        return new ArrayList<Language>(
-                Minecraft.getMinecraft().getLanguageManager().getLanguages());
-    }
-
-    private static String translated(String key) {
-        String value = I18n.format(key);
-        return value == null || value.trim().isEmpty() ? key : value;
-    }
-
-    void openClientModHub() {
-        Minecraft.getMinecraft().displayGuiScreen(new OpusClientScreen(this, UiRoute.modHub()));
-    }
-
-    void quitGame() {
-        Minecraft.getMinecraft().shutdown();
-    }
-
-    /** Pause-menu Resume: close the Opus surface and recapture mouse/keyboard. */
-    void resumeGame() {
-        Minecraft minecraft = Minecraft.getMinecraft();
-        minecraft.displayGuiScreen(null);
-        if (minecraft.currentScreen == null) {
-            minecraft.setIngameFocus();
-        }
-    }
-
-    /**
      * Pause-menu Disconnect: quit the current world through the typed client
-     * API and return to the Opus TUI title, mirroring vanilla's flow without a
-     * vanilla screen. Works for both integrated (singleplayer) and remote play.
+     * API and return to the canonical CEF title route, mirroring vanilla's flow
+     * without a vanilla product screen. Works for both integrated
+     * (singleplayer) and remote play.
      */
     @Override
     public void leaveWorld() {
         Minecraft minecraft = Minecraft.getMinecraft();
+        // Clear the product route before Forge/Minecraft begins asynchronous
+        // world teardown; loading/disconnect screens are not CEF-owned.
+        uiNavigation.close();
         if (minecraft.theWorld != null) {
             minecraft.theWorld.sendQuittingDisconnectingPacket();
         }
@@ -897,7 +1154,8 @@ public final class ClientOverlayController implements OpusBridgeProvider {
 
     /**
      * Preview Mode only. It drives the same route renderer used by Right Shift
-     * and Client Options, never a separate UI or a desktop/window screenshot.
+     * and the production pause transition, never a separate UI or a
+     * desktop/window screenshot.
      */
     void openPreviewRoute(UiRoute route) {
         Minecraft minecraft = Minecraft.getMinecraft();
@@ -933,47 +1191,80 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         return screen != null && screen.previewDrag(x, y, toX, toY, button);
     }
 
-    /** Preview Mode only: posts the same FML action event as the pause-menu button. */
-    boolean previewOpenPauseMenuClientOptions() {
+    boolean previewKey(String key) {
+        OpusClientScreen screen = previewScreen();
+        return screen != null && screen.previewKey(key);
+    }
+
+    boolean previewProductSurfaceReady() {
+        OpusClientScreen screen = previewScreen();
+        return screen != null && screen.previewProductSurfaceReady();
+    }
+
+    boolean previewProductSurfaceFailed() {
+        OpusClientScreen screen = previewScreen();
+        return screen != null && screen.previewProductSurfaceFailed();
+    }
+
+    String previewProductSurfaceState() {
+        OpusClientScreen screen = previewScreen();
+        return screen == null ? "closed" : screen.previewProductSurfaceState();
+    }
+
+    UiBounds previewProductViewport() {
+        OpusClientScreen screen = previewScreen();
+        return screen == null ? new UiBounds(0, 0, 0, 0) : screen.previewProductViewport();
+    }
+
+    boolean previewNativeHudCanvasReady() {
+        OpusClientScreen screen = previewScreen();
+        return screen != null && screen.previewNativeHudCanvasReady();
+    }
+
+    /** Preview Mode only: opens the same CEF catalog route as the pause flow. */
+    boolean previewOpenPauseMenuCatalog() {
         Minecraft minecraft = Minecraft.getMinecraft();
         if (!(minecraft.currentScreen instanceof OpusPreviewPauseMenu)) {
             return false;
         }
-        OpusPreviewPauseMenu pauseMenu = (OpusPreviewPauseMenu) minecraft.currentScreen;
-        GuiButton clientOptions = null;
-        for (GuiButton button : pauseMenu.buttons()) {
-            if (button.id == CLIENT_OPTIONS_BUTTON_ID) {
-                clientOptions = button;
-                break;
-            }
-        }
-        if (clientOptions == null) {
-            return false;
-        }
-        MinecraftForge.EVENT_BUS.post(new GuiScreenEvent.ActionPerformedEvent.Post(
-                minecraft.currentScreen,
-                clientOptions,
-                pauseMenu.buttons()));
+        minecraft.displayGuiScreen(new OpusClientScreen(
+                this,
+                new UiNavigationState(
+                        UiRoute.modHub(),
+                        UiNavigationState.EntryPoint.PAUSE,
+                        UiRoute.pauseMenu())));
         return minecraft.currentScreen instanceof OpusClientScreen
                 && ((OpusClientScreen) minecraft.currentScreen).previewRoute().equals(UiRoute.modHub());
     }
 
     /** Preview Mode only: invokes the same route method used by Right Shift. */
-    boolean previewOpenRightShiftHudEditor() {
+    boolean previewOpenRightShiftQuickHub() {
         Minecraft minecraft = Minecraft.getMinecraft();
         if (minecraft.currentScreen != null) {
-            return false;
+            // World startup can leave the genuine pause screen open for one
+            // tick while the integrated server finishes joining. Preview
+            // closes that transitional screen before invoking the exact
+            // production hotkey flow; it must not turn the pause screen into
+            // a second product route or bypass openHotkeyFlow().
+            if (minecraft.currentScreen instanceof OpusClientScreen
+                    && ((OpusClientScreen) minecraft.currentScreen).route().kind()
+                            == UiRoute.Kind.PAUSE_MENU) {
+                minecraft.displayGuiScreen(null);
+            }
+            if (minecraft.currentScreen != null) {
+                return false;
+            }
         }
-        openOptions(UiRoute.hudEditor());
+        openHotkeyFlow();
         return minecraft.currentScreen instanceof OpusClientScreen
-                && ((OpusClientScreen) minecraft.currentScreen).previewRoute().equals(UiRoute.hudEditor());
+                && ((OpusClientScreen) minecraft.currentScreen).previewRoute().equals(UiRoute.quickHub());
     }
 
     String previewRouteName() {
         OpusClientScreen screen = previewScreen();
         return screen == null
-                ? null
-                : screen.previewRoute().kind().name().toLowerCase(java.util.Locale.ROOT);
+                ? "none"
+                : routeId(screen.previewRoute());
     }
 
     void capturePreview(String fileName) {
@@ -996,6 +1287,19 @@ public final class ClientOverlayController implements OpusBridgeProvider {
 
         settingsStore.reload();
         minecraft.displayGuiScreen(new OpusClientScreen(this, route));
+    }
+
+    private void openHotkeyFlow() {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.currentScreen != null) {
+            return;
+        }
+        settingsStore.reload();
+        minecraft.displayGuiScreen(new OpusClientScreen(
+                this,
+                new UiNavigationState(
+                        UiRoute.quickHub(),
+                        UiNavigationState.EntryPoint.HOTKEY)));
     }
 
     private OpusClientScreen previewScreen() {
@@ -1072,12 +1376,256 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         return new String[] {normalized};
     }
 
-    private static boolean hasClientOptionsButton(List<GuiButton> buttons) {
-        for (GuiButton button : buttons) {
-            if (button.id == CLIENT_OPTIONS_BUTTON_ID) {
-                return true;
+    private interface ClientCall<T> {
+        T call();
+    }
+
+    /**
+     * Synchronously reads a value on the Minecraft client thread. Bridge
+     * requests are short-lived, so a bounded wait is safer than allowing a
+     * worker to touch a live world or HUD collection concurrently.
+     */
+    private <T> T callOnClientThread(
+            final String operation,
+            final ClientCall<T> call,
+            T fallback) {
+        final Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.isCallingFromMinecraftThread()) {
+            try {
+                return call.call();
+            } catch (Throwable failure) {
+                log.warn("Opus client-thread read failed: {}", operation, failure);
+                return fallback;
             }
         }
-        return false;
+        if (shuttingDown) {
+            return fallback;
+        }
+        final AtomicReference<T> result = new AtomicReference<T>(fallback);
+        final AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+        final CountDownLatch completed = new CountDownLatch(1);
+        try {
+            minecraft.addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        result.set(call.call());
+                    } catch (Throwable problem) {
+                        failure.set(problem);
+                    } finally {
+                        completed.countDown();
+                    }
+                }
+            });
+            if (!completed.await(2L, TimeUnit.SECONDS)) {
+                log.warn("Opus client-thread read timed out: {}", operation);
+                return fallback;
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            log.warn("Opus client-thread read interrupted: {}", operation);
+            return fallback;
+        } catch (Throwable schedulingFailure) {
+            log.warn("Opus client-thread read could not be scheduled: {}", operation,
+                    schedulingFailure);
+            return fallback;
+        }
+        if (failure.get() != null) {
+            log.warn("Opus client-thread read failed: {}", operation, failure.get());
+        }
+        return result.get();
     }
+
+    private void runOnClientThread(final String operation, final Runnable action) {
+        callOnClientThread(operation, new ClientCall<Object>() {
+            @Override
+            public Object call() {
+                action.run();
+                return null;
+            }
+        }, null);
+    }
+
+    /** Worker-thread-safe facade used only by the loopback bridge server. */
+    private final class ClientThreadBridge implements OpusBridgeProvider {
+        @Override
+        public boolean performUiAction(
+                String action,
+                String routeId,
+                String moduleId,
+                String settingsSection,
+                long expectedRevision) {
+            // The owner already marshals this operation and waits for the
+            // authoritative route result; avoid scheduling it twice.
+            return ClientOverlayController.this.performUiAction(
+                    action, routeId, moduleId, settingsSection, expectedRevision);
+        }
+
+        @Override
+        public List<String[]> listWorlds() {
+            return callOnClientThread("listWorlds", new ClientCall<List<String[]>>() {
+                @Override
+                public List<String[]> call() {
+                    return ClientOverlayController.this.listWorlds();
+                }
+            }, java.util.Collections.<String[]>emptyList());
+        }
+
+        @Override
+        public void loadWorld(final String fileName, final String displayName) {
+            runOnClientThread("loadWorld", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.loadWorld(fileName, displayName);
+                }
+            });
+        }
+
+        @Override
+        public List<String[]> listServers() {
+            return callOnClientThread("listServers", new ClientCall<List<String[]>>() {
+                @Override
+                public List<String[]> call() {
+                    return ClientOverlayController.this.listServers();
+                }
+            }, java.util.Collections.<String[]>emptyList());
+        }
+
+        @Override
+        public void connectServer(final String address) {
+            runOnClientThread("connectServer", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.connectServer(address);
+                }
+            });
+        }
+
+        @Override
+        public void addServer(final String name, final String address) {
+            runOnClientThread("addServer", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.addServer(name, address);
+                }
+            });
+        }
+
+        @Override
+        public List<String[]> gameOptions() {
+            return callOnClientThread("gameOptions", new ClientCall<List<String[]>>() {
+                @Override
+                public List<String[]> call() {
+                    return ClientOverlayController.this.gameOptions();
+                }
+            }, java.util.Collections.<String[]>emptyList());
+        }
+
+        @Override
+        public void adjustGameOption(final String key, final int delta) {
+            runOnClientThread("adjustGameOption", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.adjustGameOption(key, delta);
+                }
+            });
+        }
+
+        @Override
+        public void setGameOptionFloat(final String key, final float value) {
+            runOnClientThread("setGameOptionFloat", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.setGameOptionFloat(key, value);
+                }
+            });
+        }
+
+        @Override
+        public void leaveWorld() {
+            runOnClientThread("leaveWorld", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.leaveWorld();
+                }
+            });
+        }
+
+        @Override
+        public List<String[]> modules() {
+            return callOnClientThread("modules", new ClientCall<List<String[]>>() {
+                @Override
+                public List<String[]> call() {
+                    return ClientOverlayController.this.modules();
+                }
+            }, java.util.Collections.<String[]>emptyList());
+        }
+
+        @Override
+        public void setModuleEnabled(final String moduleId, final boolean enabled) {
+            runOnClientThread("setModuleEnabled", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.setModuleEnabled(moduleId, enabled);
+                }
+            });
+        }
+
+        @Override
+        public List<String[]> moduleSettings(final String moduleId) {
+            return callOnClientThread("moduleSettings", new ClientCall<List<String[]>>() {
+                @Override
+                public List<String[]> call() {
+                    return ClientOverlayController.this.moduleSettings(moduleId);
+                }
+            }, java.util.Collections.<String[]>emptyList());
+        }
+
+        @Override
+        public void setModuleSetting(
+                final String moduleId,
+                final String key,
+                final String value) {
+            runOnClientThread("setModuleSetting", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.setModuleSetting(moduleId, key, value);
+                }
+            });
+        }
+
+        @Override
+        public List<String[]> hudModules() {
+            return callOnClientThread("hudModules", new ClientCall<List<String[]>>() {
+                @Override
+                public List<String[]> call() {
+                    return ClientOverlayController.this.hudModules();
+                }
+            }, java.util.Collections.<String[]>emptyList());
+        }
+
+        @Override
+        public void moveHudModule(final String moduleId, final int x, final int y) {
+            runOnClientThread("moveHudModule", new Runnable() {
+                @Override
+                public void run() {
+                    ClientOverlayController.this.moveHudModule(moduleId, x, y);
+                }
+            });
+        }
+
+        @Override
+        public void updateHudEditorCanvas(
+                long navigationRevision,
+                int x,
+                int y,
+                int width,
+                int height) {
+            // The owner already schedules and applies this revision-guarded
+            // canvas update on the client thread.
+            ClientOverlayController.this.updateHudEditorCanvas(
+                    navigationRevision, x, y, width, height);
+        }
+    }
+
 }

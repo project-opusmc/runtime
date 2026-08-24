@@ -2,6 +2,7 @@ package org.polydevs.opusmc.forge;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -18,8 +19,8 @@ final class OpusForgeClassTransformerTest {
     }
 
     @Test
-    void reportsTheTelemetryOnlyForgeTransformerChain() {
-        assertEquals(8, OpusForgeClassTransformer.transformerCount());
+    void reportsTheTelemetryAndOptiFineForgeTransformerChain() {
+        assertEquals(6, OpusForgeClassTransformer.transformerCount());
     }
 
     @Test
@@ -30,8 +31,30 @@ final class OpusForgeClassTransformerTest {
 
         byte[] transformed = transformer.transform(className, className, placeholder);
 
-        assertEquals(8, transformer.configuredTransformerCount());
+        assertEquals(6, transformer.configuredTransformerCount());
         assertEquals("java/lang/Object", new ClassReader(transformed).getSuperName());
+    }
+
+    @Test
+    void neverTargetsVanillaGuiOrInputClasses() {
+        OpusForgeClassTransformer transformer = new OpusForgeClassTransformer();
+        String[] vanillaOwnedClasses = {
+                "net.minecraft.client.gui.GuiScreen",
+                "net.minecraft.client.gui.GuiMainMenu",
+                "net.minecraft.client.gui.GuiIngameMenu",
+                "net.minecraft.client.gui.GuiOptions",
+                "net.minecraft.client.gui.GuiSelectWorld",
+                "net.minecraft.client.gui.GuiMultiplayer",
+                "net.minecraft.client.settings.KeyBinding",
+                "org.lwjgl.input.Keyboard",
+                "org.lwjgl.input.Mouse",
+        };
+
+        for (String className : vanillaOwnedClasses) {
+            byte[] original = placeholderBytecode(className.replace('.', '/'));
+            assertEquals(className, OpusForgeClassTransformer.targetClassName(className, className));
+            assertArrayEquals(original, transformer.transform(className, className, original));
+        }
     }
 
     private static byte[] placeholderBytecode(String internalName) {

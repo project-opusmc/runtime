@@ -75,11 +75,15 @@ final class ArmorStatusModule implements ClientModule {
         }
 
         @Override
-        public boolean moveBy(UiBounds viewport, int deltaX, int deltaY) {
+        public boolean moveBy(UiBounds viewport, UiBounds renderedBounds, int deltaX, int deltaY) {
             ArmorStatusSettings current = settings();
             int x = isRight(current.anchor()) ? current.offsetX() - deltaX : current.offsetX() + deltaX;
             int y = isBottom(current.anchor()) ? current.offsetY() - deltaY : current.offsetY() + deltaY;
-            preview(current.withOffset(x, y));
+            int maxX = Math.max(0, viewport.width - renderedBounds.width);
+            int maxY = Math.max(0, viewport.height - renderedBounds.height);
+            preview(current.withOffset(
+                    Math.max(0, Math.min(maxX, x)),
+                    Math.max(0, Math.min(maxY, y))));
             return true;
         }
 
@@ -93,6 +97,7 @@ final class ArmorStatusModule implements ClientModule {
 
         @Override public boolean disable() { return setEnabled(false); }
         @Override public boolean commitEditorChange() { return commitPreview(); }
+        @Override public void cancelEditorChange() { settingsStore.cancelArmorStatusPreview(); }
     }
 
     private List<String> rows() {

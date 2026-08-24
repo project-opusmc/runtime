@@ -1,4 +1,12 @@
 {
   "schemaVersion": 1,
-  "utilities": {}
+  "utilities": {
+    "fps": {
+      "enabled": true,
+      "anchor": "top-left",
+      "offset": "122 · 52",
+      "scale": 150,
+      "opacity": 100
+    }
+  }
 }

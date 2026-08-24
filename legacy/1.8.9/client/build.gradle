@@ -104,14 +104,77 @@ sourceSets {
 
 task harnessBridge(type: JavaExec) {
     group = 'verification'
-    description = 'Runs the loopback interop bridge harness (SPA/auth/REST/WS/virtual screen).'
+    description = 'Runs the loopback interop bridge harness (SPA/auth/REST/WS/navigation).'
     dependsOn 'harnessClasses', 'processResources'
-    main = 'BridgeHarness'
+    main = 'org.polydevs.opusmc.client.BridgeHarness'
     doFirst {
         classpath = files(
                 sourceSets.harness.output,
                 sourceSets.main.output,
                 sourceSets.main.runtimeClasspath)
+    }
+}
+
+def opusCefHelperDir = file('native/opus-cef-helper')
+def opusCefHelperApp = file("${opusCefHelperDir}/build/opus-webview-helper.app")
+def opusCefHelperHarnessApp = file(System.getenv('OPUS_CEF_HELPER_APP') ?: opusCefHelperApp)
+def opusCefRoot = file(System.getenv('CEF_ROOT')
+        ?: "${System.getProperty('user.home')}/.cache/opus-cef/current")
+def opusIsMac = System.getProperty('os.name', '').toLowerCase().contains('mac')
+
+/**
+ * Builds the out-of-process CEF helper: it renders the Opus web UI offscreen
+ * (windowless/OSR) and publishes BGRA frames through a shared memory-mapped
+ * file, which the game uploads to an in-game OpenGL texture.
+ *
+ * Deliberately NOT bundled into the mod jar. The .app carries the ~500 MB
+ * Chromium framework plus five subprocess bundles, so it is built in place and
+ * located on disk at runtime (see OpusWebViewClient.resolveHelperPath).
+ *
+ * Skipped, not failed, when the CEF distribution is missing: a fresh clone must
+ * still compile and run, with the in-game CEF lifecycle shell explaining that
+ * the product surface is unavailable. Same on non-macOS hosts.
+ */
+task buildWebViewHelper(type: Exec) {
+    description = 'Builds the macOS Opus CEF helper (offscreen browser -> shared memory).'
+    group = 'build'
+    def cefFramework = new File(opusCefRoot, 'Release/Chromium Embedded Framework.framework')
+    onlyIf {
+        if (!opusIsMac || !opusCefHelperDir.isDirectory()) {
+            return false
+        }
+        if (!cefFramework.isDirectory()) {
+            logger.lifecycle("Opus: no CEF distribution at ${opusCefRoot}; skipping " +
+                    'buildWebViewHelper (embedded web UI stays off). ' +
+                    'See native/opus-cef-helper/build.sh for what it expects.')
+            return false
+        }
+        return true
+    }
+    workingDir opusCefHelperDir
+    commandLine 'bash', 'build.sh'
+    environment 'CEF_ROOT', opusCefRoot.absolutePath
+    inputs.dir("${opusCefHelperDir}/src")
+    inputs.file("${opusCefHelperDir}/build.sh")
+    // Only the main binary is tracked as output, not the whole bundle: snapshotting
+    // the copied Chromium framework on every build would cost seconds for nothing,
+    // and the binary living inside the .app is enough to detect a wiped bundle.
+    outputs.file new File(opusCefHelperApp, 'Contents/MacOS/opus-webview-helper')
+}
+
+task harnessWebView(type: JavaExec) {
+    group = 'verification'
+    description = 'Renders the packaged SPA through the production CEF OSR helper.'
+    dependsOn 'harnessClasses', 'processResources', 'buildWebViewHelper'
+    main = 'org.polydevs.opusmc.client.WebViewHarness'
+    doFirst {
+        classpath = files(
+                sourceSets.harness.output,
+                sourceSets.main.output,
+                sourceSets.main.runtimeClasspath)
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
     }
 }
 
@@ -131,6 +194,7 @@ processResources {
 }
 
 jar {
+    includeEmptyDirs = false
     manifest {
         attributes(
             'Implementation-Title': 'Opus Forge Client Mod',
@@ -174,11 +238,104 @@ task verifyToolchainInputs {
 }
 
 /**
+ * Keep the retired native product surface out of every Runtime Java source
+ * set as well as out of the final JAR. The artifact verifier catches stale
+ * compiled outputs, while this source gate catches an accidental
+ * re-introduction before an incremental build can make that output look
+ * authoritative.
+ */
+task verifyRetiredUiSources {
+    group = 'verification'
+    description = 'Rejects reintroduced T-UI/native product source files and references.'
+    doLast {
+        def retiredNames = [
+                'UiRuntime',
+                'OpusUiPageFactory',
+                'OpusVanillaTerminalOverlay',
+                'ClientConfigUi',
+                'ClientUiHooks',
+                'OpusExternalBrowser',
+                'OpusVirtualScreenManager',
+                'UiTheme',
+                'UiThemeStore',
+                'UiPage',
+                'UiPageAdapter',
+                'UiComponent',
+                'UiContainer',
+                'UiActionButton',
+                'UiHomeActionCard',
+                'UiHomeNavButton',
+                'UiHomePrimaryAction',
+                'UiHomeUtilityLink',
+                'UiLunarMenuButton',
+                'UiLayout',
+                'UiColumn',
+                'UiRow',
+                'UiStack',
+                'MinecraftUiFont',
+                'MinecraftBlurBackdrop',
+                'MinecraftMonoFont',
+                'MinecraftTitlePanorama',
+                'OpusBootTerminal',
+                'BootTerminalTransformer',
+                'LoadingTerminalTransformer',
+                'ClientOptionsTransformer',
+                'OpusClientOptionsScreenFactory',
+        ]
+        def sourceRoots = [
+                file('src/main/java'),
+                file('../../../common/src/main/java'),
+                file('../forge/src/main/java'),
+                file('../patches/src/main/java'),
+        ].findAll { it.isDirectory() }
+        def sourceFiles = sourceRoots.collectMany { root ->
+            fileTree(root) {
+                include '**/*.java'
+            }.files
+        }
+        def retiredPackageFragments = [
+                '/org/polydevs/opusmc/client/ui/component/',
+                '/org/polydevs/opusmc/client/ui/layout/',
+                '/org/polydevs/opusmc/client/gui/',
+        ]
+        def pathViolations = sourceFiles.findAll { file ->
+            def normalizedPath = file.path.replace(File.separator, "/")
+            retiredNames.any { name ->
+                (file.name == "${name}.java"
+                        || file.name.startsWith("${name}\$")
+                        || file.name ==~ /Opus.*Page(?:\$.*)?\.java/
+                        || retiredPackageFragments.any { fragment ->
+                            normalizedPath.contains(fragment)
+                        })
+            }
+        }
+        def tokenViolations = []
+        sourceFiles.each { file ->
+            file.eachLine { line, lineNumber ->
+                retiredNames.each { name ->
+                    if (line.contains(name)) {
+                        tokenViolations.add("${file}:${lineNumber}: ${name}")
+                    }
+                }
+                if (line ==~ /.*\bOpus[A-Za-z0-9_]*Page\b.*/) {
+                    tokenViolations.add("${file}:${lineNumber}: Opus*Page")
+                }
+            }
+        }
+        if (!pathViolations.isEmpty() || !tokenViolations.isEmpty()) {
+            def details = (pathViolations.collect { it.path } + tokenViolations).unique()
+            throw new GradleException(
+                    "Retired native product UI source is present: ${details.join(', ')}")
+        }
+    }
+}
+
+/**
  * Prove the result is a normal FML client mod after ForgeGradle's
  * reobfuscation. The verification guards the typed UI path against quietly
  * falling back to a coremod package.
  */
-task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
+task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs', 'verifyRetiredUiSources']) {
     group = 'verification'
     description = 'Verifies the reobfuscated, non-coremod Opus Forge client artifact.'
     doLast {
@@ -196,37 +353,22 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
                     'org/polydevs/opusmc/client/ClientOverlayController.class',
                     'org/polydevs/opusmc/client/OpusClientScreen.class',
                     'org/polydevs/opusmc/client/OpusPreviewPauseMenu.class',
-                    'org/polydevs/opusmc/client/OpusMainMenuPage.class',
-                    'org/polydevs/opusmc/client/OpusPauseMenuPage.class',
-                    'org/polydevs/opusmc/client/OpusListTerminalPage.class',
-                    'org/polydevs/opusmc/client/OpusSingleplayerPage.class',
-                    'org/polydevs/opusmc/client/OpusMultiplayerPage.class',
-                    'org/polydevs/opusmc/client/OpusGameOptionsPage.class',
-                    'org/polydevs/opusmc/client/OpusControlsPage.class',
-                    'org/polydevs/opusmc/client/OpusLanguagePage.class',
-                    'org/polydevs/opusmc/client/OpusVanillaTerminalOverlay.class',
                     'org/polydevs/opusmc/client/interop/OpusInteropServer.class',
                     'org/polydevs/opusmc/client/interop/OpusWebSocket.class',
-                    'org/polydevs/opusmc/client/interop/OpusVirtualScreenManager.class',
-                    'org/polydevs/opusmc/client/interop/OpusExternalBrowser.class',
+                    'org/polydevs/opusmc/client/interop/UiNavigationManager.class',
                     'org/polydevs/opusmc/client/interop/OpusJson.class',
-                    'org/polydevs/opusmc/client/OpusHudEditorPage.class',
-                    'org/polydevs/opusmc/client/OpusPanelPage.class',
-                    'org/polydevs/opusmc/client/OpusModHubPage.class',
-                    'org/polydevs/opusmc/client/OpusPerformanceDetailPage.class',
-                    'org/polydevs/opusmc/client/OpusArmorStatusDetailPage.class',
                     'org/polydevs/opusmc/client/FpsModule.class',
                     'org/polydevs/opusmc/client/ArmorStatusModule.class',
                     'org/polydevs/opusmc/client/ArmorStatusSettings.class',
                     'org/polydevs/opusmc/client/UtilitySettingsStore.class',
-                    'org/polydevs/opusmc/client/UiTheme.class',
-                    'org/polydevs/opusmc/client/UiThemeStore.class',
                     'org/polydevs/opusmc/client/UiPreviewSpec.class',
                     'org/polydevs/opusmc/client/UiPreviewSession.class',
-                    'org/polydevs/opusmc/client/ui/UiRuntime.class',
-                    'org/polydevs/opusmc/client/ui/UiFontWeight.class',
-                    'org/polydevs/opusmc/client/ui/render/MinecraftBlurBackdrop.class',
-                    'org/polydevs/opusmc/client/ui/render/MinecraftUiFont.class',
+                    'org/polydevs/opusmc/client/embed/OpusWebViewClient.class',
+                    'org/polydevs/opusmc/client/embed/OpusWebTextureSurface.class',
+                    'org/polydevs/opusmc/client/ui/UiBounds.class',
+                    'org/polydevs/opusmc/client/ui/UiInput.class',
+                    'org/polydevs/opusmc/client/ui/UiNavigationState.class',
+                    'org/polydevs/opusmc/client/ui/UiRoute.class',
                     'org/polydevs/opusmc/client/ui/render/MinecraftUiScale.class',
                     'org/polydevs/opusmc/client/ui/render/MinecraftUiRenderer.class',
                     'org/polydevs/opusmc/client/hud/HudManager.class',
@@ -234,6 +376,62 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
                 if (archive.getEntry(className) == null) {
                     throw new GradleException("Typed client surface class is missing from the artifact: ${className}")
                 }
+            }
+            for (retiredEntry in [
+                    'org/polydevs/opusmc/client/interop/OpusExternalBrowser.class',
+                    'org/polydevs/opusmc/core/ClientConfigUi.class',
+                    'org/polydevs/opusmc/core/ClientUiHooks.class',
+                    'org/polydevs/opusmc/client/OpusVanillaTerminalOverlay.class',
+                    'org/polydevs/opusmc/client/OpusUiPageFactory.class',
+                    'org/polydevs/opusmc/client/interop/OpusVirtualScreenManager.class',
+                    'org/polydevs/opusmc/client/UiTheme.class',
+                    'org/polydevs/opusmc/client/UiThemeStore.class',
+                    'org/polydevs/opusmc/client/ui/UiRuntime.class',
+                    'org/polydevs/opusmc/client/ui/UiFontWeight.class',
+                    'org/polydevs/opusmc/client/ui/UiPage.class',
+                    'org/polydevs/opusmc/client/ui/UiPageAdapter.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftBlurBackdrop.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftMonoFont.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftTitlePanorama.class',
+                    'org/polydevs/opusmc/client/ui/render/MinecraftUiFont.class',
+                    'assets/opusclient/shaders/post/opus_blur.json',
+                    'assets/minecraft/shaders/program/opus_blur.json',
+                    'assets/opusclient/textures/gui/opus-wordmark-transparent.png',
+                    'META-INF/services/org.polydevs.opusmc.bootstrap.ClassTransformer']) {
+                if (archive.getEntry(retiredEntry) != null) {
+                    throw new GradleException("Retired parallel UI entry leaked into the artifact: ${retiredEntry}")
+                }
+            }
+            def leakedLegacyUi = []
+            def entries = archive.entries()
+            while (entries.hasMoreElements()) {
+                def entryName = entries.nextElement().name
+                if (entryName.endsWith('.class')
+                        && ((entryName ==~ /org\/polydevs\/opusmc\/client\/Opus.*Page(?:\$.*)?\.class/)
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/component/')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/layout/')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/UiPage')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/UiRuntime')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/UiFontWeight')
+                        || entryName.startsWith('org/polydevs/opusmc/client/UiTheme')
+                        || entryName.startsWith('org/polydevs/opusmc/client/interop/OpusVirtualScreenManager')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/render/MinecraftBlurBackdrop')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/render/MinecraftMonoFont')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/render/MinecraftTitlePanorama')
+                        || entryName.startsWith('org/polydevs/opusmc/client/ui/render/MinecraftUiFont')
+                        || entryName.startsWith('org/polydevs/opusmc/core/ClientConfigUi')
+                        || entryName.startsWith('org/polydevs/opusmc/core/ClientUiHooks')
+                        || entryName.startsWith('org/polydevs/opusmc/patches/ClientOptionsTransformer')
+                        || entryName.startsWith('org/polydevs/opusmc/patches/OpusClientOptionsScreenFactory')
+                        || entryName.startsWith('org/polydevs/opusmc/client/OpusVanillaTerminalOverlay')
+                        || entryName.startsWith('org/polydevs/opusmc/client/interop/OpusExternalBrowser')
+                        || entryName.startsWith('org/polydevs/opusmc/client/gui/'))) {
+                    leakedLegacyUi.add(entryName)
+                }
+            }
+            if (!leakedLegacyUi.isEmpty()) {
+                throw new GradleException(
+                        "Retired parallel UI classes leaked into the artifact: ${leakedLegacyUi}")
             }
             def metadata = archive.getEntry('mcmod.info')
             if (metadata == null) {
@@ -259,24 +457,25 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs']) {
 
 check.dependsOn verifyClientArtifact
 check.dependsOn harnessBridge
+check.dependsOn harnessWebView
 
 /**
  * Runs the real Forge client at a reviewable desktop resolution. The UI is
- * still rendered solely by Minecraft; these files merely drive route/input
- * commands and hot-reload visual tokens during local development.
+ * still rendered solely by Minecraft; the control file merely drives
+ * revisioned route/input/capture commands through production ownership.
  */
 def opusUiPreviewRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName == 'runUiPreview' || taskName.endsWith(':runUiPreview')
 }
 
 if (opusUiPreviewRequested) {
-    def opusProcessGuard = file('../../../../tools/process-guard.sh').absolutePath
+    // The guard lives in runtime/tools; this project is runtime/legacy/1.8.9/client.
+    def opusProcessGuard = file('../../../tools/process-guard.sh').absolutePath
     def opusPreviewControl = file('preview/opus-ui-preview.json').absolutePath
-    def opusPreviewTheme = file('preview/opus-ui-theme.json').absolutePath
     def opusPreviewUtilitySettings = file('preview/opus-utility-settings.json').absolutePath
     tasks.getByName('runClient').jvmArgs(
+            '-Dopus.client.ui.enabled=true',
             "-Dopus.ui.preview.control.file=${opusPreviewControl}",
-            "-Dopus.ui.preview.theme.file=${opusPreviewTheme}",
             "-Dopus.utility.settings.file=${opusPreviewUtilitySettings}")
     // Keep the same native renderer reviewable at more than one desktop
     // size; this is a launch override rather than a second preview layout.
@@ -329,3 +528,8 @@ task runUiPreview(dependsOn: 'runClient') {
     group = 'opus'
     description = 'Runs the real Forge client with Opus Preview Mode enabled.'
 }
+
+// Keep the CEF helper fresh for the dev loop. The task is up-to-date (and free)
+// unless its sources changed, and skips itself entirely when no CEF distribution
+// is installed, so this never blocks a plain runClient.
+tasks.getByName('runClient').dependsOn buildWebViewHelper

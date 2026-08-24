@@ -8,9 +8,10 @@ import org.apache.logging.log4j.Logger;
 /**
  * The typed Forge boundary for Opus's in-game client implementation.
  *
- * <p>The first production slice is intentionally narrow: a player can open a
- * real client-options screen and opt into a real FPS reading. Other utilities
- * do not appear until their data and persistence paths exist.</p>
+ * <p>The production client boundary is currently inert by default so the
+ * stock Minecraft 1.8.9 GUI remains authoritative while the Core Mod is
+ * stabilized. The former CEF surface is an explicit development opt-in only.
+ * </p>
  */
 @Mod(
         modid = OpusClientMod.MOD_ID,
@@ -21,6 +22,14 @@ import org.apache.logging.log4j.Logger;
 public final class OpusClientMod {
     public static final String MOD_ID = "opusclient";
     public static final String VERSION = "0.0.1-preview.3";
+    /**
+     * Production is intentionally vanilla-first while Core Mod work is in
+     * progress.  The old CEF client remains in the source tree for later
+     * review, but it must never register Forge GUI/key/HUD hooks implicitly.
+     * A preview or future development run has to opt in explicitly with
+     * {@code -Dopus.client.ui.enabled=true}.
+     */
+    static final String UI_ENABLE_PROPERTY = "opus.client.ui.enabled";
 
     private ClientOverlayController overlayController;
     private Logger log;
@@ -28,12 +37,24 @@ public final class OpusClientMod {
     @Mod.EventHandler
     public void onPreInitialization(FMLPreInitializationEvent event) {
         log = event.getModLog();
-        overlayController = new ClientOverlayController(log);
+        if (isUiEnabled()) {
+            overlayController = new ClientOverlayController(log);
+        }
     }
 
     @Mod.EventHandler
     public void onInitialization(FMLInitializationEvent event) {
+        if (!isUiEnabled()) {
+            log.info("Opus client UI is disabled; vanilla Minecraft GUI remains authoritative. "
+                    + "Core Mod/lifecycle work continues independently.");
+            return;
+        }
         overlayController.initialize();
-        log.info("Opus Forge client module loaded; the typed Client Options surface is ready.");
+        log.info("Opus Forge client module loaded; the canonical CEF product surface is ready.");
     }
+
+    static boolean isUiEnabled() {
+        return Boolean.getBoolean(UI_ENABLE_PROPERTY);
+    }
+
 }

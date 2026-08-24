@@ -1,7 +1,15 @@
 # Forge client-mod UI migration plan
 
-Status: **historical migration evidence; the active product-UI architecture and
-acceptance gates are in [overlay-ui-framework-adoption.md](overlay-ui-framework-adoption.md)**
+Status: **historical migration evidence; it is superseded by the active
+[Core-Mod-first goal and plan](../../docs/coremod-first-goal-and-plan.md)**
+
+> **Do not implement this migration.** The former recommendation to move UI
+> into a client-only Forge mod is not part of the current production contract.
+
+The former reflection/ASM UI sources (`ClientConfigUi`, `ClientUiHooks`,
+`ClientOptionsTransformer`, and the generated options screen) were deleted on
+2026-08-20. Their names below are historical evidence only; do not restore
+them under a new entry point or fallback name.
 
 Date: 2026-08-11
 
