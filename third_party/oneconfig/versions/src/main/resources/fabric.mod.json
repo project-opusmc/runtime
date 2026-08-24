@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "${id}",
+  "name": "${name}",
+  "version": "${version}",
+  "description": "OneConfig",
+  "authors": [
+    "Polyfrost"
+  ],
+  "contact": {
+    "homepage": "https://polyfrost.cc",
+    "sources": "https://github.com/Polyfrost/OneConfig",
+    "issues": "https://inv.wtf/polyfrost"
+  },
+  "license": "LGPL-3.0",
+  "environment": "client",
+  "mixins": [
+    "mixins.oneconfig.json"
+  ],
+  "entrypoints": {
+    "preLaunch": [
+      "cc.polyfrost.oneconfig.internal.plugin.OneConfigPreLaunch"
+    ],
+    "client": [ "cc.polyfrost.oneconfig.test.TestMod_Test" ], "_warning": [ "This line is automatically removed by Gradle's jar task" ],
+    "mm:early_risers": [
+      "cc.polyfrost.oneconfig.internal.plugin.asm.ClassTransformer"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.12.0",
+    "minecraft": "${mcVersionStr}",
+    "java": ">=${java}"
+  },
+  "custom": {
+    "modmenu": {
+      "badges": [ "library" ]
+    }
+  }
+}
