@@ -1,8 +1,8 @@
 [
   {
-    "modid": "opusnativeuiproof",
-    "name": "Opus Native UI Compatibility Proof",
-    "description": "Development-only OneConfig and Elementa compatibility lab for Opus.",
+    "modid": "opusnativeui",
+    "name": "Opus Native UI",
+    "description": "Native Elementa Minecraft shell and OpusConfig integration for Opus.",
     "version": "${version}",
     "mcversion": "1.8.9",
     "url": "",

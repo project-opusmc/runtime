@@ -8,21 +8,21 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const verifier = resolve(scriptDirectory, "verify-native-ui-runtime-report.mjs");
-const session = "fixture-session-0.1.0-proof.2";
+const session = "fixture-session-0.1.0";
 const temporaryDirectory = mkdtempSync(resolve(tmpdir(), "opus-native-ui-report-"));
 
 function validReport() {
   return {
     updatedAt: "2026-08-24T00:00:00.000Z",
     schemaVersion: "2",
-    proofVersion: "0.1.0-proof.2",
+    nativeUiVersion: "0.1.0",
     runSession: session,
     minecraft: "1.8.9",
     forge: "11.15.1.2318",
     elementa: "762",
     universalCraft: "516",
     oneConfig: "0.2.2-alpha228-full",
-    opusDesignVersion: "proof-baseline.2",
+    opusDesignVersion: "opus-design.1",
     opusDesignParity: "pass",
     javaVersion: "1.8.0_502",
     osName: "Mac OS X",
@@ -30,12 +30,12 @@ function validReport() {
     oneConfigCodeSource: "jar:file:/cache/oneconfig-1.8.9-forge-0.2.2-alpha228-full.jar!/cc/polyfrost/oneconfig/gui/OneConfigGui.class",
     elementaCodeSource: "jar:file:/cache/elementa-762.jar!/gg/essential/elementa/WindowScreen.class",
     universalCraftCodeSource: "jar:file:/cache/universalcraft-1.8.9-forge-516.jar!/gg/essential/universal/UScreen.class",
-    proofEnabled: "true",
+    nativeUiEnabled: "true",
     optifineExpected: "true",
     optifinePresent: "true",
     optifineVersion: "OptiFine_1.8.9_HD_U_M5",
-    oneconfigGlPre: "0",
-    oneconfigGlPost: "0",
+    opusconfigGlPre: "0",
+    opusconfigGlPost: "0",
     elementaGlPre: "0",
     elementaGlPost: "0",
     elementaGlInnerBefore: "0",
@@ -43,16 +43,14 @@ function validReport() {
     elementaAfterInitialization: "true",
     elementaClosed: "true",
     elementaEscape: "restore-previous-screen",
-    oneConfigCallback: "invoked",
-    clipboard: "copy",
-    overlay: "closed",
-    lifecycle: ["opus-pre-init", "opus-init"],
-    openOrder: ["oneconfig", "elementa", "oneconfig", "elementa"],
+    opusConfigCallback: "invoked",
+    lifecycle: ["opus-native-ui-pre-init", "opus-native-ui-init"],
+    openOrder: ["opusconfig", "elementa", "opusconfig", "elementa"],
     screenEvents: [
-      "open:oneconfig",
-      "draw-pre:oneconfig",
-      "draw-post:oneconfig",
-      "close:oneconfig",
+      "open:opusconfig",
+      "draw-pre:opusconfig",
+      "draw-post:opusconfig",
+      "close:opusconfig",
       "open:elementa",
       "draw-pre:elementa",
       "draw-inner-before:elementa",
@@ -61,7 +59,7 @@ function validReport() {
       "close:elementa",
     ],
     displayStates: [
-      "oneconfig|window=1440x900|framebuffer=2880x1800|gui=720x450|scale=4.000|guiScaleSetting=2|fullscreen=false",
+      "opusconfig|window=1440x900|framebuffer=2880x1800|gui=720x450|scale=4.000|guiScaleSetting=2|fullscreen=false",
       "elementa|window=2560x1440|framebuffer=5120x2880|gui=640x360|scale=8.000|guiScaleSetting=4|fullscreen=true",
     ],
     glErrors: [],
@@ -97,13 +95,13 @@ try {
   runFixture("valid", () => {}, true);
   runFixture("stale-session", (report) => { report.runSession = "old-session"; }, false, "runSession must be");
   runFixture("stale-design-version", (report) => {
-    report.opusDesignVersion = "proof-baseline.1";
-  }, false, "opusDesignVersion must be \"proof-baseline.2\"");
+    report.opusDesignVersion = "opus-design.0";
+  }, false, "opusDesignVersion must be \"opus-design.1\"");
   runFixture("design-parity-failed", (report) => {
     report.opusDesignParity = "failed";
   }, false, "opusDesignParity must be \"pass\"");
   runFixture("missing-reverse-order", (report) => {
-    report.openOrder = ["oneconfig", "oneconfig", "elementa", "elementa"];
+    report.openOrder = ["opusconfig", "opusconfig", "elementa", "elementa"];
   }, false, "openOrder lacks Elementa then OneConfig");
   runFixture("gl-error", (report) => {
     report.glErrors = ["elementa:inner-after:1282"];

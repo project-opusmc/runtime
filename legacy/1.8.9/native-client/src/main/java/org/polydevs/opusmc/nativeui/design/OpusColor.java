@@ -5,7 +5,7 @@ import java.util.Objects;
 /**
  * Renderer-neutral immutable RGBA color.
  *
- * <p>The native proof lane deliberately keeps this type independent of
+ * <p>The native UI lane deliberately keeps this type independent of
  * Elementa, OneConfig, Minecraft, and LWJGL. Renderers convert it at their
  * boundary through their theme adapters.</p>
  */

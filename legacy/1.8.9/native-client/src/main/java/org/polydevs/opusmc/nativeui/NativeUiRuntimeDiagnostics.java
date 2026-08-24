@@ -40,8 +40,8 @@ public final class NativeUiRuntimeDiagnostics {
         synchronized (LOCK) {
             reportFile = new File(gameDirectory, "native-ui-runtime-report.json");
             VALUES.put("schemaVersion", "2");
-            VALUES.put("proofVersion", OpusNativeUiProofMod.VERSION);
-            VALUES.put("runSession", System.getProperty("opus.native.proof.session", "missing"));
+            VALUES.put("nativeUiVersion", OpusNativeUiMod.VERSION);
+            VALUES.put("runSession", System.getProperty("opus.native.ui.session", "missing"));
             VALUES.put("minecraft", "1.8.9");
             VALUES.put("forge", "11.15.1.2318");
             VALUES.put("elementa", "762");
@@ -56,7 +56,7 @@ public final class NativeUiRuntimeDiagnostics {
             VALUES.put("opusDesignParity", "pass");
             VALUES.put(
                     "optifineExpected",
-                    Boolean.toString(Boolean.getBoolean("opus.native.proof.requireOptifine")));
+                    Boolean.toString(Boolean.getBoolean("opus.native.ui.requireOptifine")));
             VALUES.put("javaVersion", System.getProperty("java.version", "unknown"));
             VALUES.put("osName", System.getProperty("os.name", "unknown"));
             VALUES.put("osArch", System.getProperty("os.arch", "unknown"));
@@ -210,7 +210,7 @@ public final class NativeUiRuntimeDiagnostics {
             writeArray(writer, "glErrors", GL_ERRORS, false);
             writer.write("}\n");
         } catch (IOException ignored) {
-            // The proof must keep the game usable even when diagnostics storage is read-only.
+            // Diagnostics must keep the game usable even when storage is read-only.
         }
     }
 

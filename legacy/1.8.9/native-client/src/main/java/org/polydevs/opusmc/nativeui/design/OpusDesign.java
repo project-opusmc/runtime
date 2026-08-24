@@ -7,14 +7,14 @@ import java.util.Map;
 /**
  * Framework-neutral design contract for the native UI compatibility lane.
  *
- * <p>This first proof baseline preserves the visual values already exercised
- * by the Elementa lab while moving them out of page code. The contract is
+ * <p>This first production baseline preserves the visual values already
+ * exercised by the Elementa lab while moving them out of page code. The contract is
  * intentionally made only from Java 8 values and enums; renderer-specific
  * conversion belongs in {@link ElementaThemeAdapter} and
  * {@link OneConfigThemeAdapter}.</p>
  */
 public final class OpusDesign {
-    public static final String VERSION = "proof-baseline.2";
+    public static final String VERSION = "opus-design.1";
 
     public enum ColorRole {
         BACKDROP,
@@ -309,7 +309,7 @@ public final class OpusDesign {
     }
 
     /**
-     * Returns the initial native proof palette. Values are immutable after
+     * Returns the initial Opus palette. Values are immutable after
      * construction and all roles are present.
      */
     public static OpusDesign defaultDesign() {

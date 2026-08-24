@@ -19,9 +19,9 @@ buildscript {
 
 apply plugin: 'net.minecraftforge.gradle.forge'
 
-version = '0.1.0-proof.2'
+version = '0.1.0'
 group = 'org.polydevs.opusmc'
-archivesBaseName = 'opus-native-ui-proof-1.8.9'
+archivesBaseName = 'opus-native-ui-1.8.9'
 sourceCompatibility = targetCompatibility = '1.8'
 
 minecraft {
@@ -142,7 +142,7 @@ jar {
 
 task verifyToolchainInputs {
     group = 'verification'
-    description = 'Checks the pinned ForgeGradle artifacts used by the isolated proof lane.'
+        description = 'Checks the pinned ForgeGradle artifacts used by the native UI client lane.'
     doLast {
         def artifacts = buildscript.configurations.classpath.resolvedConfiguration.resolvedArtifacts
         def forgeGradle = artifacts.find {
@@ -215,7 +215,7 @@ task verifyDependencyClassCollisions(dependsOn: verifyNativeUiDependencies) {
 
 task verifyNativeClientSources {
     group = 'verification'
-    description = 'Rejects retired web-composited and parallel renderer paths from the clean proof client.'
+    description = 'Rejects retired web-composited and parallel renderer paths from the clean native UI client.'
     doLast {
         def forbiddenTokens = [
                 'OpusInteropServer',
@@ -243,7 +243,7 @@ task verifyNativeClientSources {
             }
         }
         if (!violations.isEmpty()) {
-            throw new GradleException("Retired UI path found in native proof client: ${violations.unique()}")
+            throw new GradleException("Retired UI path found in native UI client: ${violations.unique()}")
         }
     }
 }
@@ -295,18 +295,18 @@ task verifyNativeClientArtifact(dependsOn: [
         verifyNativeClientSources,
 ]) {
     group = 'verification'
-    description = 'Verifies the proof JAR is a thin Forge mod with no shaded UI dependencies or retired UI assets.'
+    description = 'Verifies the native UI JAR is a thin Forge mod with no shaded UI dependencies or retired UI assets.'
     doLast {
         def artifact = tasks.jar.archivePath
         if (!artifact.isFile()) {
-            throw new GradleException("Expected reobfuscated proof JAR at ${artifact}")
+            throw new GradleException("Expected reobfuscated native UI JAR at ${artifact}")
         }
         JarFile archive = new JarFile(artifact)
         try {
             for (required in [
-                    'org/polydevs/opusmc/nativeui/OpusNativeUiProofMod.class',
-                    'org/polydevs/opusmc/nativeui/OpusElementaProofScreen.class',
-                    'org/polydevs/opusmc/nativeui/OpusOneConfigProof.class',
+                    'org/polydevs/opusmc/nativeui/OpusNativeUiMod.class',
+                    'org/polydevs/opusmc/nativeui/OpusElementaShellScreen.class',
+                    'org/polydevs/opusmc/nativeui/OpusConfigModule.class',
                     'org/polydevs/opusmc/nativeui/NativeUiRuntimeDiagnostics.class',
                     'org/polydevs/opusmc/nativeui/design/OpusColor.class',
                     'org/polydevs/opusmc/nativeui/design/OpusDesign.class',
@@ -316,7 +316,7 @@ task verifyNativeClientArtifact(dependsOn: [
                     'mcmod.info',
             ]) {
                 if (archive.getEntry(required) == null) {
-                    throw new GradleException("Native proof artifact is missing ${required}")
+                    throw new GradleException("Native UI artifact is missing ${required}")
                 }
             }
             def forbiddenPrefixes = [
@@ -339,12 +339,12 @@ task verifyNativeClientArtifact(dependsOn: [
                 }
             }
             if (!forbiddenEntries.isEmpty()) {
-                throw new GradleException("Dependency or retired UI entries leaked into proof JAR: ${forbiddenEntries}")
+                throw new GradleException("Dependency or retired UI entries leaked into native UI JAR: ${forbiddenEntries}")
             }
             def manifest = archive.manifest.mainAttributes
             for (forbiddenAttribute in ['FMLCorePlugin', 'FMLCorePluginContainsFMLMod', 'TweakClass', 'MixinConfigs']) {
                 if (manifest.getValue(forbiddenAttribute) != null) {
-                    throw new GradleException("Proof JAR must not own ${forbiddenAttribute}; OneConfig remains separate.")
+                    throw new GradleException("Native UI JAR must not own ${forbiddenAttribute}; OneConfig remains separate.")
                 }
             }
         } finally {
@@ -364,7 +364,7 @@ task writeStaticCompatibilityReport(dependsOn: verifyNativeClientArtifact) {
         def designReport = new JsonSlurper().parse(designEvidence)
         def requiredDesignShape = [
                 schemaVersion: 2,
-                designVersion: 'proof-baseline.2',
+                designVersion: 'opus-design.1',
                 rendererNeutral: true,
                 densityPolicy: 'NEAREST_FRAMEBUFFER_PIXEL',
                 parity: 'pass',
@@ -436,7 +436,7 @@ task writeStaticCompatibilityReport(dependsOn: verifyNativeClientArtifact) {
                 dependenciesRemainSeparate: true,
                 duplicateClassCount: 0,
                 artifacts: artifactReports,
-                proofArtifact: [
+                nativeUiArtifact: [
                         file: tasks.jar.archivePath.name,
                         size: tasks.jar.archivePath.length(),
                         sha256: opusSha256(tasks.jar.archivePath),
@@ -465,20 +465,20 @@ task writeStaticCompatibilityReport(dependsOn: verifyNativeClientArtifact) {
 }
 
 def opusOptifineFile = System.getenv('OPUS_OPTIFINE_JAR')?.trim()
-def opusProofHeapMibValue = (findProperty('opusProofHeapMib')
+def opusNativeUiHeapMibValue = (findProperty('opusNativeUiHeapMib')
         ?: System.getenv('OPUS_NATIVE_UI_MAX_HEAP_MIB')
         ?: '1536').toString()
-if (!opusProofHeapMibValue.matches('[0-9]+')) {
-    throw new GradleException('opusProofHeapMib must be an integer MiB value.')
+if (!opusNativeUiHeapMibValue.matches('[0-9]+')) {
+    throw new GradleException('opusNativeUiHeapMib must be an integer MiB value.')
 }
-def opusProofHeapMib = opusProofHeapMibValue as int
-if (opusProofHeapMib < 768 || opusProofHeapMib > 2048) {
-    throw new GradleException('opusProofHeapMib must stay between 768 and 2048 MiB for the isolated proof lane.')
+def opusNativeUiHeapMib = opusNativeUiHeapMibValue as int
+if (opusNativeUiHeapMib < 768 || opusNativeUiHeapMib > 2048) {
+    throw new GradleException('opusNativeUiHeapMib must stay between 768 and 2048 MiB for the isolated native UI lane.')
 }
 def opusRuntimeSessionFile = file("${minecraft.runDir}/native-ui-runtime-session.txt")
 task stageNativeUiRunMods(dependsOn: [verifyNativeClientArtifact, verifyNativeUiDependencies]) {
     group = 'run'
-    description = 'Stages locked UI JARs and optional user-provided OptiFine as separate run/mods artifacts.'
+    description = 'Stages the native UI mod, locked UI dependencies, and optional user-provided OptiFine as separate run/mods artifacts.'
     doLast {
         def modsDir = file("${minecraft.runDir}/mods")
         modsDir.mkdirs()
@@ -527,18 +527,18 @@ tasks.getByName('runClient').doFirst {
     def session = UUID.randomUUID().toString()
     opusRuntimeSessionFile.parentFile.mkdirs()
     opusRuntimeSessionFile.setText(session + '\n', 'UTF-8')
-    jvmArgs "-Dopus.native.proof.session=${session}"
+    jvmArgs "-Dopus.native.ui.session=${session}"
     logger.lifecycle("Native UI runtime evidence session: ${session}")
 }
 tasks.getByName('runClient').args(
         '--tweakClass', 'cc.polyfrost.oneconfig.internal.plugin.asm.OneConfigTweaker',
-        '--width', (findProperty('opusProofWidth') ?: '1440').toString(),
-        '--height', (findProperty('opusProofHeight') ?: '900').toString())
+        '--width', (findProperty('opusNativeUiWidth') ?: '1440').toString(),
+        '--height', (findProperty('opusNativeUiHeight') ?: '900').toString())
 tasks.getByName('runClient').jvmArgs(
         '-Xms256M',
-        "-Xmx${opusProofHeapMib}M",
-        '-Dopus.native.proof.enabled=true',
-        "-Dopus.native.proof.requireOptifine=${(findProperty('opusRequireOptifine') ?: 'false').toString()}",
+        "-Xmx${opusNativeUiHeapMib}M",
+        '-Dopus.native.ui.enabled=true',
+        "-Dopus.native.ui.requireOptifine=${(findProperty('opusRequireOptifine') ?: 'false').toString()}",
         '-Dforge.logging.console.level=info')
 if ((findProperty('opusForgeConsoleDebug') ?: 'false').toString().toBoolean()) {
     tasks.getByName('runClient').jvmArgs('-Dforge.logging.console.level=debug')
@@ -570,7 +570,7 @@ check.dependsOn writeStaticCompatibilityReport, verifyNativeUiRuntimeVerifier, v
 
 task verifyNativeUiRuntimeReport {
     group = 'verification'
-    description = 'Verifies explicit interactive evidence captured by the native UI proof client.'
+    description = 'Verifies explicit interactive evidence captured by the native UI client.'
     doLast {
         def report = file("${minecraft.runDir}/native-ui-runtime-report.json")
         if (!report.isFile()) {

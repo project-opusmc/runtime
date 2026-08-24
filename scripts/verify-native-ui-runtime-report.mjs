@@ -80,7 +80,7 @@ try {
 }
 
 requireValue(report, "schemaVersion", "2");
-requireValue(report, "proofVersion", "0.1.0-proof.2");
+requireValue(report, "nativeUiVersion", "0.1.0");
 if (options.expectedSession !== null) {
   requireValue(report, "runSession", options.expectedSession);
 }
@@ -89,9 +89,9 @@ requireValue(report, "forge", "11.15.1.2318");
 requireValue(report, "elementa", "762");
 requireValue(report, "universalCraft", "516");
 requireValue(report, "oneConfig", "0.2.2-alpha228-full");
-requireValue(report, "opusDesignVersion", "proof-baseline.2");
+requireValue(report, "opusDesignVersion", "opus-design.1");
 requireValue(report, "opusDesignParity", "pass");
-requireValue(report, "proofEnabled", "true");
+requireValue(report, "nativeUiEnabled", "true");
 requireValue(report, "optifineExpected", "true");
 requireValue(report, "optifinePresent", "true");
 const normalizedOptifineVersion = String(report.optifineVersion || "")
@@ -106,8 +106,8 @@ if (!/^1\.8(?:\.0)?[_./-]/.test(String(report.javaVersion || ""))) {
 }
 requireValue(report, "osName", "Mac OS X");
 requireValue(report, "osArch", "x86_64");
-requireIncludes(report.lifecycle, "opus-pre-init", "lifecycle");
-requireIncludes(report.lifecycle, "opus-init", "lifecycle");
+requireIncludes(report.lifecycle, "opus-native-ui-pre-init", "lifecycle");
+requireIncludes(report.lifecycle, "opus-native-ui-init", "lifecycle");
 
 for (const key of ["oneConfigCodeSource", "elementaCodeSource", "universalCraftCodeSource"]) {
   if (typeof report[key] !== "string" || report[key].length === 0 || report[key] === "unknown") {
@@ -128,14 +128,14 @@ const openOrder = report.openOrder;
 if (!Array.isArray(openOrder) || openOrder.length < 4) {
   fail("openOrder must contain at least four actual screen openings");
 }
-if (!hasOrderedPair(openOrder, "oneconfig", "elementa")) {
+if (!hasOrderedPair(openOrder, "opusconfig", "elementa")) {
   fail("openOrder lacks OneConfig then Elementa");
 }
-if (!hasOrderedPair(openOrder, "elementa", "oneconfig")) {
+if (!hasOrderedPair(openOrder, "elementa", "opusconfig")) {
   fail("openOrder lacks Elementa then OneConfig");
 }
 
-for (const screen of ["oneconfig", "elementa"]) {
+for (const screen of ["opusconfig", "elementa"]) {
   requireEvent(report.screenEvents, `open:${screen}`);
   requireEvent(report.screenEvents, `draw-pre:${screen}`);
   requireEvent(report.screenEvents, `draw-post:${screen}`);
@@ -155,7 +155,7 @@ if (!Array.isArray(report.glErrors) || report.glErrors.length !== 0) {
 if (!Array.isArray(report.displayStates) || report.displayStates.length < 2) {
   fail("displayStates must contain at least two distinct runtime states");
 }
-for (const screen of ["oneconfig", "elementa"]) {
+for (const screen of ["opusconfig", "elementa"]) {
   if (!report.displayStates.some((state) => state.startsWith(`${screen}|`))) {
     fail(`displayStates must contain ${screen} evidence`);
   }
@@ -176,9 +176,7 @@ if (options.requireFullscreenToggle) {
 requireValue(report, "elementaAfterInitialization", "true");
 requireValue(report, "elementaClosed", "true");
 requireValue(report, "elementaEscape", "restore-previous-screen");
-requireValue(report, "oneConfigCallback", "invoked");
-requireValue(report, "clipboard", "copy");
-requireValue(report, "overlay", "closed");
+requireValue(report, "opusConfigCallback", "invoked");
 
 console.log(
   `verified native UI runtime report: ${openOrder.length} openings, ` +

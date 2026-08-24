@@ -1,19 +1,16 @@
-# Opus native UI compatibility client
+# Opus native UI client
 
-This is a clean, development-only Forge 1.8.9 mod used to prove the frozen
-OneConfig and Elementa/UniversalCraft artifacts before Opus presentation or
-production staging changes are applied. It is intentionally separate from the
-older `legacy/1.8.9/client` CEF/Svelte research lane.
+This is the native Forge 1.8.9 client mod for the OpusConfig and Elementa
+integration. It is intentionally separate from the older
+`legacy/1.8.9/client` CEF/Svelte research lane.
 
-The proof.2 JAR is thin. The current proof artifact is
-`opus-native-ui-proof-1.8.9-0.1.0-proof.2.jar` (SHA-256
-`d2e465c31973ade03f0734a4064d5d2189ed971492accd8667d7888ddfcb8d06`).
-OneConfig `0.2.2-alpha228-full`, Elementa `762`, and
+The native UI JAR is thin and keeps OneConfig, Elementa, and UniversalCraft as
+separate managed dependencies. OneConfig `0.2.2-alpha228-full`, Elementa `762`, and
 UniversalCraft `516` remain separate checksum-verified JARs. `runClient` adds
 them to ForgeGradle's launch-time `runtime` configuration so LaunchWrapper can
 load the OneConfig tweaker, and also stages the same immutable JARs in this
 lane's isolated `run/mods` directory so Forge can discover them. They are never
-shaded into the Opus proof mod. Optional user-provided OptiFine is staged beside
+shaded into the Opus native UI mod. Optional user-provided OptiFine is staged beside
 them only after its locked size and SHA-1 are verified.
 
 ## Verify and build
@@ -60,7 +57,7 @@ invocation.
   It affects only this isolated client lane, but must still be approved against
   its exact targets before use.
 
-The proof JVM defaults to `-Xms256M -Xmx1536M`; `-PopusProofHeapMib=...` is
+The native UI JVM defaults to `-Xms256M -Xmx1536M`; `-PopusNativeUiHeapMib=...` is
 limited to 768 through 2048 MiB. Verbose Forge logging and Mixin class export
 are opt-in through `-PopusForgeConsoleDebug=true` and
 `-PopusMixinDebugExport=true` so routine proof runs do not create avoidable
@@ -84,8 +81,8 @@ OPUS_OPTIFINE_JAR=/absolute/path/OptiFine_1.8.9_HD_U_M5.jar \
 
 Development controls:
 
-- `O`: open the stock OneConfig shell and the annotation-backed proof module.
-- `P`: open the Elementa V11 behavior lab.
+- `Right Shift`: open or close OpusConfig.
+- The Elementa shell owns the main menu and pause menu routes.
 
 Runtime evidence is updated at `run/native-ui-runtime-report.json`. Exercise
 four openings in this order, closing each screen before opening the next:
