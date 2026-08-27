@@ -230,6 +230,7 @@ function validateLock(lock) {
   const expectedCoordinates = new Map([
     ["oneconfig", "cc.polyfrost:oneconfig-1.8.9-forge:0.2.2-alpha228"],
     ["oneconfig-full", "cc.polyfrost:oneconfig-1.8.9-forge:0.2.2-alpha228:full"],
+    ["opusconfig-full", "org.polydevs.opusmc:opusconfig-1.8.9-forge:0.2.2-alpha228-opus:full"],
     ["oneconfig-universalcraft", "cc.polyfrost:universalcraft-1.8.9-forge:246"],
     ["elementa", "gg.essential:elementa:762"],
     ["universalcraft-source-matched", "gg.essential:universalcraft-1.8.9-forge:494"],

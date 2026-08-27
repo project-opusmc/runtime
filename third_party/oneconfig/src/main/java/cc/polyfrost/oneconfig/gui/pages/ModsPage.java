@@ -50,7 +50,7 @@ public class ModsPage extends Page {
     private int size;
 
     public ModsPage() {
-        super("Mods");
+        super("Modules");
         reloadMods();
         modCategories.add(new BasicButton(64, 32, "All", BasicButton.ALIGNMENT_CENTER, ColorPalette.SECONDARY));
         modCategories.add(new BasicButton(80, 32, "Combat", BasicButton.ALIGNMENT_CENTER, ColorPalette.SECONDARY));

@@ -241,10 +241,24 @@ public class OneConfigTweaker implements ITweaker {
             Field f_exceptions = LaunchClassLoader.class.getDeclaredField("classLoaderExceptions");
             f_exceptions.setAccessible(true);
             Set<String> exceptions = (Set<String>) f_exceptions.get(Launch.classLoader);
-            exceptions.remove("org.lwjgl.");
+            // On macOS Opus puts a complete, patched LWJGL 2 artifact first on
+            // the JVM class path. Letting LaunchClassLoader reopen org.lwjgl
+            // after another loader has already defined one of its packages
+            // triggers LaunchWrapper's package-sealing check and prevents the
+            // display from being created. The patched artifact must therefore
+            // remain owned by the parent class loader on this platform.
+            if (!isOpusMacOsLwjglCompatibilityRuntime()) {
+                exceptions.remove("org.lwjgl.");
+            }
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private boolean isOpusMacOsLwjglCompatibilityRuntime() {
+        String osName = System.getProperty("os.name", "");
+        return osName.toLowerCase().contains("mac")
+                && Boolean.parseBoolean(System.getProperty("opus.lwjgl.macos.compat", "false"));
     }
 
     @Override

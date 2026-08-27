@@ -17,6 +17,13 @@ plugins {
     java
 }
 
+allprojects {
+    tasks.withType<org.gradle.api.tasks.bundling.AbstractArchiveTask>().configureEach {
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+    }
+}
+
 kotlin.jvmToolchain {
     this.languageVersion.set(JavaLanguageVersion.of(8))
 }

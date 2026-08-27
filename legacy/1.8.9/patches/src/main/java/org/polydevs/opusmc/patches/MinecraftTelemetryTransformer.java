@@ -14,6 +14,11 @@ public final class MinecraftTelemetryTransformer implements ClassTransformer {
     static final String TICK_METHOD = "s";
     static final String LEFT_CLICK_METHOD = "aw";
     static final String VOID_DESCRIPTOR = "()V";
+    static final String FRAME_RATE_METHOD = "j";
+    static final String FRAME_RATE_DESCRIPTOR = "()I";
+    static final String LIVE_RESIZE_DISPLAY_OWNER = "org/lwjgl/opengl/MacOSXDisplay";
+    static final String LIVE_RESIZE_FRAME_RATE_METHOD = "opusLiveResizeFramerate";
+    static final String LIVE_RESIZE_FRAME_RATE_DESCRIPTOR = "(I)I";
     static final String TELEMETRY_OWNER = "org/polydevs/opusmc/core/ClientTelemetry";
 
     @Override
@@ -34,7 +39,7 @@ public final class MinecraftTelemetryTransformer implements ClassTransformer {
 
         ClassReader reader = new ClassReader(originalBytecode);
         ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
-        int[] hooks = {0, 0, 0, 0, 0};
+        int[] hooks = {0, 0, 0, 0, 0, 0};
         ClassVisitor visitor = new ClassVisitor(Opcodes.ASM5, writer) {
             @Override
             public MethodVisitor visitMethod(
@@ -56,16 +61,21 @@ public final class MinecraftTelemetryTransformer implements ClassTransformer {
                     hooks[4]++;
                     return entryHook(delegate, "attackInput");
                 }
+                if (FRAME_RATE_METHOD.equals(name) && FRAME_RATE_DESCRIPTOR.equals(descriptor)) {
+                    return liveResizeFramerate(delegate, hooks);
+                }
                 return delegate;
             }
         };
         reader.accept(visitor, 0);
 
-        if (hooks[0] != 1 || hooks[1] == 0 || hooks[2] != 1 || hooks[3] == 0 || hooks[4] != 1) {
+        if (hooks[0] != 1 || hooks[1] == 0 || hooks[2] != 1 || hooks[3] == 0
+                || hooks[4] != 1 || hooks[5] != 1) {
             throw new IllegalStateException(
                     "Minecraft telemetry anchors changed: frame=" + hooks[0] + "/" + hooks[1]
                             + ", tick=" + hooks[2] + "/" + hooks[3]
-                            + ", leftClick=" + hooks[4]);
+                            + ", leftClick=" + hooks[4]
+                            + ", liveResizeFramerate=" + hooks[5]);
         }
         System.out.println("[OPUS/PATCH] applied " + id());
         return writer.toByteArray();
@@ -105,6 +115,26 @@ public final class MinecraftTelemetryTransformer implements ClassTransformer {
             public void visitCode() {
                 super.visitCode();
                 super.visitMethodInsn(Opcodes.INVOKESTATIC, TELEMETRY_OWNER, hook, VOID_DESCRIPTOR, false);
+            }
+        };
+    }
+
+    private static MethodVisitor liveResizeFramerate(MethodVisitor delegate, int[] hooks) {
+        return new MethodVisitor(Opcodes.ASM5, delegate) {
+            @Override
+            public void visitIntInsn(int opcode, int operand) {
+                if (opcode == Opcodes.BIPUSH && operand == 30) {
+                    hooks[5]++;
+                    super.visitIntInsn(opcode, operand);
+                    super.visitMethodInsn(
+                            Opcodes.INVOKESTATIC,
+                            LIVE_RESIZE_DISPLAY_OWNER,
+                            LIVE_RESIZE_FRAME_RATE_METHOD,
+                            LIVE_RESIZE_FRAME_RATE_DESCRIPTOR,
+                            false);
+                    return;
+                }
+                super.visitIntInsn(opcode, operand);
             }
         };
     }

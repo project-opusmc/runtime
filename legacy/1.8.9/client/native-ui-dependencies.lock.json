@@ -106,6 +106,17 @@
       "sha256": "1e2c78270e40771fb76a014e0d64dff349baef24b17c55a5f3bff491cc77dd0f"
     },
     {
+      "id": "opusconfig-full",
+      "status": "opus-fork-built-from-vendored-oneconfig",
+      "source": "oneconfig",
+      "coordinate": "org.polydevs.opusmc:opusconfig-1.8.9-forge:0.2.2-alpha228-opus:full",
+      "repository": "https://github.com/project-opusmc/runtime",
+      "file": "opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
+      "url": "https://github.com/project-opusmc/runtime/releases/download/opusconfig-0.2.2-alpha228/opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
+      "size": 17903948,
+      "sha256": "48d2393c11b2d1d4c09f0fad4cf67b36e83a624e82f6143e389fcb8073793bb3"
+    },
+    {
       "id": "oneconfig-universalcraft",
       "status": "frozen-transitive-baseline",
       "coordinate": "cc.polyfrost:universalcraft-1.8.9-forge:246",

@@ -33,13 +33,14 @@ import cc.polyfrost.oneconfig.utils.InputHandler;
 
 public class CreditsPage extends Page {
     public CreditsPage() {
-        super("Credits");
+        super("Attribution");
     }
 
     @Override
     public void draw(long vg, int x, int y, InputHandler inputHandler) {
         final NanoVGHelper nanoVGHelper = NanoVGHelper.INSTANCE;
-        nanoVGHelper.drawSvg(vg, SVGs.ONECONFIG_FULL_DARK, x + 15f, y + 20f, 474, 102);
+        nanoVGHelper.drawSvg(vg, SVGs.OPUSCONFIG_HEAD, x + 20f, y + 28f, 72, 72);
+        nanoVGHelper.drawText(vg, "OPUSCONFIG", x + 108, y + 72, -1, 28, Fonts.SEMIBOLD);
         y -= 32;
 
         nanoVGHelper.drawText(vg, "Development Team", x + 20, y + 180, -1, 24, Fonts.SEMIBOLD);
@@ -59,6 +60,9 @@ public class CreditsPage extends Page {
         nanoVGHelper.drawText(vg, " - https://easings.net/ - Easing functions", x + 20, y + 415, -1, 12, Fonts.REGULAR);
         nanoVGHelper.drawText(vg, " - Seraph (Scherso) - Locraw and Multithreading utilities", x + 20, y + 430, -1, 12, Fonts.REGULAR);
         nanoVGHelper.drawText(vg, " - Deencapsulation (xDark) - Java 9+ utilities", x + 20, y + 445, -1, 12, Fonts.REGULAR);
+        nanoVGHelper.drawText(vg, "OPUSCONFIG", x + 20, y + 475, -1, 24, Fonts.SEMIBOLD);
+        nanoVGHelper.drawText(vg, "OpusConfig UI customization by the OPUS project.", x + 20, y + 497, -1, 12, Fonts.REGULAR);
+        nanoVGHelper.drawText(vg, "Powered by OneConfig; original Polyfrost notices and license retained.", x + 20, y + 512, -1, 12, Fonts.REGULAR);
     }
 
     @Override

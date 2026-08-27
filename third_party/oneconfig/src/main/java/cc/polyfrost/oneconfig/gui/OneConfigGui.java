@@ -73,7 +73,7 @@ public class OneConfigGui extends OneUIScreen {
     public static OneConfigGui INSTANCE;
 
     private final SideBar sideBar = new SideBar();
-    private final TextInputField textInputField = new TextInputField(248, 40, "Search...", false, false, SVGs.SEARCH_SM, 12);
+    private final TextInputField textInputField = new TextInputField(248, 40, "Search OpusConfig...", false, false, SVGs.SEARCH_SM, 12);
     private final ArrayList<Page> previousPages = new ArrayList<>();
     private final ArrayList<Page> nextPages = new ArrayList<>();
     private final BasicElement backArrow = new BasicElement(40, 40, ColorPalette.TERTIARY, true);
@@ -249,7 +249,9 @@ public class OneConfigGui extends OneUIScreen {
         nanoVGHelper.drawLine(vg, x + 224, y + 72, x + 1280, y + 72, 1, Colors.GRAY_700);
         nanoVGHelper.drawLine(vg, x + 224, y, x + 222, y + 800, 1, Colors.GRAY_700);
 
-        nanoVGHelper.drawSvg(vg, SVGs.ONECONFIG_FULL_DARK, x + 33f, y + 22f, 158f, 34f);
+        nanoVGHelper.drawSvg(vg, SVGs.OPUSCONFIG_HEAD, x + 33f, y + 20f, 37f, 37f);
+        nanoVGHelper.drawText(vg, "OPUSCONFIG", x + 80f, y + 42f, Colors.WHITE, 22f, Fonts.SEMIBOLD);
+        nanoVGHelper.drawText(vg, "Powered by OneConfig", x + 80f, y + 59f, Colors.WHITE_60, 11f, Fonts.REGULAR);
 
         textInputField.draw(vg, x + 1020, y + 16, inputHandler);
         sideBar.draw(vg, x, y, inputHandler);

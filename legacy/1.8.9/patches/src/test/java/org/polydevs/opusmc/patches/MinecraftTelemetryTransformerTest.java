@@ -18,7 +18,11 @@ final class MinecraftTelemetryTransformerTest {
                         MinecraftTelemetryTransformer.VOID_DESCRIPTOR),
                 TelemetryTransformerTestSupport.method(
                         MinecraftTelemetryTransformer.LEFT_CLICK_METHOD,
-                        MinecraftTelemetryTransformer.VOID_DESCRIPTOR));
+                        MinecraftTelemetryTransformer.VOID_DESCRIPTOR),
+                TelemetryTransformerTestSupport.methodWithIntConstant(
+                        MinecraftTelemetryTransformer.FRAME_RATE_METHOD,
+                        MinecraftTelemetryTransformer.FRAME_RATE_DESCRIPTOR,
+                        30));
 
         byte[] transformed = new MinecraftTelemetryTransformer().transform(
                 MinecraftTelemetryTransformer.TARGET_CLASS, original);
@@ -33,6 +37,11 @@ final class MinecraftTelemetryTransformerTest {
                 transformed, "tickFinished", "()V"));
         assertEquals(1, TelemetryTransformerTestSupport.countTelemetryCalls(
                 transformed, "attackInput", "()V"));
+        assertEquals(1, TelemetryTransformerTestSupport.countStaticCalls(
+                transformed,
+                MinecraftTelemetryTransformer.LIVE_RESIZE_DISPLAY_OWNER,
+                MinecraftTelemetryTransformer.LIVE_RESIZE_FRAME_RATE_METHOD,
+                MinecraftTelemetryTransformer.LIVE_RESIZE_FRAME_RATE_DESCRIPTOR));
     }
 
     @Test
@@ -44,7 +53,11 @@ final class MinecraftTelemetryTransformerTest {
                         MinecraftTelemetryTransformer.VOID_DESCRIPTOR),
                 TelemetryTransformerTestSupport.method(
                         MinecraftTelemetryTransformer.TICK_METHOD,
-                        MinecraftTelemetryTransformer.VOID_DESCRIPTOR));
+                        MinecraftTelemetryTransformer.VOID_DESCRIPTOR),
+                TelemetryTransformerTestSupport.methodWithIntConstant(
+                        MinecraftTelemetryTransformer.FRAME_RATE_METHOD,
+                        MinecraftTelemetryTransformer.FRAME_RATE_DESCRIPTOR,
+                        30));
 
         assertThrows(
                 IllegalStateException.class,

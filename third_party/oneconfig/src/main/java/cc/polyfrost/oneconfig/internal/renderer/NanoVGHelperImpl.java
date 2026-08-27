@@ -29,6 +29,7 @@ package cc.polyfrost.oneconfig.internal.renderer;
 import cc.polyfrost.oneconfig.config.data.InfoType;
 import cc.polyfrost.oneconfig.events.EventManager;
 import cc.polyfrost.oneconfig.events.event.FramebufferRenderEvent;
+import cc.polyfrost.oneconfig.events.event.RenderEvent;
 import cc.polyfrost.oneconfig.events.event.Stage;
 import cc.polyfrost.oneconfig.gui.OneConfigGui;
 import cc.polyfrost.oneconfig.internal.assets.Colors;
@@ -55,6 +56,7 @@ import org.lwjgl.nanovg.NanoVGGL2;
 import org.lwjgl.opengl.GL11;
 
 import java.nio.ByteBuffer;
+import java.util.Locale;
 import java.util.function.LongConsumer;
 
 import static org.lwjgl.nanovg.NanoVG.*;
@@ -66,8 +68,12 @@ public final class NanoVGHelperImpl implements NanoVGHelper {
     private long vg = -1;
     private static int[] readingPixels = null;
     private static int[] readColors = new int[]{0};
+    private static final boolean MACOS = System.getProperty("os.name", "")
+            .toLowerCase(Locale.ROOT)
+            .contains("mac");
     private boolean drawing = false;
     private boolean goingToCancel = false;
+    private boolean stencilPrepared = false;
 
     //nanovg
 
@@ -129,25 +135,43 @@ public final class NanoVGHelperImpl implements NanoVGHelper {
             FontHelper.INSTANCE.initialize(vg);
         }
 
+        if (!stencilPrepared) {
+            prepareStencilForNanoVG();
+        }
+
+        boolean attributesPushed = false;
+        boolean frameStarted = false;
         try {
-            Platform.getGLPlatform().enableStencil();
-        } catch (Exception e) {
-            e.printStackTrace();
+            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+            attributesPushed = true;
+            UGraphics.disableAlpha();
+
+            if (mcScaling) {
+                nvgBeginFrame(vg, (float) UResolution.getScaledWidth(), (float) UResolution.getScaledHeight(), (float) UResolution.getScaleFactor());
+            } else {
+                nvgBeginFrame(vg, UResolution.getWindowWidth(), UResolution.getWindowHeight(), 1);
+            }
+            frameStarted = true;
+            consumer.accept(vg);
+        } finally {
+            try {
+                if (frameStarted) {
+                    nvgEndFrame(vg);
+                }
+            } finally {
+                try {
+                    UGraphics.enableAlpha();
+                } finally {
+                    try {
+                        if (attributesPushed) {
+                            GL11.glPopAttrib();
+                        }
+                    } finally {
+                        finishNanoVGCommands();
+                    }
+                }
+            }
         }
-        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-        UGraphics.disableAlpha();
-
-        if (mcScaling) {
-            nvgBeginFrame(vg, (float) UResolution.getScaledWidth(), (float) UResolution.getScaledHeight(), (float) UResolution.getScaleFactor());
-        } else {
-            nvgBeginFrame(vg, UResolution.getWindowWidth(), UResolution.getWindowHeight(), 1);
-        }
-
-        consumer.accept(vg);
-
-        nvgEndFrame(vg);
-        UGraphics.enableAlpha();
-        GL11.glPopAttrib();
 
         if (readingPixels != null) {
             final int amount = readingPixels[2] * readingPixels[3];
@@ -157,6 +181,29 @@ public final class NanoVGHelperImpl implements NanoVGHelper {
             for (int i = 0; i < amount; i++)
                 readColors[i] = ColorUtils.getColor(buf.get(), buf.get(), buf.get(), buf.get());
             readingPixels = null;
+        }
+    }
+
+    private void prepareStencilForNanoVG() {
+        try {
+            Platform.getGLPlatform().enableStencil();
+            stencilPrepared = true;
+        } catch (Throwable throwable) {
+            // Keep the renderer alive if a platform cannot provide a stencil
+            // attachment. A later NanoVG draw retries the preparation.
+            throwable.printStackTrace();
+        }
+    }
+
+    private void finishNanoVGCommands() {
+        if (MACOS) {
+            // Minecraft 1.8.9 swaps the drawable and recreates its framebuffer
+            // immediately after GUI rendering. macOS translates this legacy
+            // OpenGL work to Metal; leaving NanoVG commands in flight while a
+            // live-resize swaps the drawable can start a second encoder on the
+            // same command buffer and abort in AGX. Finish the NanoVG pass at
+            // its ownership boundary before Minecraft reaches Display.update().
+            GL11.glFinish();
         }
     }
 

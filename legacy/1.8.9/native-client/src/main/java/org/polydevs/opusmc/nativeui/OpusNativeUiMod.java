@@ -17,6 +17,7 @@ import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.event.FMLInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
+import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.InputEvent;
 import org.lwjgl.input.Keyboard;
@@ -42,6 +43,7 @@ public final class OpusNativeUiMod {
     public static final int OPEN_KEY = Keyboard.KEY_RSHIFT;
 
     private static final long TOGGLE_DEBOUNCE_NANOS = 150_000_000L;
+    private static GuiScreen returnScreen;
 
     private KeyBinding openOpusConfig;
     private OpusConfigModule opusConfig;
@@ -75,6 +77,7 @@ public final class OpusNativeUiMod {
         NativeUiRuntimeDiagnostics.record("nativeUiEnabled", "true");
         NativeUiRuntimeDiagnostics.record("controls", "RIGHT_SHIFT=OpusConfig");
         NativeUiRuntimeDiagnostics.record("shellRoutes", "main-menu,pause-menu,minecraft-settings");
+        NativeUiLiveProof.installIfRequested(this, Minecraft.getMinecraft().mcDataDir);
     }
 
     @SubscribeEvent
@@ -82,34 +85,72 @@ public final class OpusNativeUiMod {
         if (openOpusConfig == null || !openOpusConfig.isPressed()) {
             return;
         }
-        if (!canHandleGlobalToggle()) {
-            NativeUiRuntimeDiagnostics.record("lastInput", "right-shift-ignored-focus");
+        handlePhysicalToggle("game");
+    }
+
+    /** Forge's ordinary key event is not posted while a GuiScreen owns input. */
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void onGuiKeyInput(GuiScreenEvent.KeyboardInputEvent.Pre event) {
+        if (!Keyboard.getEventKeyState()) {
             return;
         }
-        long now = System.nanoTime();
-        if (now - lastToggleNanos < TOGGLE_DEBOUNCE_NANOS) {
-            NativeUiRuntimeDiagnostics.record("lastInput", "right-shift-debounced");
-            return;
+
+        if (handleGuiKey(Keyboard.getEventKey(), "gui")) {
+            event.setCanceled(true);
         }
-        lastToggleNanos = now;
-        toggleOpusConfig();
     }
 
     /** Opens or closes the real OneConfig screen through its supported host. */
     public static void openOpusConfig() {
         Minecraft minecraft = Minecraft.getMinecraft();
         if (minecraft.currentScreen instanceof OneConfigGui) {
-            GuiUtils.closeScreen();
+            restorePreviousScreen();
             NativeUiRuntimeDiagnostics.record("lastInput", "opusconfig-close");
             return;
         }
+        returnScreen = minecraft.currentScreen;
         GuiUtils.displayScreen(OneConfigGui.create());
         NativeUiRuntimeDiagnostics.record("lastInput", "opusconfig-open");
     }
 
-    private void toggleOpusConfig() {
-        NativeUiRuntimeDiagnostics.record("lastInput", "right-shift");
+    private static boolean restorePreviousScreen() {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (!(minecraft.currentScreen instanceof OneConfigGui)) {
+            return false;
+        }
+        minecraft.displayGuiScreen(returnScreen);
+        returnScreen = null;
+        NativeUiRuntimeDiagnostics.record("lastInput", "opusconfig-restore");
+        return true;
+    }
+
+    private boolean handleGuiKey(int eventKey, String source) {
+        if (eventKey == OPEN_KEY) {
+            return handlePhysicalToggle(source);
+        }
+        return eventKey == Keyboard.KEY_ESCAPE
+                && Minecraft.getMinecraft().currentScreen instanceof OneConfigGui
+                && restorePreviousScreen();
+    }
+
+    boolean handleLiveProofKey(int eventKey) {
+        return handleGuiKey(eventKey, "live-proof");
+    }
+
+    private boolean handlePhysicalToggle(String source) {
+        if (!canHandleGlobalToggle()) {
+            NativeUiRuntimeDiagnostics.record("lastInput", "right-shift-ignored-focus");
+            return false;
+        }
+        long now = System.nanoTime();
+        if (now - lastToggleNanos < TOGGLE_DEBOUNCE_NANOS) {
+            NativeUiRuntimeDiagnostics.record("lastInput", "right-shift-debounced");
+            return false;
+        }
+        lastToggleNanos = now;
+        NativeUiRuntimeDiagnostics.record("lastInput", "right-shift-" + source);
         openOpusConfig();
+        return true;
     }
 
     private boolean canHandleGlobalToggle() {
@@ -165,4 +206,5 @@ public final class OpusNativeUiMod {
     public OpusConfigModule getOpusConfig() {
         return opusConfig;
     }
+
 }

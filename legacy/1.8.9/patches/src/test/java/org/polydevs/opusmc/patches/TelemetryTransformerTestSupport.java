@@ -22,6 +22,10 @@ final class TelemetryTransformerTestSupport {
         return new MethodSpec(name, descriptor, true);
     }
 
+    static MethodSpec methodWithIntConstant(String name, String descriptor, int value) {
+        return new MethodSpec(name, descriptor, false, value);
+    }
+
     static byte[] classWithMethods(String internalName, MethodSpec... methods) {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null);
@@ -167,6 +171,17 @@ final class TelemetryTransformerTestSupport {
         MethodVisitor method = writer.visitMethod(
                 Opcodes.ACC_PUBLIC, spec.name, spec.descriptor, null, null);
         method.visitCode();
+        if (spec.intReturnValue != null) {
+            if (spec.intReturnValue >= Byte.MIN_VALUE && spec.intReturnValue <= Byte.MAX_VALUE) {
+                method.visitIntInsn(Opcodes.BIPUSH, spec.intReturnValue);
+            } else {
+                method.visitLdcInsn(spec.intReturnValue);
+            }
+            method.visitInsn(Opcodes.IRETURN);
+            method.visitMaxs(0, 0);
+            method.visitEnd();
+            return;
+        }
         if (spec.hasTwoReturns) {
             Label secondReturn = new Label();
             method.visitInsn(Opcodes.ICONST_0);
@@ -183,11 +198,21 @@ final class TelemetryTransformerTestSupport {
         private final String name;
         private final String descriptor;
         private final boolean hasTwoReturns;
+        private final Integer intReturnValue;
 
         private MethodSpec(String name, String descriptor, boolean hasTwoReturns) {
+            this(name, descriptor, hasTwoReturns, null);
+        }
+
+        private MethodSpec(
+                String name,
+                String descriptor,
+                boolean hasTwoReturns,
+                Integer intReturnValue) {
             this.name = name;
             this.descriptor = descriptor;
             this.hasTwoReturns = hasTwoReturns;
+            this.intReturnValue = intReturnValue;
         }
     }
 }

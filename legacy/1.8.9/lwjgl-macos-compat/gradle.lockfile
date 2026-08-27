@@ -1,0 +1,7 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+# To regenerate this file, run: ./gradlew :legacy:1.8.9:lwjgl-macos-compat:dependencies --write-locks
+org.lwjgl.lwjgl:lwjgl-platform:2.9.2-nightly-20140822=lwjglMacOsNativeOriginal
+org.lwjgl.lwjgl:lwjgl:2.9.2-nightly-20140822=compileClasspath,lwjglOriginal
+empty=annotationProcessor,runtimeClasspath,testAnnotationProcessor,testCompileClasspath,testRuntimeClasspath

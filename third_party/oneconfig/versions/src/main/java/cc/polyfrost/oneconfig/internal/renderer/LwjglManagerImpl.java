@@ -28,6 +28,7 @@ import org.objectweb.asm.tree.TypeInsnNode;
 import org.objectweb.asm.tree.VarInsnNode;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -36,8 +37,6 @@ import java.lang.reflect.Method;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.security.ProtectionDomain;
 import java.util.Arrays;
 import java.util.Enumeration;
@@ -45,6 +44,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.jar.JarEntry;
+import java.util.jar.JarInputStream;
+import java.util.jar.JarOutputStream;
 
 @SuppressWarnings("deprecation")
 public class LwjglManagerImpl
@@ -61,7 +63,16 @@ public class LwjglManagerImpl
     private static final String LWJGL_FUNCTION_PROVIDER =
             "cc.polyfrost.oneconfig.internal.plugin.hooks.Lwjgl2FunctionProvider";
 
+    /**
+     * LWJGL 2 and LWJGL 3 both call their core native library "lwjgl". They
+     * are loaded by the same JVM, so allowing LWJGL 3 to claim that basename
+     * makes macOS resolve Minecraft's later LWJGL 2 load to the wrong image.
+     * Keep the two native runtimes addressable independently.
+     */
+    private static final String LWJGL3_LIBRARY_NAME = "opus_lwjgl3";
+
     private final Set<String> classLoaderInclude = new CopyOnWriteArraySet<>();
+    private final Set<String> locallyDefinedPackages = new CopyOnWriteArraySet<>();
     private final Map<String, Class<?>> classCache = new HashMap<>();
 
     private static final String JAR_NAME = "oneconfig-lwjgl3.jar";
@@ -105,6 +116,14 @@ public class LwjglManagerImpl
             // Setup LW3 config
             Class<?> configClass = Class.forName("org.lwjgl.system.Configuration", true, classLoader);
             Method setMethod = configClass.getMethod("set", Object.class);
+
+            // The embedded LWJGL3 runtime is repacked below with this core
+            // native basename. Set both the configuration object and the
+            // system property because Configuration reads the property during
+            // class initialization in some LWJGL3 builds.
+            Object libraryNameField = configClass.getField("LIBRARY_NAME").get(null);
+            setMethod.invoke(libraryNameField, LWJGL3_LIBRARY_NAME);
+            System.setProperty("org.lwjgl.libname", LWJGL3_LIBRARY_NAME);
 
             Object extractDirField = configClass.getField("SHARED_LIBRARY_EXTRACT_DIRECTORY").get(null);
             setMethod.invoke(extractDirField, new File("./OneConfig/temp").getAbsolutePath());
@@ -259,10 +278,39 @@ public class LwjglManagerImpl
         }
         //#endif
 
+        ensurePackageDefined(name);
+
         try {
             return (Class<?>) defineClassMethod.invoke(unsafeInstance, name, b, 0, b.length, /*classLoader = */this, null);
         } catch (IllegalAccessException | InvocationTargetException e) {
             throw new RuntimeException("whoops...", e);
+        }
+    }
+
+    /**
+     * Unsafe#defineClass does not create package metadata for this isolated
+     * loader. LWJGL reads that metadata during Version initialization, so a
+     * missing local Package object causes Class#getPackage() to return null.
+     * Track packages ourselves because getPackage() may return an inherited
+     * LWJGL 2 package from Minecraft's parent classloader.
+     */
+    private void ensurePackageDefined(String className) {
+        int separator = className.lastIndexOf('.');
+        if (separator <= 0) {
+            return;
+        }
+
+        String packageName = className.substring(0, separator);
+        synchronized (locallyDefinedPackages) {
+            if (!locallyDefinedPackages.add(packageName)) {
+                return;
+            }
+
+            try {
+                definePackage(packageName, null, null, null, null, null, null, null);
+            } catch (IllegalArgumentException ignored) {
+                // This loader already defined the package concurrently.
+            }
         }
     }
 
@@ -353,14 +401,16 @@ public class LwjglManagerImpl
 
     private static synchronized URL getJarFile() {
         if (isPojav) return null;
-        final File tempJar = new File("./OneConfig/temp/" + JAR_NAME);
-        tempJar.mkdirs();
-        try {
-            tempJar.createNewFile();
-        } catch (IOException e) {
-            e.printStackTrace();
+        final File tempDirectory = new File("./OneConfig/temp");
+        if (!tempDirectory.exists() && !tempDirectory.mkdirs()) {
+            throw new RuntimeException("Could not create OneConfig native runtime directory: " + tempDirectory);
         }
+        final File tempJar = new File(tempDirectory, JAR_NAME);
         tempJar.deleteOnExit();
+
+        // Make the name available before the custom LWJGL3 class loader can
+        // initialize org.lwjgl.system.Configuration.
+        System.setProperty("org.lwjgl.libname", LWJGL3_LIBRARY_NAME);
         String jarName =
                 //#if MC<=11202
                 "lwjgl-legacy"
@@ -375,16 +425,80 @@ public class LwjglManagerImpl
         //$$ jarName = jarName + "-" + ((osArch.startsWith("arm") || osArch.startsWith("aarch64") || !osArch.contains("64")) ? "arm" : "noarm");
         //#endif
         try (InputStream in = LwjglManagerImpl.class.getResourceAsStream("/" + jarName + ".jar")) {
-            assert in != null;
-            Files.copy(in, tempJar.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            if (in == null) {
+                throw new IOException("Missing embedded LWJGL3 runtime: " + jarName + ".jar");
+            }
+
+            // The dependency is supplied as a nested jar. Repack only its
+            // native entry names; Java classes remain byte-for-byte intact.
+            // The .sha1 sidecars are renamed with their binaries so LWJGL's
+            // native verification continues to work.
+            try (JarInputStream input = new JarInputStream(in);
+                 JarOutputStream output = new JarOutputStream(new FileOutputStream(tempJar))) {
+                JarEntry entry;
+                byte[] buffer = new byte[8192];
+                while ((entry = input.getNextJarEntry()) != null) {
+                    JarEntry copy = new JarEntry(renameCoreNativeEntry(entry));
+                    if (entry.getTime() >= 0) {
+                        copy.setTime(entry.getTime());
+                    }
+                    output.putNextEntry(copy);
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, count);
+                    }
+                    output.closeEntry();
+                }
+            }
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new RuntimeException("Could not prepare isolated LWJGL3 runtime", e);
         }
         try {
             return tempJar.toURI().toURL();
         } catch (MalformedURLException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private static String renameCoreNativeEntry(JarEntry entry) {
+        String name = entry.getName();
+        int separator = name.lastIndexOf('/');
+        String directory = separator < 0 ? "" : name.substring(0, separator + 1);
+        String fileName = separator < 0 ? name : name.substring(separator + 1);
+
+        String replacement;
+        switch (fileName) {
+            case "liblwjgl.dylib":
+                replacement = "lib" + LWJGL3_LIBRARY_NAME + ".dylib";
+                break;
+            case "liblwjgl.dylib.sha1":
+                replacement = "lib" + LWJGL3_LIBRARY_NAME + ".dylib.sha1";
+                break;
+            case "liblwjgl.dylib.git":
+                replacement = "lib" + LWJGL3_LIBRARY_NAME + ".dylib.git";
+                break;
+            case "liblwjgl.so":
+                replacement = "lib" + LWJGL3_LIBRARY_NAME + ".so";
+                break;
+            case "liblwjgl.so.sha1":
+                replacement = "lib" + LWJGL3_LIBRARY_NAME + ".so.sha1";
+                break;
+            case "liblwjgl.so.git":
+                replacement = "lib" + LWJGL3_LIBRARY_NAME + ".so.git";
+                break;
+            case "lwjgl.dll":
+                replacement = LWJGL3_LIBRARY_NAME + ".dll";
+                break;
+            case "lwjgl.dll.sha1":
+                replacement = LWJGL3_LIBRARY_NAME + ".dll.sha1";
+                break;
+            case "lwjgl.dll.git":
+                replacement = LWJGL3_LIBRARY_NAME + ".dll.git";
+                break;
+            default:
+                return name;
+        }
+        return directory + replacement;
     }
 
     private static boolean checkPojav() {

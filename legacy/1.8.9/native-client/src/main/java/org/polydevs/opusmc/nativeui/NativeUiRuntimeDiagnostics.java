@@ -25,6 +25,8 @@ import org.lwjgl.opengl.Display;
 
 public final class NativeUiRuntimeDiagnostics {
     private static final Object LOCK = new Object();
+    private static final long DISPLAY_STATE_SAMPLE_NANOS = 100_000_000L;
+    private static final long DISPLAY_STATE_SETTLE_NANOS = 300_000_000L;
     private static final Map<String, String> VALUES = new LinkedHashMap<>();
     private static final List<String> LIFECYCLE = new ArrayList<>();
     private static final List<String> OPEN_ORDER = new ArrayList<>();
@@ -32,6 +34,14 @@ public final class NativeUiRuntimeDiagnostics {
     private static final List<String> DISPLAY_STATES = new ArrayList<>();
     private static final List<String> GL_ERRORS = new ArrayList<>();
     private static File reportFile;
+    private static String lastObservedDisplayState;
+    private static String lastRecordedDisplayState;
+    private static String lastRecordedDisplayScreen;
+    private static int lastRecordedGuiScaleSetting = Integer.MIN_VALUE;
+    private static boolean lastRecordedFullscreen;
+    private static long lastDisplayStateSampleNanos;
+    private static long lastDisplayStateChangeNanos;
+    private static boolean displayStateDirty;
 
     private NativeUiRuntimeDiagnostics() {
     }
@@ -108,18 +118,53 @@ public final class NativeUiRuntimeDiagnostics {
 
     public static void recordDisplayState(String screen) {
         synchronized (LOCK) {
+            int guiScaleSetting = Minecraft.getMinecraft().gameSettings.guiScale;
+            boolean fullscreen = Display.isFullscreen();
             String state = screen
                     + "|window=" + Display.getWidth() + "x" + Display.getHeight()
                     + "|framebuffer=" + UResolution.getViewportWidth() + "x" + UResolution.getViewportHeight()
                     + "|gui=" + UResolution.getScaledWidth() + "x" + UResolution.getScaledHeight()
                     + "|scale=" + String.format(Locale.ROOT, "%.3f", UResolution.getScaleFactor())
-                    + "|guiScaleSetting=" + Minecraft.getMinecraft().gameSettings.guiScale
-                    + "|fullscreen=" + Display.isFullscreen();
-            if (addUnique(DISPLAY_STATES, state)) {
+                    + "|guiScaleSetting=" + guiScaleSetting
+                    + "|fullscreen=" + fullscreen;
+            long now = System.nanoTime();
+            if (!state.equals(lastObservedDisplayState)) {
+                lastObservedDisplayState = state;
+                lastDisplayStateChangeNanos = now;
+            }
+
+            boolean significantTransition = !screen.equals(lastRecordedDisplayScreen)
+                    || guiScaleSetting != lastRecordedGuiScaleSetting
+                    || fullscreen != lastRecordedFullscreen;
+            boolean sampleDue = now - lastDisplayStateSampleNanos >= DISPLAY_STATE_SAMPLE_NANOS;
+            if (!state.equals(lastRecordedDisplayState)
+                    && (significantTransition || sampleDue)
+                    && addUnique(DISPLAY_STATES, state)) {
+                lastRecordedDisplayState = state;
+                lastRecordedDisplayScreen = screen;
+                lastRecordedGuiScaleSetting = guiScaleSetting;
+                lastRecordedFullscreen = fullscreen;
+                lastDisplayStateSampleNanos = now;
                 VALUES.put("lastDisplayState", state);
                 VALUES.put("displayStateCount", Integer.toString(DISPLAY_STATES.size()));
+                displayStateDirty = true;
+            }
+
+            if (displayStateDirty
+                    && now - lastDisplayStateChangeNanos >= DISPLAY_STATE_SETTLE_NANOS) {
                 flush();
             }
+        }
+    }
+
+    /**
+     * Updates evidence that changes in a render hot path without forcing a
+     * synchronous report rewrite. The next settled display state or ordinary
+     * lifecycle record persists the latest value.
+     */
+    public static void recordDeferred(String key, String value) {
+        synchronized (LOCK) {
+            putIfChanged(key, value);
         }
     }
 
@@ -186,6 +231,7 @@ public final class NativeUiRuntimeDiagnostics {
 
     private static void flush() {
         if (reportFile == null) return;
+        displayStateDirty = false;
         File parent = reportFile.getParentFile();
         if (parent != null && !parent.isDirectory() && !parent.mkdirs()) return;
         try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(

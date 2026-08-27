@@ -37,7 +37,7 @@ public final class OpusConfigModule extends Config {
     public boolean advancedControls = true;
 
     @Checkbox(name = "Enable Opus UI", category = "Opus")
-    public boolean enabled = true;
+    public boolean opusUiEnabled = true;
 
     @Slider(name = "UI opacity", min = 0f, max = 1f, category = "Opus", instant = true)
     public float opacity = 0.92f;

@@ -52,9 +52,9 @@ import static cc.polyfrost.oneconfig.gui.elements.BasicButton.SIZE_36;
 public class SideBar {
     private final List<BasicButton> buttons = new ArrayList<BasicButton>() {{
         int width = 192;
-        add(new BasicButton(width, SIZE_36, "Credits", SVGs.COPYRIGHT_FILL, null, ALIGNMENT_LEFT, ColorPalette.TERTIARY));
+        add(new BasicButton(width, SIZE_36, "Attribution", SVGs.COPYRIGHT_FILL, null, ALIGNMENT_LEFT, ColorPalette.TERTIARY));
 
-        add(new BasicButton(width, SIZE_36, "Mods", SVGs.FADERS_HORIZONTAL_BOLD, null, ALIGNMENT_LEFT, ColorPalette.PRIMARY));
+        add(new BasicButton(width, SIZE_36, "Modules", SVGs.FADERS_HORIZONTAL_BOLD, null, ALIGNMENT_LEFT, ColorPalette.PRIMARY));
         add(new BasicButton(width, SIZE_36, "Profiles", SVGs.USERS_02, null, ALIGNMENT_LEFT, ColorPalette.TERTIARY));
 
         add(new BasicButton(width, SIZE_36, "Themes", SVGs.BRUSH, null, ALIGNMENT_LEFT, ColorPalette.TERTIARY));
@@ -101,7 +101,7 @@ public class SideBar {
         sidebarY = y + 44;
         buttons.get(0).draw(vg, x + 16, calcAndIncrementLn(sidebarY), inputHandler);
 //        buttons.get(1).draw(vg, x + 16, y + 116, inputHandler);
-        nanoVGHelper.drawText(vg, "MOD CONFIG", x + 16, calcAndIncrementLn(sidebarY + 26), Colors.WHITE_50, 12, Fonts.SEMIBOLD);
+        nanoVGHelper.drawText(vg, "OPUS MODULES", x + 16, calcAndIncrementLn(sidebarY + 26), Colors.WHITE_50, 12, Fonts.SEMIBOLD);
         sidebarY = sidebarY - 26;
         buttons.get(1).draw(vg, x + 16, calcAndIncrementLn(sidebarY), inputHandler);
         buttons.get(2).draw(vg, x + 16, calcAndIncrementLn(sidebarY), inputHandler);

@@ -43,7 +43,7 @@ def opusLockedArtifacts = opusNativeUiLock.artifacts.collectEntries { artifact -
     [(artifact.id): artifact]
 }
 def opusSelectedArtifactIds = [
-        'oneconfig-full',
+        'opusconfig-full',
         'elementa',
         'universalcraft-current-candidate',
 ]
@@ -305,7 +305,9 @@ task verifyNativeClientArtifact(dependsOn: [
         try {
             for (required in [
                     'org/polydevs/opusmc/nativeui/OpusNativeUiMod.class',
+                    'org/polydevs/opusmc/nativeui/NativeUiLiveProof.class',
                     'org/polydevs/opusmc/nativeui/OpusElementaShellScreen.class',
+                    'org/polydevs/opusmc/nativeui/OpusLegacyBlock.class',
                     'org/polydevs/opusmc/nativeui/OpusConfigModule.class',
                     'org/polydevs/opusmc/nativeui/NativeUiRuntimeDiagnostics.class',
                     'org/polydevs/opusmc/nativeui/design/OpusColor.class',
@@ -563,10 +565,18 @@ task verifyOpusDesignContract(type: JavaExec) {
             "${buildDir}/reports/native-ui/opus-design-report.json").absolutePath
 }
 
+task verifyOpusShellLayout(type: JavaExec) {
+    group = 'verification'
+    description = 'Checks responsive Elementa shell bounds across narrow and wide GUI sizes.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    main = 'org.polydevs.opusmc.nativeui.OpusShellLayoutContractTest'
+}
+
 verifyOpusDesignContract.dependsOn verifyOpusDesignNeutrality
 tasks.getByName('writeStaticCompatibilityReport').dependsOn verifyOpusDesignContract
 
-check.dependsOn writeStaticCompatibilityReport, verifyNativeUiRuntimeVerifier, verifyOpusDesignContract
+check.dependsOn writeStaticCompatibilityReport, verifyNativeUiRuntimeVerifier, verifyOpusDesignContract, verifyOpusShellLayout
 
 task verifyNativeUiRuntimeReport {
     group = 'verification'

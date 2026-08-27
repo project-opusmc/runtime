@@ -261,7 +261,7 @@ public final class Notifications {
                 Preferences.firstLaunch = false;
                 Preferences.getInstance().save();
                 dummyAnimation = new EaseInOutQuad(4000, 0, 1, false);
-                String message = "Press '" + Preferences.oneConfigKeyBind.getDisplay() + "' to open OneConfig, the next-gen config library for Minecraft.";
+                String message = "Press '" + Preferences.oneConfigKeyBind.getDisplay() + "' to open OpusConfig, powered by OneConfig.";
                 send("Welcome to OneConfig!", message, DEFAULT_ICON, -1f, () -> {
                     if (Platform.getGuiPlatform().getCurrentScreen() instanceof OneConfigGui || Preferences.oneconfigOpened) {
                         Preferences.oneconfigOpened = true;

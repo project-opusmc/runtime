@@ -38,14 +38,13 @@ import cc.polyfrost.oneconfig.gui.OneConfigGui;
 import cc.polyfrost.oneconfig.internal.gui.BlurHandler;
 import cc.polyfrost.oneconfig.libs.universal.UKeyboard;
 import cc.polyfrost.oneconfig.platform.Platform;
-import cc.polyfrost.oneconfig.utils.TickDelay;
 
 public class Preferences extends InternalConfig {
 
     @KeyBind(
-            name = "OneConfig Keybind",
+            name = "OpusConfig keybind",
             subcategory = "GUI Settings",
-            description = "Choose what key opens the OneConfig UI",
+            description = "Choose what key opens the OpusConfig UI",
             size = 2
     )
     public static OneKeyBind oneConfigKeyBind = new OneKeyBind(UKeyboard.KEY_RSHIFT);
@@ -74,9 +73,9 @@ public class Preferences extends InternalConfig {
             name = "Opening Behavior",
             category = "Behavior",
             subcategory = "GUI Settings",
-            description = "Choose which page will show when you open OneConfig",
+            description = "Choose which page will show when you open OpusConfig",
             options = {
-                    "Mods",
+                    "Modules",
                     "Preferences",
                     "Previous page",
                     "Smart reset"
@@ -89,7 +88,7 @@ public class Preferences extends InternalConfig {
             name = "Show opening page animation",
             category = "Behavior",
             subcategory = "GUI Settings",
-            description = "Whether or not to show the page switch animation when opening OneConfig",
+            description = "Whether or not to show the page switch animation when opening OpusConfig",
             size = 2
     )
     public static boolean showPageAnimationOnOpen = false;
@@ -98,7 +97,7 @@ public class Preferences extends InternalConfig {
             name = "Time before reset",
             category = "Behavior",
             subcategory = "GUI Settings",
-            description = "How much time (in seconds) before opening back to the \"Mods\" page",
+            description = "How much time (in seconds) before opening back to the \"Modules\" page",
             min = 5,
             max = 60
     )
@@ -218,7 +217,9 @@ public class Preferences extends InternalConfig {
         super("Preferences", "Preferences.json");
         initialize();
         addListener("enableBlur", () -> BlurHandler.INSTANCE.reloadBlur(Platform.getGuiPlatform().getCurrentScreen()));
-        registerKeyBind(oneConfigKeyBind, () -> new TickDelay(() -> Platform.getGuiPlatform().setCurrentScreen(OneConfigGui.create()), 1));
+        // The OPUS Forge integration owns the physical Right Shift shortcut.
+        // Keep this value visible for compatibility, but do not register a
+        // second OneConfig event-bus action that would race the native toggle.
         addListener("updateChannel", () -> {
             OneConfigConfig.updateChannel = updateChannel;
             OneConfigConfig.getInstance().save();
