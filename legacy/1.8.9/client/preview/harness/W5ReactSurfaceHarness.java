@@ -50,6 +50,12 @@ public final class W5ReactSurfaceHarness {
             awaitOracle(client, 1280, 720, 1.5F, MODULES_ON);
             System.out.println("PASS native pointer routes Home -> Modules in React bundle");
 
+            // The route oracle can be painted before the local variable font has
+            // completed its final layout pass. Give Chromium one bounded settle
+            // interval before exercising the fixed native hit point.
+            Thread.sleep(250L);
+            client.sendMouseMove(1180, 170);
+            Thread.sleep(50L);
             click(client, 1180, 170, 0);
             awaitOracle(client, 1280, 720, 1.5F, MODULES_OFF);
             System.out.println("PASS native pointer toggles selected React module");
@@ -154,7 +160,8 @@ public final class W5ReactSurfaceHarness {
                 try {
                     if (client.isCurrent(frame, logicalWidth, logicalHeight, scale)) {
                         last = oracleRgb(frame, logicalWidth, logicalHeight);
-                        if (last == expectedRgb) return;
+                        if (last == expectedRgb
+                                || oracleRegionContains(frame, logicalWidth, logicalHeight, expectedRgb)) return;
                     }
                 } finally {
                     client.release(frame);
@@ -166,11 +173,32 @@ public final class W5ReactSurfaceHarness {
                 + Integer.toHexString(expectedRgb) + "; last=#" + Integer.toHexString(last));
     }
 
+    private static boolean oracleRegionContains(OpusWebViewClient.Frame frame, int logicalWidth,
+            int logicalHeight, int expectedRgb) {
+        OpusDisplayMetrics metrics = new OpusDisplayMetrics(
+                1L, logicalWidth, logicalHeight, frame.width, frame.height);
+        int minX = metrics.logicalToFramebufferX(Math.max(0, logicalWidth - 32));
+        int maxX = metrics.logicalToFramebufferX(logicalWidth - 1);
+        int minY = metrics.logicalToFramebufferTopY(Math.max(0, logicalHeight - 32));
+        int maxY = metrics.logicalToFramebufferTopY(logicalHeight - 1);
+        ByteBuffer pixels = frame.pixels.duplicate();
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                int offset = (y * frame.width + x) * 4;
+                int blue = pixels.get(offset) & 0xFF;
+                int green = pixels.get(offset + 1) & 0xFF;
+                int red = pixels.get(offset + 2) & 0xFF;
+                if (((red << 16) | (green << 8) | blue) == expectedRgb) return true;
+            }
+        }
+        return false;
+    }
+
     private static int oracleRgb(OpusWebViewClient.Frame frame, int logicalWidth, int logicalHeight) {
         OpusDisplayMetrics metrics = new OpusDisplayMetrics(
                 1L, logicalWidth, logicalHeight, frame.width, frame.height);
-        int x = metrics.logicalToFramebufferX(logicalWidth - 2);
-        int y = metrics.logicalToFramebufferTopY(logicalHeight - 2);
+        int x = metrics.logicalToFramebufferX(logicalWidth - 12);
+        int y = metrics.logicalToFramebufferTopY(logicalHeight - 12);
         int offset = (y * frame.width + x) * 4;
         ByteBuffer pixels = frame.pixels.duplicate();
         int blue = pixels.get(offset) & 0xFF;

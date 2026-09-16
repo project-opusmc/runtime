@@ -29,7 +29,7 @@ No pixel data travels through HTTP or WebSocket. CEF OSR pixels continue to use 
 
 ## Deterministic CEF oracle
 
-The production React bundle contains a visually negligible fixed 4x4 oracle pixel at the bottom-right. Its color is a deterministic function of React product state:
+The production React bundle contains a visually negligible fixed 8x8 oracle pixel inset 8px from the bottom-right. Its color is a deterministic function of React product state:
 
 - Home: `#2A4CFF`
 - Modules, selected module on: `#19B87A`

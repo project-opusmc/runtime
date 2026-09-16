@@ -5,6 +5,7 @@ import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.renderer.GlStateManager;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
+import org.lwjgl.opengl.Display;
 import org.polydevs.opusmc.client.embed.OpusWebTextureSurface;
 import org.polydevs.opusmc.client.embed.OpusWebViewClient;
 import org.polydevs.opusmc.client.hud.HudManager;
@@ -13,7 +14,9 @@ import org.polydevs.opusmc.client.ui.UiInput;
 import org.polydevs.opusmc.client.ui.UiNavigationState;
 import org.polydevs.opusmc.client.ui.UiRoute;
 import org.polydevs.opusmc.client.ui.render.MinecraftUiRenderer;
-import org.polydevs.opusmc.client.ui.render.MinecraftUiScale;
+import org.polydevs.opusmc.websurface.OpusDisplayMetrics;
+import org.polydevs.opusmc.websurface.OpusDisplayMetricsTracker;
+import org.polydevs.opusmc.websurface.OpusInputMapper;
 
 /**
  * Minecraft host for the canonical Svelte/CEF product UI.
@@ -24,9 +27,6 @@ import org.polydevs.opusmc.client.ui.render.MinecraftUiScale;
  * minimal lifecycle shell rather than a second title/menu/settings UI.</p>
  */
 final class OpusClientScreen extends GuiScreen {
-    private static final int MAX_BROWSER_PIXEL_WIDTH = 2880;
-    private static final int MAX_BROWSER_PIXEL_HEIGHT = 2160;
-
     private enum WebState {
         STARTING,
         READY,
@@ -38,13 +38,15 @@ final class OpusClientScreen extends GuiScreen {
     private final UiNavigationState navigation;
     private final MinecraftUiRenderer nativeRenderer;
     private final OpusWebTextureSurface webSurface = new OpusWebTextureSurface();
+    private final OpusDisplayMetricsTracker displayMetricsTracker = new OpusDisplayMetricsTracker();
     private UiBounds productViewport = new UiBounds(0, 0, 1, 1);
+    private OpusDisplayMetrics displayMetrics;
+    private OpusInputMapper inputMapper;
     private OpusWebViewClient webView;
     private WebState webState = WebState.STARTING;
     private int viewportDisplayWidth = -1;
     private int viewportDisplayHeight = -1;
-    private int viewportGuiWidth = -1;
-    private int viewportGuiHeight = -1;
+    private float viewportPixelScale = -1.0F;
     private int lastForwardedX = Integer.MIN_VALUE;
     private int lastForwardedY = Integer.MIN_VALUE;
     private int pointerX;
@@ -129,8 +131,11 @@ final class OpusClientScreen extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         refreshViewport(false);
-        int uiX = previewPointerActive ? previewPointerX : toUiX(mouseX);
-        int uiY = previewPointerActive ? previewPointerY : toUiY(mouseY);
+        OpusInputMapper.Pointer pointer = previewPointerActive
+                ? new OpusInputMapper.Pointer(previewPointerX, previewPointerY)
+                : currentPointer();
+        int uiX = pointer.x;
+        int uiY = pointer.y;
         pointerX = uiX;
         pointerY = uiY;
 
@@ -216,8 +221,11 @@ final class OpusClientScreen extends GuiScreen {
         // A prior native-editor route change may have invalidated the matching
         // mouse-up; a new press starts a fresh ownership sequence.
         suppressNextMouseRelease = false;
-        int x = toUiX(mouseX);
-        int y = toUiY(mouseY);
+        OpusInputMapper.Pointer mapped = previewPointerActive
+                ? new OpusInputMapper.Pointer(previewPointerX, previewPointerY)
+                : currentEventPointer();
+        int x = mapped.x;
+        int y = mapped.y;
         pointerX = x;
         pointerY = y;
         if (!webPointerCapture && nativeHudCanvasOwnsPoint(x, y)) {
@@ -243,8 +251,11 @@ final class OpusClientScreen extends GuiScreen {
 
     @Override
     protected void mouseReleased(int mouseX, int mouseY, int state) {
-        int x = toUiX(mouseX);
-        int y = toUiY(mouseY);
+        OpusInputMapper.Pointer mapped = previewPointerActive
+                ? new OpusInputMapper.Pointer(previewPointerX, previewPointerY)
+                : currentEventPointer();
+        int x = mapped.x;
+        int y = mapped.y;
         pointerX = x;
         pointerY = y;
         if (suppressNextMouseRelease) {
@@ -270,8 +281,11 @@ final class OpusClientScreen extends GuiScreen {
 
     @Override
     protected void mouseClickMove(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
-        int x = toUiX(mouseX);
-        int y = toUiY(mouseY);
+        OpusInputMapper.Pointer mapped = previewPointerActive
+                ? new OpusInputMapper.Pointer(previewPointerX, previewPointerY)
+                : currentEventPointer();
+        int x = mapped.x;
+        int y = mapped.y;
         pointerX = x;
         pointerY = y;
         if (nativeHudPointerOwner) {
@@ -296,7 +310,8 @@ final class OpusClientScreen extends GuiScreen {
             webView.sendWheel(
                     Math.max(0, pointerX),
                     Math.max(0, pointerY),
-                    wheel);
+                    wheel,
+                    currentModifiers());
         }
     }
 
@@ -490,20 +505,25 @@ final class OpusClientScreen extends GuiScreen {
     }
 
     private void refreshViewport(boolean force) {
-        int displayWidth = Math.max(1, mc.displayWidth);
-        int displayHeight = Math.max(1, mc.displayHeight);
-        boolean framebufferChanged = displayWidth != viewportDisplayWidth
-                || displayHeight != viewportDisplayHeight;
-        boolean guiScaleChanged = width != viewportGuiWidth || height != viewportGuiHeight;
-        boolean viewportChanged = force || framebufferChanged || guiScaleChanged;
+        int framebufferWidth = Math.max(1, mc.displayWidth);
+        int framebufferHeight = Math.max(1, mc.displayHeight);
+        float pixelScale = Math.max(1.0F, Display.getPixelScaleFactor());
+        int logicalWidth = Math.max(1, Math.round(framebufferWidth / pixelScale));
+        int logicalHeight = Math.max(1, Math.round(framebufferHeight / pixelScale));
+        boolean framebufferChanged = framebufferWidth != viewportDisplayWidth
+                || framebufferHeight != viewportDisplayHeight;
+        boolean pixelScaleChanged = Math.abs(pixelScale - viewportPixelScale) > 0.0001F;
+        boolean viewportChanged = force || framebufferChanged || pixelScaleChanged;
         if (!viewportChanged) {
             return;
         }
-        viewportDisplayWidth = displayWidth;
-        viewportDisplayHeight = displayHeight;
-        viewportGuiWidth = width;
-        viewportGuiHeight = height;
-        productViewport = MinecraftUiScale.viewport(mc);
+        viewportDisplayWidth = framebufferWidth;
+        viewportDisplayHeight = framebufferHeight;
+        viewportPixelScale = pixelScale;
+        displayMetrics = displayMetricsTracker.update(
+                logicalWidth, logicalHeight, framebufferWidth, framebufferHeight);
+        inputMapper = new OpusInputMapper(displayMetrics);
+        productViewport = new UiBounds(0, 0, logicalWidth, logicalHeight);
         clearInputOwnership();
         webSurface.dispose();
         webState = WebState.STARTING;
@@ -513,15 +533,11 @@ final class OpusClientScreen extends GuiScreen {
     }
 
     private float embeddedScale() {
-        float framebufferRatioX = mc.displayWidth / (float) Math.max(1, productViewport.width);
-        float framebufferRatioY = mc.displayHeight / (float) Math.max(1, productViewport.height);
-        float widthCap = MAX_BROWSER_PIXEL_WIDTH / (float) Math.max(1, productViewport.width);
-        float heightCap = MAX_BROWSER_PIXEL_HEIGHT / (float) Math.max(1, productViewport.height);
-        // Use the limiting axis so an unusual aspect ratio cannot produce a
-        // frame taller than the native slot while width still appears valid.
-        return Math.max(1.0F, Math.min(
-                Math.min(framebufferRatioX, framebufferRatioY),
-                Math.min(widthCap, heightCap)));
+        if (displayMetrics == null) {
+            return Math.max(1.0F, Display.getPixelScaleFactor());
+        }
+        double scale = Math.min(displayMetrics.scaleX(), displayMetrics.scaleY());
+        return (float) Math.max(0.5D, Math.min(4.0D, scale));
     }
 
     private boolean embeddedInputActive() {
@@ -561,7 +577,7 @@ final class OpusClientScreen extends GuiScreen {
         if (!embeddedInputActive() || !webPointerInside) {
             return;
         }
-        webView.sendMouseLeave(x, y);
+        webView.sendMouseLeave(x, y, currentModifiers());
         webPointerInside = false;
         lastForwardedX = Integer.MIN_VALUE;
         lastForwardedY = Integer.MIN_VALUE;
@@ -599,10 +615,11 @@ final class OpusClientScreen extends GuiScreen {
         int x = Math.max(0, pointerX);
         int y = Math.max(0, pointerY);
         if (webPointerCapture) {
-            webView.sendMouseButton(x, y, webPointerButton >= 0 ? webPointerButton : 0, false);
+            webView.sendMouseButton(
+                    x, y, webPointerButton >= 0 ? webPointerButton : 0, false, currentModifiers());
         }
         if (webPointerInside) {
-            webView.sendMouseLeave(x, y);
+            webView.sendMouseLeave(x, y, currentModifiers());
         }
     }
 
@@ -612,7 +629,7 @@ final class OpusClientScreen extends GuiScreen {
         }
         lastForwardedX = x;
         lastForwardedY = y;
-        webView.sendMouseMove(x, y);
+        webView.sendMouseMove(x, y, currentModifiers());
         webPointerInside = true;
     }
 
@@ -623,26 +640,53 @@ final class OpusClientScreen extends GuiScreen {
         if (x != lastForwardedX || y != lastForwardedY) {
             forwardPointerMove(x, y);
         }
-        webView.sendMouseButton(x, y, button, down);
+        webView.sendMouseButton(x, y, button, down, currentModifiers());
         return true;
     }
 
     private void forwardKey(char typedCharacter, int keyCode) {
-        int virtualKey = windowsVirtualKey(keyCode);
-        if (virtualKey != 0) {
-            webView.sendKey(virtualKey, true);
-            webView.sendKey(virtualKey, false);
+        int modifiers = currentModifiers();
+        int virtualKey = OpusInputMapper.windowsVirtualKeyFromLwjgl(keyCode);
+        boolean shortcut = (modifiers & (OpusInputMapper.MOD_CONTROL
+                | OpusInputMapper.MOD_ALT
+                | OpusInputMapper.MOD_COMMAND)) != 0;
+        if (virtualKey != 0 && (shortcut || isDirectKeyEvent(keyCode))) {
+            webView.sendKey(virtualKey, true, modifiers);
+            webView.sendKey(virtualKey, false, modifiers);
         } else if (typedCharacter >= 0x20 && typedCharacter != 0x7F) {
-            webView.sendChar(typedCharacter);
+            webView.sendChar(typedCharacter, modifiers);
+        } else if (virtualKey != 0) {
+            webView.sendKey(virtualKey, true, modifiers);
+            webView.sendKey(virtualKey, false, modifiers);
         }
     }
 
-    private int toUiX(int minecraftGuiX) {
-        return MinecraftUiScale.convertX(minecraftGuiX, width, productViewport);
+    private int toUiX(int ignoredMinecraftGuiX) {
+        if (previewPointerActive) {
+            return previewPointerX;
+        }
+        return currentPointer().x;
     }
 
-    private int toUiY(int minecraftGuiY) {
-        return MinecraftUiScale.convertY(minecraftGuiY, height, productViewport);
+    private int toUiY(int ignoredMinecraftGuiY) {
+        if (previewPointerActive) {
+            return previewPointerY;
+        }
+        return currentPointer().y;
+    }
+
+    private OpusInputMapper.Pointer currentPointer() {
+        if (inputMapper == null) {
+            refreshViewport(true);
+        }
+        return inputMapper.fromLwjglFramebuffer(Mouse.getX(), Mouse.getY());
+    }
+
+    private OpusInputMapper.Pointer currentEventPointer() {
+        if (inputMapper == null) {
+            refreshViewport(true);
+        }
+        return inputMapper.fromLwjglFramebuffer(Mouse.getEventX(), Mouse.getEventY());
     }
 
     private int fromUiX(int uiX) {
@@ -653,39 +697,34 @@ final class OpusClientScreen extends GuiScreen {
         return Math.round(uiY * height / (float) Math.max(1, productViewport.height));
     }
 
-    private static int windowsVirtualKey(int keyCode) {
+    private int currentModifiers() {
+        return OpusInputMapper.modifiers(
+                Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT),
+                Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL),
+                Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU),
+                Keyboard.isKeyDown(Keyboard.KEY_LMETA) || Keyboard.isKeyDown(Keyboard.KEY_RMETA));
+    }
+
+    private static boolean isDirectKeyEvent(int keyCode) {
         switch (keyCode) {
             case Keyboard.KEY_ESCAPE:
-                return 0x1B;
             case Keyboard.KEY_RETURN:
             case Keyboard.KEY_NUMPADENTER:
-                return 0x0D;
             case Keyboard.KEY_BACK:
-                return 0x08;
             case Keyboard.KEY_TAB:
-                return 0x09;
             case Keyboard.KEY_DELETE:
-                return 0x2E;
             case Keyboard.KEY_LEFT:
-                return 0x25;
             case Keyboard.KEY_UP:
-                return 0x26;
             case Keyboard.KEY_RIGHT:
-                return 0x27;
             case Keyboard.KEY_DOWN:
-                return 0x28;
             case Keyboard.KEY_HOME:
-                return 0x24;
             case Keyboard.KEY_END:
-                return 0x23;
             case Keyboard.KEY_PRIOR:
-                return 0x21;
             case Keyboard.KEY_NEXT:
-                return 0x22;
             case Keyboard.KEY_SPACE:
-                return 0x20;
+                return true;
             default:
-                return 0;
+                return false;
         }
     }
 }

@@ -97,7 +97,7 @@ public final class OpusInputMapper {
         public final int x;
         public final int y;
 
-        Pointer(int x, int y) {
+        public Pointer(int x, int y) {
             this.x = x;
             this.y = y;
         }
