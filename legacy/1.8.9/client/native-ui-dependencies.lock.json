@@ -113,8 +113,8 @@
       "repository": "https://github.com/project-opusmc/runtime",
       "file": "opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
       "url": "https://github.com/project-opusmc/runtime/releases/download/opusconfig-0.2.2-alpha228/opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
-      "size": 17903862,
-      "sha256": "c678463f990e3ebab574522c1eee4ca950e1d12fb93b574e33696d35b14e2792"
+      "size": 17903955,
+      "sha256": "c9048a623d64c045aac05f492d296e55581639fe3f2dbeccbe65fd40ef2eada1"
     },
     {
       "id": "oneconfig-universalcraft",
