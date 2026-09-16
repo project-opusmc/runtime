@@ -98,6 +98,7 @@ tasks.withType(JavaCompile) {
 sourceSets {
     harness {
         java.srcDir 'preview/harness'
+        java.srcDir '../../../web-surface-v2/coordinate/src/main/java'
         compileClasspath = sourceSets.main.output + sourceSets.main.compileClasspath
     }
 }
@@ -167,6 +168,23 @@ task harnessWebView(type: JavaExec) {
     description = 'Renders the packaged SPA through the production CEF OSR helper.'
     dependsOn 'harnessClasses', 'processResources', 'buildWebViewHelper'
     main = 'org.polydevs.opusmc.client.WebViewHarness'
+    doFirst {
+        classpath = files(
+                sourceSets.harness.output,
+                sourceSets.main.output,
+                sourceSets.main.runtimeClasspath)
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
+    }
+}
+
+
+task harnessWebSurfaceCoordinates(type: JavaExec) {
+    group = 'verification'
+    description = 'Proves Web Surface V2 CSS/framebuffer pixel and input coordinates through CEF OSR.'
+    dependsOn 'harnessClasses', 'buildWebViewHelper'
+    main = 'org.polydevs.opusmc.client.W2CefCoordinateHarness'
     doFirst {
         classpath = files(
                 sourceSets.harness.output,

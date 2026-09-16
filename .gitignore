@@ -21,3 +21,5 @@
 *.iml
 
 /legacy/1.8.9/client/.gradle-v2-harness/
+
+/web-surface-v2/build/

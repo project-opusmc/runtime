@@ -44,6 +44,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdarg>
 #include <cstdio>
@@ -91,6 +92,7 @@ std::atomic<int> g_client_fd{-1};    // set by socket thread, read by OnPaint
 std::mutex g_client_write_mutex;     // serializes all control-socket writes/closes
 std::atomic<uint64_t> g_slot_sequence[kSlots]; // 0 free, UINT64_MAX reserved
 std::atomic<bool> g_paint_blocked{false};
+std::atomic<bool> g_geometry_repaint_pending{false};
 std::atomic<bool> g_shutdown_requested{false};
 bool g_browser_creation_pending = false; // CEF UI thread only
 std::string g_cache_path;
@@ -197,6 +199,25 @@ class OpusClient : public CefClient,
                int width, int height) override {
     if (type != PET_VIEW || g_shm == nullptr || buffer == nullptr
         || width <= 0 || height <= 0) return;
+
+    const int expected_width = std::max(1, static_cast<int>(std::lround(g_width * g_scale)));
+    const int expected_height = std::max(1, static_cast<int>(std::lround(g_height * g_scale)));
+    if (width != expected_width || height != expected_height) {
+      Log("stale raster %dx%d for generation %llu; expected %dx%d; dropping",
+          width, height, static_cast<unsigned long long>(g_generation),
+          expected_width, expected_height);
+      if (!g_geometry_repaint_pending.exchange(true)) {
+        PostUI([] {
+          g_geometry_repaint_pending.store(false);
+          if (g_browser) {
+            g_browser->GetHost()->WasResized();
+            g_browser->GetHost()->Invalidate(PET_VIEW);
+          }
+        });
+      }
+      return;
+    }
+
     const size_t max_size = std::numeric_limits<size_t>::max();
     const size_t w = static_cast<size_t>(width);
     const size_t h = static_cast<size_t>(height);
