@@ -39,3 +39,13 @@ Run:
 ```bash
 ./web-surface-v2/scripts/run-w3.sh
 ```
+
+## W4 — input contract
+
+W4 defines raw LWJGL framebuffer input to CSS logical coordinates without Minecraft GUI Scale. Input messages are viewport/route-generation scoped and carry Shift/Control/Alt/Command modifiers. The CEF oracle covers hover/leave, all three pointer buttons, wheel direction, BMP Unicode text, editing/navigation keys, Control+A, Command+A, and stale-generation rejection.
+
+Run:
+
+```bash
+./web-surface-v2/scripts/run-w4.sh
+```

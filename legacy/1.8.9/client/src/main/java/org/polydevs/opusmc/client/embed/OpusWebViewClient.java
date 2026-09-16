@@ -484,32 +484,62 @@ public final class OpusWebViewClient {
     // the same logical units as the viewport passed to start()/resize().
 
     public void sendMouseMove(int x, int y) {
-        sendLine("INPUT move " + x + " " + y);
+        sendMouseMove(x, y, 0);
+    }
+
+    public void sendMouseMove(int x, int y, int modifiers) {
+        sendLine("INPUT " + generation + " move " + x + " " + y + " " + modifiers);
     }
 
     /** Tells the helper that the synthetic pointer left the browser surface. */
     public void sendMouseLeave(int x, int y) {
-        sendLine("INPUT leave " + x + " " + y);
+        sendMouseLeave(x, y, 0);
+    }
+
+    public void sendMouseLeave(int x, int y, int modifiers) {
+        sendLine("INPUT " + generation + " leave " + x + " " + y + " " + modifiers);
     }
 
     /** button: 0 left, 1 right, 2 middle (LWJGL's own numbering). */
     public void sendMouseButton(int x, int y, int button, boolean down) {
-        sendLine("INPUT " + (down ? "down " : "up ") + x + " " + y + " " + button);
+        sendMouseButton(x, y, button, down, 0);
+    }
+
+    public void sendMouseButton(int x, int y, int button, boolean down, int modifiers) {
+        sendLine("INPUT " + generation + " " + (down ? "down " : "up ")
+                + x + " " + y + " " + button + " " + modifiers);
     }
 
     /** deltaY follows the wheel convention: positive scrolls the view up. */
     public void sendWheel(int x, int y, int deltaY) {
-        sendLine("INPUT wheel " + x + " " + y + " " + deltaY);
+        sendWheel(x, y, deltaY, 0);
     }
 
-    /** Text input: a Unicode code point that should be inserted. */
+    public void sendWheel(int x, int y, int deltaY, int modifiers) {
+        sendLine("INPUT " + generation + " wheel " + x + " " + y + " " + deltaY
+                + " " + modifiers);
+    }
+
+    /** Text input: a Unicode BMP code point that should be inserted. */
     public void sendChar(int codePoint) {
-        sendLine("INPUT char " + codePoint);
+        sendChar(codePoint, 0);
+    }
+
+    public void sendChar(int codePoint, int modifiers) {
+        if (codePoint < 0 || codePoint > 0xFFFF) {
+            return;
+        }
+        sendLine("INPUT " + generation + " char " + codePoint + " " + modifiers);
     }
 
     /** Non-text keys, as a Windows virtual-key code (what CEF expects). */
     public void sendKey(int windowsVirtualKey, boolean down) {
-        sendLine("INPUT key " + windowsVirtualKey + " " + (down ? 1 : 0));
+        sendKey(windowsVirtualKey, down, 0);
+    }
+
+    public void sendKey(int windowsVirtualKey, boolean down, int modifiers) {
+        sendLine("INPUT " + generation + " key " + windowsVirtualKey + " "
+                + (down ? 1 : 0) + " " + modifiers);
     }
 
     public synchronized void stop() {

@@ -12,12 +12,12 @@
 //                    VIEW <generation> <w> <h> <scale> <url>
 //                    SHM_RESIZE <request> <total_bytes>
 //                    RELEASE <seq> <slot> | RELOAD <generation> | PING | BYE
-//                    INPUT move <x> <y>
-//                    INPUT leave <x> <y>
-//                    INPUT down|up <x> <y> <button>
-//                    INPUT wheel <x> <y> <dy>
-//                    INPUT char <codepoint>
-//                    INPUT key <windows_vk> <1|0 down>
+//                    INPUT <generation> move <x> <y> <modifiers>
+//                    INPUT <generation> leave <x> <y> <modifiers>
+//                    INPUT <generation> down|up <x> <y> <button> <modifiers>
+//                    INPUT <generation> wheel <x> <y> <dy> <modifiers>
+//                    INPUT <generation> char <codepoint> <modifiers>
+//                    INPUT <generation> key <windows_vk> <1|0 down> <modifiers>
 //   helper -> Java : READY
 //                    SHM_READY <request> <total_bytes> <slot_bytes>
 //                    SHM_ERROR <request> <reason>
@@ -449,70 +449,127 @@ class OpusApp : public CefApp, public CefBrowserProcessHandler {
 struct MacKeyData {
   int native_key_code;
   char16_t character;
+  bool valid;
 };
+
+int CefModifiersFromOpus(int modifiers) {
+  int result = 0;
+  if ((modifiers & 1) != 0) result |= EVENTFLAG_SHIFT_DOWN;
+  if ((modifiers & 2) != 0) result |= EVENTFLAG_CONTROL_DOWN;
+  if ((modifiers & 4) != 0) result |= EVENTFLAG_ALT_DOWN;
+  if ((modifiers & 8) != 0) result |= EVENTFLAG_COMMAND_DOWN;
+  return result;
+}
 
 MacKeyData MacKeyDataForWindowsVirtualKey(int windows_key_code) {
   // CEF's macOS event translator builds a synthetic NSEvent from the native
   // key code and characters. windows_key_code alone is ignored on this
   // platform, and zero characters are interpreted as a modifier-only event.
   switch (windows_key_code) {
-    case 0x1B: return {0x35, 0x001B};  // Escape / kVK_Escape
-    case 0x08: return {0x33, 0x007F};  // Backspace / kVK_Delete
-    case 0x09: return {0x30, u'\t'};   // Tab
-    case 0x0D: return {0x24, u'\r'};   // Return
-    case 0x20: return {0x31, u' '};    // Space / kVK_Space
-    case 0x21: return {0x74, 0xF72C};  // Page Up / NSPageUpFunctionKey
-    case 0x22: return {0x79, 0xF72D};  // Page Down / NSPageDownFunctionKey
-    case 0x23: return {0x77, 0xF72B};  // End / NSEndFunctionKey
-    case 0x24: return {0x73, 0xF729};  // Home / NSHomeFunctionKey
-    case 0x25: return {0x7B, 0xF702};  // Left / NSLeftArrowFunctionKey
-    case 0x26: return {0x7E, 0xF700};  // Up / NSUpArrowFunctionKey
-    case 0x27: return {0x7C, 0xF703};  // Right / NSRightArrowFunctionKey
-    case 0x28: return {0x7D, 0xF701};  // Down / NSDownArrowFunctionKey
-    case 0x2E: return {0x75, 0xF728};  // Forward Delete
-    default: return {0, 0};
+    case 0x1B: return {0x35, 0x001B, true};  // Escape / kVK_Escape
+    case 0x08: return {0x33, 0x007F, true};  // Backspace / kVK_Delete
+    case 0x09: return {0x30, u'\t', true};   // Tab
+    case 0x0D: return {0x24, u'\r', true};   // Return
+    case 0x20: return {0x31, u' ', true};    // Space / kVK_Space
+    case 0x21: return {0x74, 0xF72C, true};  // Page Up / NSPageUpFunctionKey
+    case 0x22: return {0x79, 0xF72D, true};  // Page Down / NSPageDownFunctionKey
+    case 0x23: return {0x77, 0xF72B, true};  // End / NSEndFunctionKey
+    case 0x24: return {0x73, 0xF729, true};  // Home / NSHomeFunctionKey
+    case 0x25: return {0x7B, 0xF702, true};  // Left / NSLeftArrowFunctionKey
+    case 0x26: return {0x7E, 0xF700, true};  // Up / NSUpArrowFunctionKey
+    case 0x27: return {0x7C, 0xF703, true};  // Right / NSRightArrowFunctionKey
+    case 0x28: return {0x7D, 0xF701, true};  // Down / NSDownArrowFunctionKey
+    case 0x2E: return {0x75, 0xF728, true};  // Forward Delete
+    case 0x41: return {0x00, u'a', true};  // A
+    case 0x42: return {0x0B, u'b', true};  // B
+    case 0x43: return {0x08, u'c', true};  // C
+    case 0x44: return {0x02, u'd', true};  // D
+    case 0x45: return {0x0E, u'e', true};  // E
+    case 0x46: return {0x03, u'f', true};  // F
+    case 0x47: return {0x05, u'g', true};  // G
+    case 0x48: return {0x04, u'h', true};  // H
+    case 0x49: return {0x22, u'i', true};  // I
+    case 0x4A: return {0x26, u'j', true};  // J
+    case 0x4B: return {0x28, u'k', true};  // K
+    case 0x4C: return {0x25, u'l', true};  // L
+    case 0x4D: return {0x2E, u'm', true};  // M
+    case 0x4E: return {0x2D, u'n', true};  // N
+    case 0x4F: return {0x1F, u'o', true};  // O
+    case 0x50: return {0x23, u'p', true};  // P
+    case 0x51: return {0x0C, u'q', true};  // Q
+    case 0x52: return {0x0F, u'r', true};  // R
+    case 0x53: return {0x01, u's', true};  // S
+    case 0x54: return {0x11, u't', true};  // T
+    case 0x55: return {0x20, u'u', true};  // U
+    case 0x56: return {0x09, u'v', true};  // V
+    case 0x57: return {0x0D, u'w', true};  // W
+    case 0x58: return {0x07, u'x', true};  // X
+    case 0x59: return {0x10, u'y', true};  // Y
+    case 0x5A: return {0x06, u'z', true};  // Z
+    case 0x30: return {0x1D, u'0', true};
+    case 0x31: return {0x12, u'1', true};
+    case 0x32: return {0x13, u'2', true};
+    case 0x33: return {0x14, u'3', true};
+    case 0x34: return {0x15, u'4', true};
+    case 0x35: return {0x17, u'5', true};
+    case 0x36: return {0x16, u'6', true};
+    case 0x37: return {0x1A, u'7', true};
+    case 0x38: return {0x1C, u'8', true};
+    case 0x39: return {0x19, u'9', true};
+    default: break;
   }
+  return {0, 0, false};
 }
 
 void InjectInput(const std::string& rest) {
   if (!g_browser) return;
   CefRefPtr<CefBrowserHost> host = g_browser->GetHost();
   char kind[16] = {0};
-  int x = 0, y = 0, a = 0;
+  int x = 0, y = 0, a = 0, modifiers = 0;
   double d = 0;
   if (sscanf(rest.c_str(), "%15s", kind) != 1) return;
-  CefMouseEvent m; m.modifiers = 0;
-  if (strcmp(kind, "move") == 0 && sscanf(rest.c_str(), "%*s %d %d", &x, &y) == 2) {
-    m.x = x; m.y = y; host->SendMouseMoveEvent(m, false);
-  } else if (strcmp(kind, "leave") == 0 && sscanf(rest.c_str(), "%*s %d %d", &x, &y) == 2) {
-    m.x = x; m.y = y; host->SendMouseMoveEvent(m, true);
-  } else if (strcmp(kind, "down") == 0 && sscanf(rest.c_str(), "%*s %d %d %d", &x, &y, &a) == 3) {
-    m.x = x; m.y = y;
+  CefMouseEvent m{}; m.modifiers = 0;
+  if (strcmp(kind, "move") == 0
+      && sscanf(rest.c_str(), "%*s %d %d %d", &x, &y, &modifiers) == 3) {
+    m.x = x; m.y = y; m.modifiers = CefModifiersFromOpus(modifiers);
+    host->SendMouseMoveEvent(m, false);
+  } else if (strcmp(kind, "leave") == 0
+      && sscanf(rest.c_str(), "%*s %d %d %d", &x, &y, &modifiers) == 3) {
+    m.x = x; m.y = y; m.modifiers = CefModifiersFromOpus(modifiers);
+    host->SendMouseMoveEvent(m, true);
+  } else if (strcmp(kind, "down") == 0
+      && sscanf(rest.c_str(), "%*s %d %d %d %d", &x, &y, &a, &modifiers) == 4) {
+    m.x = x; m.y = y; m.modifiers = CefModifiersFromOpus(modifiers);
     cef_mouse_button_type_t b = a == 1 ? MBT_RIGHT : a == 2 ? MBT_MIDDLE : MBT_LEFT;
     host->SendMouseClickEvent(m, b, false, 1);
-  } else if (strcmp(kind, "up") == 0 && sscanf(rest.c_str(), "%*s %d %d %d", &x, &y, &a) == 3) {
-    m.x = x; m.y = y;
+  } else if (strcmp(kind, "up") == 0
+      && sscanf(rest.c_str(), "%*s %d %d %d %d", &x, &y, &a, &modifiers) == 4) {
+    m.x = x; m.y = y; m.modifiers = CefModifiersFromOpus(modifiers);
     cef_mouse_button_type_t b = a == 1 ? MBT_RIGHT : a == 2 ? MBT_MIDDLE : MBT_LEFT;
     host->SendMouseClickEvent(m, b, true, 1);
-  } else if (strcmp(kind, "wheel") == 0 && sscanf(rest.c_str(), "%*s %d %d %lf", &x, &y, &d) == 3) {
-    m.x = x; m.y = y; host->SendMouseWheelEvent(m, 0, static_cast<int>(d));
-  } else if (strcmp(kind, "char") == 0 && sscanf(rest.c_str(), "%*s %d", &a) == 1) {
+  } else if (strcmp(kind, "wheel") == 0
+      && sscanf(rest.c_str(), "%*s %d %d %lf %d", &x, &y, &d, &modifiers) == 4) {
+    m.x = x; m.y = y; m.modifiers = CefModifiersFromOpus(modifiers);
+    host->SendMouseWheelEvent(m, 0, static_cast<int>(d));
+  } else if (strcmp(kind, "char") == 0
+      && sscanf(rest.c_str(), "%*s %d %d", &a, &modifiers) == 2) {
+    if (a < 0 || a > 0xFFFF) return;
     host->SetFocus(true);
-    CefKeyEvent k; k.type = KEYEVENT_CHAR; k.character = a;
-    k.unmodified_character = a; k.windows_key_code = a; k.modifiers = 0;
+    CefKeyEvent k{}; k.type = KEYEVENT_CHAR; k.character = static_cast<char16_t>(a);
+    k.unmodified_character = static_cast<char16_t>(a); k.windows_key_code = a;
+    k.modifiers = CefModifiersFromOpus(modifiers);
     host->SendKeyEvent(k);
-  } else if (strcmp(kind, "key") == 0 && sscanf(rest.c_str(), "%*s %d %d", &a, &x) == 2) {
+  } else if (strcmp(kind, "key") == 0
+      && sscanf(rest.c_str(), "%*s %d %d %d", &a, &x, &modifiers) == 3) {
     const MacKeyData mac_key = MacKeyDataForWindowsVirtualKey(a);
-    if (mac_key.native_key_code == 0 || mac_key.character == 0) return;
+    if (!mac_key.valid) return;
     host->SetFocus(true);
-    CefKeyEvent k; k.windows_key_code = a; k.modifiers = 0;
+    CefKeyEvent k{}; k.windows_key_code = a;
+    k.modifiers = CefModifiersFromOpus(modifiers);
     k.native_key_code = mac_key.native_key_code;
     k.character = mac_key.character;
     k.unmodified_character = mac_key.character;
     if (x == 1) {
-      // cefclient's macOS OSR path emits KEYDOWN followed by CHAR for a native
-      // key press. The CHAR event is also required for non-printing navigation
-      // keys such as Tab and Return to reach Blink's default actions.
       k.type = KEYEVENT_KEYDOWN;
       host->SendKeyEvent(k);
       k.type = KEYEVENT_CHAR;
@@ -638,8 +695,22 @@ bool HandleLine(const std::string& line, bool& authed) {
       });
     }
   } else if (line.rfind("INPUT ", 0) == 0) {
-    std::string rest = line.substr(6);
-    PostUI([rest] { InjectInput(rest); });
+    unsigned long long input_generation = 0;
+    int consumed = 0;
+    if (sscanf(line.c_str(), "INPUT %llu %n", &input_generation, &consumed) == 1
+        && input_generation > 0 && consumed > 0
+        && static_cast<size_t>(consumed) < line.size()) {
+      std::string rest = line.substr(static_cast<size_t>(consumed));
+      PostUI([input_generation, rest] {
+        if (static_cast<uint64_t>(input_generation) == g_generation) {
+          InjectInput(rest);
+        } else {
+          Log("stale input generation %llu; current %llu; dropping",
+              input_generation,
+              static_cast<unsigned long long>(g_generation));
+        }
+      });
+    }
   } else if (line == "PING") {
     SendToClient("PONG");
   } else if (line == "BYE") {

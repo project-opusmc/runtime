@@ -99,6 +99,7 @@ sourceSets {
     harness {
         java.srcDir 'preview/harness'
         java.srcDir '../../../web-surface-v2/coordinate/src/main/java'
+        java.srcDir '../../../web-surface-v2/input/src/main/java'
         compileClasspath = sourceSets.main.output + sourceSets.main.compileClasspath
     }
 }
@@ -202,6 +203,23 @@ task harnessWebSurfaceTransport(type: JavaExec) {
     description = 'Proves Web Surface V2 negotiated three-slot shared-memory transport through 5K Retina.'
     dependsOn 'harnessClasses', 'buildWebViewHelper'
     main = 'org.polydevs.opusmc.client.W3FrameTransportHarness'
+    doFirst {
+        classpath = files(
+                sourceSets.harness.output,
+                sourceSets.main.output,
+                sourceSets.main.runtimeClasspath)
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
+    }
+}
+
+
+task harnessWebSurfaceInput(type: JavaExec) {
+    group = 'verification'
+    description = 'Proves Web Surface V2 LWJGL-to-CSS input semantics through real CEF native events.'
+    dependsOn 'harnessClasses', 'buildWebViewHelper'
+    main = 'org.polydevs.opusmc.client.W4InputHarness'
     doFirst {
         classpath = files(
                 sourceSets.harness.output,
