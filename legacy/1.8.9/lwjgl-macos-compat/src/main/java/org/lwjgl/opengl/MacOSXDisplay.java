@@ -66,6 +66,7 @@ public final class MacOSXDisplay implements DisplayImplementation {
 	private static final String OPUS_COMPATIBILITY_MARKER = "OPUS_MODERN_MACOS_DISPLAY_COMPAT_V1";
 	private static final String OPUS_RESIZE_COMPATIBILITY_MARKER = "OPUS_COCOA_LIVE_RESIZE_HANDSHAKE_V10_APPKIT_DRAWABLE_UPDATE";
 	private static final String OPUS_RESIZE_GUARD_LIBRARY = "opus_lwjgl_resize_guard";
+	private static final String OPUS_LIVE_RESIZE_GUARD_PROPERTY = "opus.lwjgl.macos.liveResizeGuard";
 	private static final long LIVE_RESIZE_PARK_TIMEOUT_MILLIS = 2_000L;
 	private static final int OPUS_LIVE_RESIZE_FRAME_RATE = 240;
 	private static final int PBUFFER_HANDLE_SIZE = 24;
@@ -147,9 +148,13 @@ public final class MacOSXDisplay implements DisplayImplementation {
 
 	private static native boolean nInstallLiveResizeGuard();
 
-	private static synchronized void ensureLiveResizeGuardInstalled() throws LWJGLException {
+	private static synchronized boolean ensureLiveResizeGuardInstalled() throws LWJGLException {
+		if (!Boolean.parseBoolean(System.getProperty(OPUS_LIVE_RESIZE_GUARD_PROPERTY, "true"))) {
+			System.err.println("[OPUS/LWJGL] Cocoa live-resize guard disabled for the isolated preview host");
+			return false;
+		}
 		if (resizeGuardInstalled) {
-			return;
+			return true;
 		}
 		try {
 			System.loadLibrary(OPUS_RESIZE_GUARD_LIBRARY);
@@ -161,6 +166,7 @@ public final class MacOSXDisplay implements DisplayImplementation {
 		}
 		resizeGuardInstalled = true;
 		System.err.println("[OPUS/LWJGL] Cocoa live-resize guard installed");
+		return true;
 	}
 
 	private native ByteBuffer nCreateWindow(int x, int y, int width, int height, boolean fullscreen, boolean undecorated, boolean resizable, boolean parented, boolean enableFullscreenModeAPI, boolean enableHighDPI, ByteBuffer peer_info_handle, ByteBuffer window_handle) throws LWJGLException;
@@ -230,7 +236,7 @@ public final class MacOSXDisplay implements DisplayImplementation {
 	}
     
 	public void createWindow(final DrawableLWJGL drawable, DisplayMode mode, Canvas parent, int x, int y) throws LWJGLException {
-		ensureLiveResizeGuardInstalled();
+		boolean liveResizeGuardEnabled = ensureLiveResizeGuardInstalled();
 		boolean fullscreen = Display.isFullscreen();
 		boolean resizable = Display.isResizable();
 		boolean parented = (parent != null) && !fullscreen;
@@ -261,7 +267,7 @@ public final class MacOSXDisplay implements DisplayImplementation {
 			window = nCreateWindow(x, y, mode.getWidth(), mode.getHeight(),
 					fullscreen, isUndecorated(), nativeResizable,
 					parented, enableFullscreenModeAPI, enableHighDPI, peer_handle, window_handle);
-			if (!fullscreen) {
+			if (liveResizeGuardEnabled && !fullscreen) {
 				nDisableLiveResizeContentPreservation(window);
 			}
 			lastWindowWidth = nGetWidth(window);

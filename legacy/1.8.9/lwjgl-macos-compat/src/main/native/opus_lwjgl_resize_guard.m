@@ -18,7 +18,7 @@
 #include <stdbool.h>
 
 __attribute__((used)) static const char OPUS_RESIZE_GUARD_MARKER[] =
-        "OPUS_COCOA_LIVE_RESIZE_GUARD_V9_APPKIT_DRAWABLE_UPDATE";
+        "OPUS_COCOA_LIVE_RESIZE_GUARD_V10_MAIN_QUEUE_INSTALL";
 
 static JavaVM *opus_jvm;
 static BOOL opus_window_preserves_content_before_resize = YES;
@@ -296,15 +296,17 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     return JNI_VERSION_1_4;
 }
 
-JNIEXPORT jboolean JNICALL
-Java_org_lwjgl_opengl_MacOSXDisplay_nInstallLiveResizeGuard(JNIEnv *env, jclass clazz) {
-    (void)env;
-    (void)clazz;
-
+/*
+ * Objective-C method-table changes that affect NSView must happen on
+ * AppKit's main thread. Installing these hooks from Minecraft's render
+ * thread can race AppKit's initial layer-tree enumeration and raise
+ * NSFastEnumerationMutationHandler before the first frame is shown.
+ */
+static BOOL opus_install_live_resize_guard_on_main_thread(void) {
     Class view_class = objc_getClass("MacOSXOpenGLView");
     if (view_class == Nil) {
         fprintf(stderr, "[OPUS/LWJGL] MacOSXOpenGLView is unavailable\n");
-        return JNI_FALSE;
+        return NO;
     }
 
     SEL will_selector = sel_registerName("viewWillStartLiveResize");
@@ -313,7 +315,7 @@ Java_org_lwjgl_opengl_MacOSXDisplay_nInstallLiveResizeGuard(JNIEnv *env, jclass 
     Method frame_size_method = class_getInstanceMethod(view_class, frame_size_selector);
     if (frame_size_method == NULL) {
         fprintf(stderr, "[OPUS/LWJGL] setFrameSize: is unavailable\n");
-        return JNI_FALSE;
+        return NO;
     }
     BOOL installed_will = class_addMethod(
             view_class,
@@ -332,7 +334,7 @@ Java_org_lwjgl_opengl_MacOSXDisplay_nInstallLiveResizeGuard(JNIEnv *env, jclass 
             method_getTypeEncoding(frame_size_method));
     if (!installed_will || !installed_did || !installed_frame_size) {
         fprintf(stderr, "[OPUS/LWJGL] live-resize hooks already occupied\n");
-        return JNI_FALSE;
+        return NO;
     }
 
     // Keep NSViewGlobalFrameDidChangeNotification from invoking
@@ -343,7 +345,7 @@ Java_org_lwjgl_opengl_MacOSXDisplay_nInstallLiveResizeGuard(JNIEnv *env, jclass 
             sel_registerName("_surfaceNeedsUpdate:"));
     if (surface_method == NULL) {
         fprintf(stderr, "[OPUS/LWJGL] _surfaceNeedsUpdate: is unavailable\n");
-        return JNI_FALSE;
+        return NO;
     }
     method_setImplementation(surface_method, (IMP)opus_surface_needs_update_noop);
 
@@ -351,7 +353,7 @@ Java_org_lwjgl_opengl_MacOSXDisplay_nInstallLiveResizeGuard(JNIEnv *env, jclass 
     Method preserves_method = class_getInstanceMethod(view_class, preserves_selector);
     if (preserves_method == NULL) {
         fprintf(stderr, "[OPUS/LWJGL] preservesContentDuringLiveResize is unavailable\n");
-        return JNI_FALSE;
+        return NO;
     }
     class_replaceMethod(
             view_class,
@@ -359,7 +361,23 @@ Java_org_lwjgl_opengl_MacOSXDisplay_nInstallLiveResizeGuard(JNIEnv *env, jclass 
             (IMP)opus_view_preserves_content_during_live_resize,
             method_getTypeEncoding(preserves_method));
     fprintf(stderr, "[OPUS/LWJGL] OpenGL view live-resize content preservation disabled\n");
-    return JNI_TRUE;
+    return YES;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_lwjgl_opengl_MacOSXDisplay_nInstallLiveResizeGuard(JNIEnv *env, jclass clazz) {
+    (void)env;
+    (void)clazz;
+
+    __block BOOL installed = NO;
+    if ([NSThread isMainThread]) {
+        installed = opus_install_live_resize_guard_on_main_thread();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            installed = opus_install_live_resize_guard_on_main_thread();
+        });
+    }
+    return installed ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

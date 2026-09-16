@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-23",
+  "updatedAt": "2026-08-27",
   "runtime": {
     "minecraft": "1.8.9",
     "forge": "11.15.1.2318",
@@ -113,8 +113,8 @@
       "repository": "https://github.com/project-opusmc/runtime",
       "file": "opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
       "url": "https://github.com/project-opusmc/runtime/releases/download/opusconfig-0.2.2-alpha228/opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
-      "size": 17903948,
-      "sha256": "48d2393c11b2d1d4c09f0fad4cf67b36e83a624e82f6143e389fcb8073793bb3"
+      "size": 17903862,
+      "sha256": "c678463f990e3ebab574522c1eee4ca950e1d12fb93b574e33696d35b14e2792"
     },
     {
       "id": "oneconfig-universalcraft",

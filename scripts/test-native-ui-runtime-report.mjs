@@ -31,6 +31,10 @@ function validReport() {
     elementaCodeSource: "jar:file:/cache/elementa-762.jar!/gg/essential/elementa/WindowScreen.class",
     universalCraftCodeSource: "jar:file:/cache/universalcraft-1.8.9-forge-516.jar!/gg/essential/universal/UScreen.class",
     nativeUiEnabled: "true",
+    musicPolicy: "startup-default-off",
+    musicDisabled: "true",
+    musicVolumeBefore: "1.0",
+    musicVolumeAfter: "0.0",
     optifineExpected: "true",
     optifinePresent: "true",
     optifineVersion: "OptiFine_1.8.9_HD_U_M5",
@@ -44,6 +48,10 @@ function validReport() {
     elementaClosed: "true",
     elementaEscape: "restore-previous-screen",
     opusConfigCallback: "invoked",
+    liveProofOpusConfigTimingInitial:
+      "samples=60|averageMs=16.700|p95Ms=17.200|maxMs=24.400|over33Ms=0|over50Ms=0",
+    liveProofOpusConfigTimingFinal:
+      "samples=60|averageMs=16.800|p95Ms=18.100|maxMs=31.200|over33Ms=0|over50Ms=0",
     lifecycle: ["opus-native-ui-pre-init", "opus-native-ui-init"],
     openOrder: ["opusconfig", "elementa", "opusconfig", "elementa"],
     screenEvents: [
@@ -100,6 +108,12 @@ try {
   runFixture("design-parity-failed", (report) => {
     report.opusDesignParity = "failed";
   }, false, "opusDesignParity must be \"pass\"");
+  runFixture("music-not-disabled", (report) => {
+    report.musicDisabled = "false";
+  }, false, "musicDisabled must be \"true\"");
+  runFixture("music-volume-not-zero", (report) => {
+    report.musicVolumeAfter = "0.5";
+  }, false, "musicVolumeAfter must be \"0.0\"");
   runFixture("missing-reverse-order", (report) => {
     report.openOrder = ["opusconfig", "opusconfig", "elementa", "elementa"];
   }, false, "openOrder lacks Elementa then OneConfig");
@@ -124,7 +138,14 @@ try {
   runFixture("unchanged-fullscreen", (report) => {
     report.displayStates[1] = report.displayStates[1].replace("fullscreen=true", "fullscreen=false");
   }, false, "fullscreen state was not toggled");
-  console.log("verified native UI runtime report verifier fixtures: 1 pass, 11 expected failures");
+  runFixture("missing-opusconfig-timing", (report) => {
+    delete report.liveProofOpusConfigTimingInitial;
+  }, false, "must contain OpusConfig frame timing evidence");
+  runFixture("choppy-opusconfig-p95", (report) => {
+    report.liveProofOpusConfigTimingFinal =
+      "samples=60|averageMs=28.000|p95Ms=58.000|maxMs=72.000|over33Ms=8|over50Ms=5";
+  }, false, "p95 frame time exceeds 40 ms");
+  console.log("verified native UI runtime report verifier fixtures: 1 pass, 15 expected failures");
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

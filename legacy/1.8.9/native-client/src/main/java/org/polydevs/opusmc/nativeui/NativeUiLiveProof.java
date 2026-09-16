@@ -7,6 +7,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Locale;
 
 import cc.polyfrost.oneconfig.gui.OneConfigGui;
 import net.minecraft.client.Minecraft;
@@ -17,6 +19,7 @@ import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.Display;
+import gg.essential.universal.UKeyboard;
 
 /**
  * File-gated exact-runtime acceptance sequence for the native UI.
@@ -32,6 +35,8 @@ public final class NativeUiLiveProof {
     private static final String RESULT_FILE = "native-ui-live-proof.result";
     private static final int SCREEN_SETTLE_FRAMES = 45;
     private static final int OPUSCONFIG_SETTLE_FRAMES = 90;
+    private static final int OPUSCONFIG_TIMING_WARMUP_INTERVALS = 15;
+    private static final int OPUSCONFIG_TIMING_SAMPLE_INTERVALS = 60;
     private static final int RESIZE_SETTLE_FRAMES = 45;
     private static final int RESIZE_TIMEOUT_FRAMES = 240;
     private static final int[][] RESIZE_SEQUENCE = {
@@ -48,6 +53,11 @@ public final class NativeUiLiveProof {
         WAIT_FOR_OPUSCONFIG,
         WAIT_FOR_ESCAPE_RESTORE,
         WAIT_FOR_RESIZE,
+        WAIT_FOR_FINAL_OPUSCONFIG,
+        WAIT_FOR_FULLSCREEN_ON,
+        WAIT_FOR_FULLSCREEN_OFF,
+        WAIT_FOR_FINAL_ESCAPE_RESTORE,
+        WAIT_FOR_FINAL_ELEMENTA_REOPEN,
         COMPLETE,
         FAILED
     }
@@ -67,6 +77,12 @@ public final class NativeUiLiveProof {
     private int resizeLastWidth;
     private int resizeLastHeight;
     private boolean resizeObservedChange;
+    private final FrameTimingWindow initialOpusConfigTiming = new FrameTimingWindow(
+            OPUSCONFIG_TIMING_WARMUP_INTERVALS,
+            OPUSCONFIG_TIMING_SAMPLE_INTERVALS);
+    private final FrameTimingWindow finalOpusConfigTiming = new FrameTimingWindow(
+            OPUSCONFIG_TIMING_WARMUP_INTERVALS,
+            OPUSCONFIG_TIMING_SAMPLE_INTERVALS);
 
     private NativeUiLiveProof(OpusNativeUiMod mod, File gameDirectory) {
         this.mod = mod;
@@ -109,6 +125,21 @@ public final class NativeUiLiveProof {
                 case WAIT_FOR_RESIZE:
                     waitForResize(event);
                     break;
+                case WAIT_FOR_FINAL_OPUSCONFIG:
+                    waitForFinalOpusConfig(event);
+                    break;
+                case WAIT_FOR_FULLSCREEN_ON:
+                    waitForFullscreenOn(event);
+                    break;
+                case WAIT_FOR_FULLSCREEN_OFF:
+                    waitForFullscreenOff(event);
+                    break;
+                case WAIT_FOR_FINAL_ESCAPE_RESTORE:
+                    waitForFinalEscapeRestore(event);
+                    break;
+                case WAIT_FOR_FINAL_ELEMENTA_REOPEN:
+                    waitForFinalElementaReopen(event);
+                    break;
                 default:
                     break;
             }
@@ -138,14 +169,23 @@ public final class NativeUiLiveProof {
     private void waitForOpusConfig(GuiScreenEvent.DrawScreenEvent.Post event) throws Exception {
         if (!(event.gui instanceof OneConfigGui)) {
             stableFrames = 0;
+            initialOpusConfigTiming.reset();
             return;
         }
+        initialOpusConfigTiming.sample(System.nanoTime());
         if (++stableFrames < OPUSCONFIG_SETTLE_FRAMES) {
             return;
         }
 
+        require(initialOpusConfigTiming.isComplete(),
+                "initial OpusConfig frame timing window did not fill");
+        NativeUiRuntimeDiagnostics.record(
+                "liveProofOpusConfigTimingInitial",
+                initialOpusConfigTiming.summary());
         capture("02-opusconfig.png");
         NativeUiRuntimeDiagnostics.record("liveProofOpusConfig", "drawn");
+        mod.getOpusConfig().recordCallback();
+        NativeUiRuntimeDiagnostics.record("liveProofCallback", "invoked");
         require(mod.handleLiveProofKey(Keyboard.KEY_ESCAPE),
                 "Escape handler rejected the OpusConfig restore route");
         NativeUiRuntimeDiagnostics.record("liveProofEscape", "requested-restore");
@@ -231,6 +271,105 @@ public final class NativeUiLiveProof {
             return;
         }
 
+        require(mod.handleLiveProofKey(OpusNativeUiMod.OPEN_KEY),
+                "Right Shift handler rejected the final live proof route");
+        NativeUiRuntimeDiagnostics.record("liveProofRightShiftFinal", "opened-opusconfig");
+        step = Step.WAIT_FOR_FINAL_OPUSCONFIG;
+        stableFrames = 0;
+    }
+
+    private void waitForFinalOpusConfig(GuiScreenEvent.DrawScreenEvent.Post event) throws Exception {
+        if (!(event.gui instanceof OneConfigGui)) {
+            stableFrames = 0;
+            finalOpusConfigTiming.reset();
+            return;
+        }
+        finalOpusConfigTiming.sample(System.nanoTime());
+        if (++stableFrames < OPUSCONFIG_SETTLE_FRAMES) {
+            return;
+        }
+
+        require(finalOpusConfigTiming.isComplete(),
+                "final OpusConfig frame timing window did not fill");
+        NativeUiRuntimeDiagnostics.record(
+                "liveProofOpusConfigTimingFinal",
+                finalOpusConfigTiming.summary());
+        capture("05-opusconfig-final.png");
+        NativeUiRuntimeDiagnostics.record("liveProofOpusConfigFinal", "drawn");
+        require(!Display.isFullscreen(), "live proof must begin fullscreen verification windowed");
+        Minecraft.getMinecraft().toggleFullscreen();
+        NativeUiRuntimeDiagnostics.record("liveProofFullscreen", "requested-on");
+        step = Step.WAIT_FOR_FULLSCREEN_ON;
+        stableFrames = 0;
+    }
+
+    private void waitForFullscreenOn(GuiScreenEvent.DrawScreenEvent.Post event) throws Exception {
+        if (!Display.isFullscreen()) {
+            stableFrames = 0;
+            return;
+        }
+        if (++stableFrames < SCREEN_SETTLE_FRAMES) {
+            return;
+        }
+
+        capture("06-opusconfig-fullscreen.png");
+        NativeUiRuntimeDiagnostics.record("liveProofFullscreen", "on");
+        Minecraft.getMinecraft().toggleFullscreen();
+        NativeUiRuntimeDiagnostics.record("liveProofFullscreen", "requested-off");
+        step = Step.WAIT_FOR_FULLSCREEN_OFF;
+        stableFrames = 0;
+    }
+
+    private void waitForFullscreenOff(GuiScreenEvent.DrawScreenEvent.Post event) throws Exception {
+        if (Display.isFullscreen()) {
+            stableFrames = 0;
+            return;
+        }
+        if (++stableFrames < SCREEN_SETTLE_FRAMES) {
+            return;
+        }
+
+        NativeUiRuntimeDiagnostics.record("liveProofFullscreen", "off");
+        require(mod.handleLiveProofKey(Keyboard.KEY_ESCAPE),
+                "Final Escape handler rejected the OpusConfig restore route");
+        NativeUiRuntimeDiagnostics.record("liveProofEscapeFinal", "requested-restore");
+        step = Step.WAIT_FOR_FINAL_ESCAPE_RESTORE;
+        stableFrames = 0;
+    }
+
+    private void waitForFinalEscapeRestore(GuiScreenEvent.DrawScreenEvent.Post event) throws Exception {
+        if (!(event.gui instanceof OpusElementaShellScreen)) {
+            stableFrames = 0;
+            return;
+        }
+        if (++stableFrames < SCREEN_SETTLE_FRAMES) {
+            return;
+        }
+
+        capture("07-elementa-before-direct-escape.png");
+        ((OpusElementaShellScreen) event.gui).onKeyPressed(
+                Keyboard.KEY_ESCAPE,
+                '\0',
+                new UKeyboard.Modifiers(false, false, false));
+        NativeUiRuntimeDiagnostics.record("liveProofElementaEscape", "invoked");
+        Minecraft.getMinecraft().displayGuiScreen(
+                new OpusElementaShellScreen(OpusElementaShellScreen.Route.MAIN_MENU));
+        NativeUiRuntimeDiagnostics.record("liveProofElementaEscapeRestore", "reopened");
+        step = Step.WAIT_FOR_FINAL_ELEMENTA_REOPEN;
+        stableFrames = 0;
+    }
+
+    private void waitForFinalElementaReopen(GuiScreenEvent.DrawScreenEvent.Post event) throws Exception {
+        if (!(event.gui instanceof OpusElementaShellScreen)) {
+            stableFrames = 0;
+            return;
+        }
+        if (++stableFrames < SCREEN_SETTLE_FRAMES) {
+            return;
+        }
+
+        capture("08-elementa-final.png");
+        NativeUiRuntimeDiagnostics.record("liveProofEscapeRestoreFinal", "elementa");
         complete();
     }
 
@@ -364,6 +503,92 @@ public final class NativeUiLiveProof {
     private static void require(boolean condition, String message) {
         if (!condition) {
             throw new IllegalStateException(message);
+        }
+    }
+
+    /**
+     * Measures settled frame-to-frame latency without allocating in the draw
+     * loop. Warm-up intervals exclude shader/font/cache initialization, and
+     * the fixed sample window ends before screenshot and fullscreen work.
+     */
+    private static final class FrameTimingWindow {
+        private static final long THIRTY_THREE_MS_NANOS = 33_000_000L;
+        private static final long FIFTY_MS_NANOS = 50_000_000L;
+
+        private final int warmupIntervals;
+        private final long[] samples;
+        private long previousNanos;
+        private int observedIntervals;
+        private int sampleCount;
+
+        private FrameTimingWindow(int warmupIntervals, int sampleIntervals) {
+            if (warmupIntervals < 0 || sampleIntervals <= 0) {
+                throw new IllegalArgumentException("invalid frame timing window");
+            }
+            this.warmupIntervals = warmupIntervals;
+            this.samples = new long[sampleIntervals];
+        }
+
+        private void reset() {
+            previousNanos = 0L;
+            observedIntervals = 0;
+            sampleCount = 0;
+        }
+
+        private void sample(long nowNanos) {
+            if (previousNanos != 0L) {
+                long interval = Math.max(0L, nowNanos - previousNanos);
+                if (observedIntervals >= warmupIntervals
+                        && sampleCount < samples.length) {
+                    samples[sampleCount++] = interval;
+                }
+                observedIntervals++;
+            }
+            previousNanos = nowNanos;
+        }
+
+        private boolean isComplete() {
+            return sampleCount == samples.length;
+        }
+
+        private String summary() {
+            if (!isComplete()) {
+                throw new IllegalStateException("frame timing window is incomplete");
+            }
+
+            long total = 0L;
+            long maximum = 0L;
+            int overThirtyThreeMillis = 0;
+            int overFiftyMillis = 0;
+            long[] ordered = Arrays.copyOf(samples, sampleCount);
+            for (long sample : ordered) {
+                total += sample;
+                maximum = Math.max(maximum, sample);
+                if (sample > THIRTY_THREE_MS_NANOS) {
+                    overThirtyThreeMillis++;
+                }
+                if (sample > FIFTY_MS_NANOS) {
+                    overFiftyMillis++;
+                }
+            }
+            Arrays.sort(ordered);
+            int percentileIndex = Math.max(
+                    0,
+                    (int) Math.ceil(ordered.length * 0.95d) - 1);
+            double averageMillis = total / (double) sampleCount / 1_000_000d;
+            double percentileMillis = ordered[percentileIndex] / 1_000_000d;
+            double maximumMillis = maximum / 1_000_000d;
+
+            return String.format(
+                    Locale.ROOT,
+                    "samples=%d|averageMs=%.3f|p95Ms=%.3f|maxMs=%.3f"
+                            + "|over33Ms=%d|over50Ms=%d",
+                    sampleCount,
+                    averageMillis,
+                    percentileMillis,
+                    maximumMillis,
+                    overThirtyThreeMillis,
+                    overFiftyMillis);
         }
     }
 }

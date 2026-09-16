@@ -3,11 +3,13 @@ package org.polydevs.opusmc.nativeui;
 /**
  * Pure responsive layout model for the Elementa-owned Minecraft shell.
  *
- * <p>The calculations deliberately have no Minecraft or renderer dependency,
- * so every draw and hit-test bound can be verified before the screen is
- * launched. All values are stable shell pixels. The Elementa screen uses GUI
- * scale 1 while it is open, so these coordinates map one-to-one to the live
- * drawable instead of jumping at Minecraft's integer Auto-scale thresholds.</p>
+ * <p>The main and pause routes intentionally share one Lunar-inspired
+ * composition: a centered horizontal OPUS lockup, two full-width primary
+ * controls, and a compact secondary row. The pause route uses two equal
+ * secondary controls; the main route preserves vanilla's Quit action as a
+ * square power control beside the two settings controls. The model exposes
+ * every button bound separately so drawing and hit testing consume the same
+ * geometry during a live resize.</p>
  */
 final class OpusShellLayout {
     enum SizeClass {
@@ -17,6 +19,13 @@ final class OpusShellLayout {
         SPACIOUS
     }
 
+    static final int PAUSE_BUTTON_COUNT = 4;
+    static final int MAIN_MENU_BUTTON_COUNT = 5;
+    static final int LOCKUP_TEXTURE_WIDTH = 1599;
+    static final int LOCKUP_TEXTURE_HEIGHT = 566;
+    static final float LOCKUP_ASPECT =
+            LOCKUP_TEXTURE_WIDTH / (float) LOCKUP_TEXTURE_HEIGHT;
+
     final int viewportWidth;
     final int viewportHeight;
     final int buttonCount;
@@ -25,20 +34,17 @@ final class OpusShellLayout {
     final float panelY;
     final float panelWidth;
     final float panelHeight;
-    final float titleY;
-    final float subtitleY;
-    final float buttonX;
-    final float buttonStartY;
-    final float buttonWidth;
-    final float buttonHeight;
-    final float buttonGap;
-    final float footerY;
-    final float titleScale;
-    final float secondaryScale;
+    final float logoX;
+    final float logoY;
+    final float logoWidth;
+    final float logoHeight;
     final float buttonTextScale;
     final float density;
-    final boolean showSubtitle;
-    final boolean showFooter;
+
+    private final float[] buttonX;
+    private final float[] buttonY;
+    private final float[] buttonWidth;
+    private final float[] buttonHeight;
 
     private OpusShellLayout(
             int viewportWidth,
@@ -49,20 +55,16 @@ final class OpusShellLayout {
             float panelY,
             float panelWidth,
             float panelHeight,
-            float titleY,
-            float subtitleY,
-            float buttonX,
-            float buttonStartY,
-            float buttonWidth,
-            float buttonHeight,
-            float buttonGap,
-            float footerY,
-            float titleScale,
-            float secondaryScale,
+            float logoX,
+            float logoY,
+            float logoWidth,
+            float logoHeight,
             float buttonTextScale,
             float density,
-            boolean showSubtitle,
-            boolean showFooter) {
+            float[] buttonX,
+            float[] buttonY,
+            float[] buttonWidth,
+            float[] buttonHeight) {
         this.viewportWidth = viewportWidth;
         this.viewportHeight = viewportHeight;
         this.buttonCount = buttonCount;
@@ -71,20 +73,16 @@ final class OpusShellLayout {
         this.panelY = panelY;
         this.panelWidth = panelWidth;
         this.panelHeight = panelHeight;
-        this.titleY = titleY;
-        this.subtitleY = subtitleY;
-        this.buttonX = buttonX;
-        this.buttonStartY = buttonStartY;
-        this.buttonWidth = buttonWidth;
-        this.buttonHeight = buttonHeight;
-        this.buttonGap = buttonGap;
-        this.footerY = footerY;
-        this.titleScale = titleScale;
-        this.secondaryScale = secondaryScale;
+        this.logoX = logoX;
+        this.logoY = logoY;
+        this.logoWidth = logoWidth;
+        this.logoHeight = logoHeight;
         this.buttonTextScale = buttonTextScale;
         this.density = density;
-        this.showSubtitle = showSubtitle;
-        this.showFooter = showFooter;
+        this.buttonX = buttonX;
+        this.buttonY = buttonY;
+        this.buttonWidth = buttonWidth;
+        this.buttonHeight = buttonHeight;
     }
 
     static OpusShellLayout calculate(int viewportWidth, int viewportHeight, int buttonCount) {
@@ -92,15 +90,22 @@ final class OpusShellLayout {
             throw new IllegalArgumentException(
                     "viewport must be positive: " + viewportWidth + "x" + viewportHeight);
         }
-        if (buttonCount <= 0) {
-            throw new IllegalArgumentException("buttonCount must be positive: " + buttonCount);
+        if (buttonCount != PAUSE_BUTTON_COUNT
+                && buttonCount != MAIN_MENU_BUTTON_COUNT) {
+            throw new IllegalArgumentException(
+                    "Lunar shell requires "
+                            + PAUSE_BUTTON_COUNT
+                            + " or "
+                            + MAIN_MENU_BUTTON_COUNT
+                            + " buttons: "
+                            + buttonCount);
         }
 
         /*
-         * Match the shell's former apparent size without borrowing
-         * ScaledResolution's discontinuous 1x/2x/3x steps. The function is
-         * continuous across edge and corner drags and deliberately capped so
-         * a large desktop window still leaves generous negative space.
+         * Keep Minecraft's GUI scale latched at one while this screen is open.
+         * This continuous density curve preserves the old shell's visual
+         * weight without crossing ScaledResolution's discontinuous integer
+         * scale thresholds during a native edge drag.
          */
         float density = clamp(
                 Math.min(viewportWidth / 427f, viewportHeight / 240f),
@@ -110,77 +115,98 @@ final class OpusShellLayout {
         float designHeight = viewportHeight / density;
         SizeClass sizeClass = sizeClass(designWidth, designHeight);
 
-        /*
-         * Use one continuous layout curve instead of changing every metric at
-         * MICRO/COMPACT/REGULAR/SPACIOUS boundaries. SizeClass remains useful
-         * in diagnostics, but crossing a class cannot make the UI jump.
-         */
         float widthComfort = smoothstep(240f, 760f, designWidth);
         float heightComfort = smoothstep(160f, 500f, designHeight);
         float comfort = Math.min(widthComfort, heightComfort);
 
-        float horizontalMargin = lerp(8f, 28f, comfort);
-        float verticalMargin = lerp(6f, 24f, comfort);
-        float panelPadding = lerp(8f, 18f, comfort);
-        float maximumPanelWidth = lerp(250f, 340f, comfort);
-        float titleLineHeight = lerp(14f, 22f, comfort);
-        float subtitleLineHeight = lerp(8f, 10f, comfort);
-        float titleToSubtitleGap = lerp(3f, 4f, comfort);
-        float headerGap = lerp(6f, 14f, comfort);
-        float footerGap = lerp(4f, 8f, comfort);
-        float footerLineHeight = lerp(6f, 8f, comfort);
-        float buttonGap = lerp(3f, 6f, comfort);
-        float targetButtonHeight = lerp(20f, 28f, comfort);
-        float titleScale = lerp(1.1f, 1.45f, comfort);
-        float secondaryScale = lerp(0.72f, 0.86f, comfort);
-        float buttonTextScale = lerp(0.92f, 1.04f, comfort);
+        float horizontalMargin = lerp(10f, 30f, comfort);
+        float verticalMargin = lerp(8f, 24f, comfort);
+        float contentWidth = Math.min(
+                lerp(240f, 330f, comfort),
+                Math.max(1f, designWidth - horizontalMargin * 2f));
 
-        float availablePanelWidth = Math.max(
-                1f,
-                designWidth - horizontalMargin * 2f);
-        float panelWidth = Math.min(maximumPanelWidth, availablePanelWidth);
-        float effectivePadding = Math.min(
-                panelPadding,
-                Math.max(4f, (panelWidth - 1f) / 4f));
-        float buttonWidth = Math.max(1f, panelWidth - effectivePadding * 2f);
+        float logoHeight = lerp(48f, 72f, comfort);
+        float logoWidth = logoHeight * LOCKUP_ASPECT;
+        float logoGap = lerp(5f, 12f, comfort);
+        float primaryHeight = lerp(18f, 28f, comfort);
+        float primaryGap = lerp(3f, 7f, comfort);
+        float secondaryGap = lerp(4f, 8f, comfort);
+        float rowGap = lerp(4f, 8f, comfort);
 
-        boolean showSubtitle = designHeight >= 178f && panelWidth >= 220f;
-        boolean showFooter = designHeight >= 196f && panelWidth >= 210f;
-        if (!showSubtitle) {
-            subtitleLineHeight = 0f;
-            titleToSubtitleGap = 0f;
+        /*
+         * Compress the complete composition as one unit in extremely short
+         * windows. This keeps the lockup, gaps, and controls together instead
+         * of allowing only the last row to overlap the viewport.
+         */
+        float desiredHeight = logoHeight
+                + logoGap
+                + primaryHeight * 2f
+                + primaryGap
+                + rowGap
+                + primaryHeight;
+        float maximumHeight = Math.max(1f, designHeight - verticalMargin * 2f);
+        float compositionScale = Math.min(1f, maximumHeight / desiredHeight);
+        logoWidth *= compositionScale;
+        logoHeight *= compositionScale;
+        logoGap *= compositionScale;
+        primaryHeight *= compositionScale;
+        primaryGap *= compositionScale;
+        secondaryGap *= compositionScale;
+        rowGap *= compositionScale;
+
+        float contentHeight = logoHeight
+                + logoGap
+                + primaryHeight * 2f
+                + primaryGap
+                + rowGap
+                + primaryHeight;
+        float panelX = (designWidth - contentWidth) / 2f;
+        float panelY = (designHeight - contentHeight) / 2f;
+        float logoX = panelX + (contentWidth - logoWidth) / 2f;
+        float logoY = panelY;
+
+        float primaryX = panelX;
+        float primaryY = logoY + logoHeight + logoGap;
+        float secondaryY = primaryY + primaryHeight * 2f + primaryGap + rowGap;
+        float[] buttonX = new float[buttonCount];
+        float[] buttonY = new float[buttonCount];
+        float[] buttonWidth = new float[buttonCount];
+        float[] buttonHeight = new float[buttonCount];
+
+        buttonX[0] = primaryX;
+        buttonX[1] = primaryX;
+        buttonY[0] = primaryY;
+        buttonY[1] = primaryY + primaryHeight + primaryGap;
+        buttonWidth[0] = contentWidth;
+        buttonWidth[1] = contentWidth;
+
+        if (buttonCount == MAIN_MENU_BUTTON_COUNT) {
+            float utilityWidth = primaryHeight;
+            float settingsWidth = Math.max(
+                    1f,
+                    (contentWidth - utilityWidth - secondaryGap * 2f) / 2f);
+            buttonX[2] = primaryX;
+            buttonX[3] = primaryX + settingsWidth + secondaryGap;
+            buttonX[4] = primaryX + settingsWidth * 2f + secondaryGap * 2f;
+            buttonWidth[2] = settingsWidth;
+            buttonWidth[3] = settingsWidth;
+            buttonWidth[4] = utilityWidth;
+        } else {
+            float secondaryWidth = Math.max(
+                    1f,
+                    (contentWidth - secondaryGap) / 2f);
+            buttonX[2] = primaryX;
+            buttonX[3] = primaryX + secondaryWidth + secondaryGap;
+            buttonWidth[2] = secondaryWidth;
+            buttonWidth[3] = secondaryWidth;
         }
-        if (!showFooter) {
-            footerGap = 0f;
-            footerLineHeight = 0f;
-        }
 
-        float fixedHeight = effectivePadding
-                + titleLineHeight
-                + titleToSubtitleGap
-                + subtitleLineHeight
-                + headerGap
-                + footerGap
-                + footerLineHeight
-                + effectivePadding;
-        float gapsHeight = buttonGap * (buttonCount - 1);
-        float maximumPanelHeight = Math.max(
-                1f,
-                designHeight - verticalMargin * 2f);
-        float availableButtonHeight = Math.max(
-                1f,
-                (maximumPanelHeight - fixedHeight - gapsHeight) / buttonCount);
-        float buttonHeight = Math.min(targetButtonHeight, availableButtonHeight);
-        float panelHeight = fixedHeight + gapsHeight + buttonHeight * buttonCount;
-        float panelX = (designWidth - panelWidth) / 2f;
-        float panelY = (designHeight - panelHeight) / 2f;
-        float titleY = panelY + effectivePadding;
-        float subtitleY = titleY + titleLineHeight + titleToSubtitleGap;
-        float buttonStartY = subtitleY + subtitleLineHeight + headerGap;
-        float footerY = buttonStartY
-                + buttonHeight * buttonCount
-                + gapsHeight
-                + footerGap;
+        for (int index = 2; index < buttonCount; index++) {
+            buttonY[index] = secondaryY;
+        }
+        for (int index = 0; index < buttonCount; index++) {
+            buttonHeight[index] = primaryHeight;
+        }
 
         return new OpusShellLayout(
                 viewportWidth,
@@ -189,29 +215,38 @@ final class OpusShellLayout {
                 sizeClass,
                 panelX * density,
                 panelY * density,
-                panelWidth * density,
-                panelHeight * density,
-                titleY * density,
-                subtitleY * density,
-                (panelX + effectivePadding) * density,
-                buttonStartY * density,
-                buttonWidth * density,
-                buttonHeight * density,
-                buttonGap * density,
-                footerY * density,
-                titleScale * density,
-                secondaryScale * density,
-                buttonTextScale * density,
+                contentWidth * density,
+                contentHeight * density,
+                logoX * density,
+                logoY * density,
+                logoWidth * density,
+                logoHeight * density,
+                lerp(0.92f, 1.08f, comfort) * density,
                 density,
-                showSubtitle,
-                showFooter);
+                scale(buttonX, density),
+                scale(buttonY, density),
+                scale(buttonWidth, density),
+                scale(buttonHeight, density));
+    }
+
+    float buttonX(int index) {
+        checkIndex(index);
+        return buttonX[index];
     }
 
     float buttonY(int index) {
-        if (index < 0 || index >= buttonCount) {
-            throw new IndexOutOfBoundsException("button index: " + index);
-        }
-        return buttonStartY + index * (buttonHeight + buttonGap);
+        checkIndex(index);
+        return buttonY[index];
+    }
+
+    float buttonWidth(int index) {
+        checkIndex(index);
+        return buttonWidth[index];
+    }
+
+    float buttonHeight(int index) {
+        checkIndex(index);
+        return buttonHeight[index];
     }
 
     String diagnosticValue() {
@@ -219,9 +254,20 @@ final class OpusShellLayout {
                 + "|viewport=" + viewportWidth + "x" + viewportHeight
                 + "|panel=" + rounded(panelX) + "," + rounded(panelY)
                 + "," + rounded(panelWidth) + "x" + rounded(panelHeight)
-                + "|button=" + rounded(buttonWidth) + "x" + rounded(buttonHeight)
+                + "|logo=" + rounded(logoWidth) + "x" + rounded(logoHeight)
+                + "|primary=" + rounded(buttonWidth(0)) + "x" + rounded(buttonHeight(0))
+                + "|secondary=" + rounded(buttonWidth(2)) + "x" + rounded(buttonHeight(2))
+                + (buttonCount == MAIN_MENU_BUTTON_COUNT
+                        ? "|utility=" + rounded(buttonWidth(4)) + "x" + rounded(buttonHeight(4))
+                        : "")
                 + "|density=" + roundedHundredths(density)
                 + "|count=" + buttonCount;
+    }
+
+    private void checkIndex(int index) {
+        if (index < 0 || index >= buttonCount) {
+            throw new IndexOutOfBoundsException("button index: " + index);
+        }
     }
 
     private static SizeClass sizeClass(float width, float height) {
@@ -235,6 +281,14 @@ final class OpusShellLayout {
             return SizeClass.SPACIOUS;
         }
         return SizeClass.REGULAR;
+    }
+
+    private static float[] scale(float[] values, float factor) {
+        float[] scaled = new float[values.length];
+        for (int index = 0; index < values.length; index++) {
+            scaled[index] = values[index] * factor;
+        }
+        return scaled;
     }
 
     private static float clamp(float value, float minimum, float maximum) {

@@ -23,6 +23,43 @@ function requireEvent(values, value) {
   requireIncludes(values, value, "screenEvents");
 }
 
+function requireSmoothFrameTiming(report, key) {
+  const value = report[key];
+  if (typeof value !== "string") {
+    fail(`${key} must contain OpusConfig frame timing evidence`);
+  }
+  const match = value.match(
+    /^samples=(\d+)\|averageMs=([0-9.]+)\|p95Ms=([0-9.]+)\|maxMs=([0-9.]+)\|over33Ms=(\d+)\|over50Ms=(\d+)$/,
+  );
+  if (!match) {
+    fail(`${key} has an invalid frame timing format: ${JSON.stringify(value)}`);
+  }
+  const timing = {
+    samples: Number(match[1]),
+    averageMs: Number(match[2]),
+    p95Ms: Number(match[3]),
+    maxMs: Number(match[4]),
+    over33Ms: Number(match[5]),
+    over50Ms: Number(match[6]),
+  };
+  if (timing.samples < 60) {
+    fail(`${key} must contain at least 60 settled frame intervals`);
+  }
+  if (timing.averageMs > 33) {
+    fail(`${key} average frame time exceeds 33 ms: ${timing.averageMs}`);
+  }
+  if (timing.p95Ms > 40) {
+    fail(`${key} p95 frame time exceeds 40 ms: ${timing.p95Ms}`);
+  }
+  const allowedOverFifty = Math.max(2, Math.floor(timing.samples * 0.05));
+  if (timing.over50Ms > allowedOverFifty) {
+    fail(
+      `${key} has too many frames over 50 ms: ` +
+        `${timing.over50Ms}/${timing.samples}`,
+    );
+  }
+}
+
 function hasOrderedPair(values, first, second) {
   let firstIndex = -1;
   for (let index = 0; index < values.length; index += 1) {
@@ -92,6 +129,9 @@ requireValue(report, "oneConfig", "0.2.2-alpha228-full");
 requireValue(report, "opusDesignVersion", "opus-design.1");
 requireValue(report, "opusDesignParity", "pass");
 requireValue(report, "nativeUiEnabled", "true");
+requireValue(report, "musicPolicy", "startup-default-off");
+requireValue(report, "musicDisabled", "true");
+requireValue(report, "musicVolumeAfter", "0.0");
 requireValue(report, "optifineExpected", "true");
 requireValue(report, "optifinePresent", "true");
 const normalizedOptifineVersion = String(report.optifineVersion || "")
@@ -177,6 +217,8 @@ requireValue(report, "elementaAfterInitialization", "true");
 requireValue(report, "elementaClosed", "true");
 requireValue(report, "elementaEscape", "restore-previous-screen");
 requireValue(report, "opusConfigCallback", "invoked");
+requireSmoothFrameTiming(report, "liveProofOpusConfigTimingInitial");
+requireSmoothFrameTiming(report, "liveProofOpusConfigTimingFinal");
 
 console.log(
   `verified native UI runtime report: ${openOrder.length} openings, ` +

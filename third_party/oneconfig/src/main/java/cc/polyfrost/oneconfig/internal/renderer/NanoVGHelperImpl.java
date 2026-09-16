@@ -142,8 +142,17 @@ public final class NanoVGHelperImpl implements NanoVGHelper {
         boolean attributesPushed = false;
         boolean frameStarted = false;
         try {
-            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-            attributesPushed = true;
+            /*
+             * Apple's OpenGL 2.1 compatibility layer reports
+             * GL_INVALID_OPERATION for the legacy attribute-stack calls while
+             * the NanoVG pass is active. NanoVG's GL2 backend already saves
+             * and restores the state it owns, and the alpha state is restored
+             * explicitly below, so avoid the unsupported stack on macOS.
+             */
+            if (!MACOS) {
+                GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+                attributesPushed = true;
+            }
             UGraphics.disableAlpha();
 
             if (mcScaling) {
@@ -197,13 +206,13 @@ public final class NanoVGHelperImpl implements NanoVGHelper {
 
     private void finishNanoVGCommands() {
         if (MACOS) {
-            // Minecraft 1.8.9 swaps the drawable and recreates its framebuffer
-            // immediately after GUI rendering. macOS translates this legacy
-            // OpenGL work to Metal; leaving NanoVG commands in flight while a
-            // live-resize swaps the drawable can start a second encoder on the
-            // same command buffer and abort in AGX. Finish the NanoVG pass at
-            // its ownership boundary before Minecraft reaches Display.update().
-            GL11.glFinish();
+            /*
+             * Submit NanoVG work without synchronously waiting for the GPU.
+             * OPUS's LWJGL live-resize guard owns the exact drawable-replacement
+             * fence; a glFinish here serialized every ordinary OpusConfig frame
+             * and made the UI visibly choppy.
+             */
+            GL11.glFlush();
         }
     }
 

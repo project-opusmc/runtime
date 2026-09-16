@@ -9,6 +9,13 @@ package org.polydevs.opusmc.nativeui;
 final class OpusSmoothScale {
     static final float RESPONSE = 12f;
     static final float MAX_DELTA_SECONDS = 0.1f;
+    /**
+     * A native window resize can suspend the render loop long enough for the
+     * elapsed-time interpolation to suggest a very large single-frame jump.
+     * Keep the visual scale movement bounded as well as the time step so text
+     * cannot snap when Cocoa resumes drawing.
+     */
+    static final float MAX_STEP_PER_UPDATE = 0.045f;
     static final float EPSILON = 0.0005f;
 
     private float current;
@@ -41,6 +48,10 @@ final class OpusSmoothScale {
 
         float interpolation = (float) (1d - Math.exp(-RESPONSE * boundedDelta));
         float next = current + difference * interpolation;
+        float step = next - current;
+        if (Math.abs(step) > MAX_STEP_PER_UPDATE) {
+            next = current + Math.copySign(MAX_STEP_PER_UPDATE, step);
+        }
         if (Math.abs(target - next) <= EPSILON) {
             next = target;
         }

@@ -6,8 +6,6 @@ import java.util.List;
 import gg.essential.elementa.ElementaVersion;
 import gg.essential.elementa.UIComponent;
 import gg.essential.elementa.WindowScreen;
-import gg.essential.elementa.components.UIText;
-import gg.essential.elementa.constraints.CenterConstraint;
 import gg.essential.elementa.constraints.PixelConstraint;
 import gg.essential.elementa.constraints.RelativeConstraint;
 import gg.essential.elementa.font.DefaultFonts;
@@ -18,16 +16,17 @@ import gg.essential.universal.UMatrixStack;
 import gg.essential.universal.UResolution;
 import gg.essential.universal.render.URenderPipeline;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiMultiplayer;
 import net.minecraft.client.gui.GuiOptions;
 import net.minecraft.client.gui.GuiSelectWorld;
+import net.minecraft.util.ResourceLocation;
 import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.GL11;
 import org.polydevs.opusmc.nativeui.design.ElementaThemeAdapter;
 import org.polydevs.opusmc.nativeui.design.OpusDesign;
 import org.polydevs.opusmc.nativeui.design.OpusDesign.ColorRole;
-import org.polydevs.opusmc.nativeui.design.OpusDesign.RadiusToken;
 
 /** Elementa-owned Minecraft shell for the main-menu and pause-menu routes. */
 public final class OpusElementaShellScreen extends WindowScreen {
@@ -36,23 +35,33 @@ public final class OpusElementaShellScreen extends WindowScreen {
         PAUSE_MENU
     }
 
+    private enum ButtonGlyph {
+        NONE,
+        SETTINGS,
+        POWER
+    }
+
     private static final OpusDesign DESIGN = OpusDesign.defaultDesign();
     private static final ElementaThemeAdapter THEME = new ElementaThemeAdapter(DESIGN);
-    private static final java.awt.Color BUTTON_NORMAL = THEME.color(ColorRole.SURFACE_RAISED);
+    private static final java.awt.Color BUTTON_NORMAL = new java.awt.Color(14, 16, 25, 232);
+    private static final java.awt.Color BUTTON_HOVER = new java.awt.Color(56, 61, 84, 246);
+    private static final java.awt.Color BUTTON_BORDER = new java.awt.Color(255, 255, 255, 28);
+    private static final java.awt.Color MAIN_MENU_TINT = new java.awt.Color(0, 0, 0, 88);
+    private static final java.awt.Color PAUSE_MENU_TINT = new java.awt.Color(0, 0, 0, 104);
+    private static final float BUTTON_RADIUS = 7f;
+    private static final ResourceLocation MENU_BACKGROUND = new ResourceLocation(
+            "textures/gui/title/background/panorama_0.png");
+    private static final ResourceLocation OPUS_LOCKUP = new ResourceLocation(
+            OpusNativeUiMod.MOD_ID,
+            "textures/gui/opus-wordmark-transparent.png");
     private static final float TEXT_SCALE_MAX_DELTA_SECONDS = 0.1f;
 
     private final Route route;
     private final List<ShellButton> buttons = new ArrayList<>();
-    private final SmoothText status = new SmoothText(
-            "RIGHT SHIFT  •  OPUSCONFIG",
-            false,
-            THEME.color(ColorRole.MUTED));
+    private OpusTexture background;
+    private OpusLegacyBlock backgroundTint;
+    private OpusTexture logo;
     private OpusLegacyBlock panel;
-    private SmoothText title;
-    private SmoothText subtitle;
-    private SmoothTextScale titleScale;
-    private SmoothTextScale subtitleScale;
-    private SmoothTextScale statusScale;
     private OpusShellLayout layout;
     private int frames;
 
@@ -79,67 +88,84 @@ public final class OpusElementaShellScreen extends WindowScreen {
     }
 
     private void buildUi() {
-        OpusLegacyBlock backdrop = new OpusLegacyBlock(THEME.color(ColorRole.BACKDROP));
-        backdrop.setWidth(new RelativeConstraint(1f));
-        backdrop.setHeight(new RelativeConstraint(1f));
-        backdrop.setChildOf(getWindow());
-
-        panel = new OpusLegacyBlock(
-                THEME.color(ColorRole.SURFACE),
-                THEME.radius(RadiusToken.MODAL));
-        panel.setOutline(THEME.color(ColorRole.BORDER), 1f);
-        panel.setChildOf(backdrop);
-
-        title = new SmoothText(
-                route == Route.MAIN_MENU ? "OPUS" : "OPUS PAUSE",
-                false,
-                THEME.color(ColorRole.TEXT));
-        title.setChildOf(panel);
-        titleScale = new SmoothTextScale(title);
-
-        subtitle = new SmoothText(
-                route == Route.MAIN_MENU
-                        ? "Play, configure, and manage your instance"
-                        : "The world is paused; choose an action",
-                false,
-                THEME.color(ColorRole.MUTED));
-        subtitle.setChildOf(panel);
-        subtitleScale = new SmoothTextScale(subtitle);
-
         if (route == Route.MAIN_MENU) {
-            addButton("Singleplayer", this::openSingleplayer, panel);
-            addButton("Multiplayer", this::openMultiplayer, panel);
-            addButton("Minecraft Settings", this::openMinecraftSettings, panel);
-            addButton("OpusConfig", OpusNativeUiMod::openOpusConfig, panel);
-            addButton("Quit Game", this::quitGame, panel);
-        } else {
-            addButton("Resume Game", this::resumeGame, panel);
-            addButton("OpusConfig", OpusNativeUiMod::openOpusConfig, panel);
-            addButton("Minecraft Settings", this::openMinecraftSettings, panel);
-            addButton("Main Menu", this::openMainMenu, panel);
+            /*
+             * Use Minecraft's own panorama source without its multi-pass blur.
+             * This restores visible terrain detail while keeping the shell
+             * recognizably vanilla.
+             */
+            background = new OpusTexture(
+                    MENU_BACKGROUND,
+                    256,
+                    256,
+                    OpusTexture.Fit.COVER,
+                    1f);
+            background.setWidth(new RelativeConstraint(1f));
+            background.setHeight(new RelativeConstraint(1f));
+            background.setChildOf(getWindow());
         }
 
-        status.setChildOf(panel);
-        statusScale = new SmoothTextScale(status);
+        backgroundTint = new OpusLegacyBlock(
+                route == Route.MAIN_MENU ? MAIN_MENU_TINT : PAUSE_MENU_TINT);
+        backgroundTint.setWidth(new RelativeConstraint(1f));
+        backgroundTint.setHeight(new RelativeConstraint(1f));
+        backgroundTint.setChildOf(getWindow());
+
+        /*
+         * This is a transparent Elementa container. The old opaque modal
+         * surface made the shell look like a settings dialog; Lunar's main
+         * menu leaves the scene visible and lets the controls carry the visual
+         * hierarchy.
+         */
+        panel = new OpusLegacyBlock(new java.awt.Color(0, 0, 0, 0));
+        panel.setChildOf(getWindow());
+
+        logo = new OpusTexture(
+                OPUS_LOCKUP,
+                OpusShellLayout.LOCKUP_TEXTURE_WIDTH,
+                OpusShellLayout.LOCKUP_TEXTURE_HEIGHT,
+                OpusTexture.Fit.CONTAIN,
+                1f);
+        logo.setChildOf(panel);
+
+        if (route == Route.MAIN_MENU) {
+            addButton("Singleplayer", ButtonGlyph.NONE, this::openSingleplayer, panel);
+            addButton("Multiplayer", ButtonGlyph.NONE, this::openMultiplayer, panel);
+            addButton("Client", ButtonGlyph.SETTINGS, OpusNativeUiMod::openOpusConfig, panel);
+            addButton("Minecraft", ButtonGlyph.SETTINGS, this::openMinecraftSettings, panel);
+            addButton("Quit Game", ButtonGlyph.POWER, this::quitGame, panel);
+        } else {
+            addButton("Resume Game", ButtonGlyph.NONE, this::resumeGame, panel);
+            addButton("Main Menu", ButtonGlyph.NONE, this::openMainMenu, panel);
+            addButton("Client", ButtonGlyph.SETTINGS, OpusNativeUiMod::openOpusConfig, panel);
+            addButton("Minecraft", ButtonGlyph.SETTINGS, this::openMinecraftSettings, panel);
+        }
     }
 
-    private void addButton(String label, Runnable action, UIComponent parent) {
+    private void addButton(
+            String label,
+            ButtonGlyph glyph,
+            Runnable action,
+            UIComponent parent) {
         OpusLegacyBlock surface = new OpusLegacyBlock(
                 BUTTON_NORMAL,
-                THEME.radius(RadiusToken.CONTROL));
+                BUTTON_RADIUS);
+        surface.setOutline(BUTTON_BORDER, 1f);
         surface.setChildOf(parent);
 
-        UIText text = new UIText(label, false, THEME.color(ColorRole.TEXT));
-        text.setX(new CenterConstraint());
-        text.setY(new CenterConstraint());
-        text.setChildOf(surface);
+        ButtonLabel content = new ButtonLabel(
+                label,
+                glyph,
+                THEME.color(ColorRole.TEXT));
+        content.setWidth(new RelativeConstraint(1f));
+        content.setHeight(new RelativeConstraint(1f));
+        content.setChildOf(surface);
 
-        ShellButton button = new ShellButton(label, surface, text, action);
+        ShellButton button = new ShellButton(label, surface, content, action);
         buttons.add(button);
         surface.onMouseEnterRunnable(() -> animateButton(button, true));
         surface.onMouseLeaveRunnable(() -> animateButton(button, false));
         surface.onMouseClickConsumer(event -> {
-            status.setText("SELECTED  •  " + label);
             NativeUiRuntimeDiagnostics.record("shellAction", label);
             action.run();
         });
@@ -147,7 +173,7 @@ public final class OpusElementaShellScreen extends WindowScreen {
 
     private void animateButton(ShellButton button, boolean hovered) {
         button.surface.setColor(hovered
-                ? THEME.color(ColorRole.ACCENT_HOVER)
+                ? BUTTON_HOVER
                 : BUTTON_NORMAL);
     }
 
@@ -173,36 +199,18 @@ public final class OpusElementaShellScreen extends WindowScreen {
         panel.setWidth(new PixelConstraint(next.panelWidth));
         panel.setHeight(new PixelConstraint(next.panelHeight));
 
-        float contentX = next.buttonX - next.panelX;
-        title.setX(new PixelConstraint(contentX));
-        title.setY(new PixelConstraint(next.titleY - next.panelY));
-        titleScale.setTarget(next.titleScale);
-
-        subtitle.setX(new PixelConstraint(contentX));
-        subtitle.setY(new PixelConstraint(next.subtitleY - next.panelY));
-        subtitleScale.setTarget(next.secondaryScale);
-        if (next.showSubtitle) {
-            subtitle.unhide(false);
-        } else {
-            subtitle.hide(false);
-        }
+        logo.setX(new PixelConstraint(next.logoX - next.panelX));
+        logo.setY(new PixelConstraint(next.logoY - next.panelY));
+        logo.setWidth(new PixelConstraint(next.logoWidth));
+        logo.setHeight(new PixelConstraint(next.logoHeight));
 
         for (int index = 0; index < buttons.size(); index++) {
             ShellButton button = buttons.get(index);
-            button.surface.setX(new PixelConstraint(contentX));
+            button.surface.setX(new PixelConstraint(next.buttonX(index) - next.panelX));
             button.surface.setY(new PixelConstraint(next.buttonY(index) - next.panelY));
-            button.surface.setWidth(new PixelConstraint(next.buttonWidth));
-            button.surface.setHeight(new PixelConstraint(next.buttonHeight));
+            button.surface.setWidth(new PixelConstraint(next.buttonWidth(index)));
+            button.surface.setHeight(new PixelConstraint(next.buttonHeight(index)));
             button.textScale.setTarget(next.buttonTextScale);
-        }
-
-        status.setX(new PixelConstraint(contentX));
-        status.setY(new PixelConstraint(next.footerY - next.panelY));
-        statusScale.setTarget(next.secondaryScale);
-        if (next.showFooter) {
-            status.unhide(false);
-        } else {
-            status.hide(false);
         }
 
         /*
@@ -226,12 +234,9 @@ public final class OpusElementaShellScreen extends WindowScreen {
      */
     private void updateTextScales(float deltaSeconds) {
         float boundedDelta = Math.max(0f, Math.min(deltaSeconds, TEXT_SCALE_MAX_DELTA_SECONDS));
-        titleScale.update(boundedDelta);
-        subtitleScale.update(boundedDelta);
         for (ShellButton button : buttons) {
             button.textScale.update(boundedDelta);
         }
-        statusScale.update(boundedDelta);
     }
 
     private void openSingleplayer() {
@@ -263,6 +268,7 @@ public final class OpusElementaShellScreen extends WindowScreen {
     public void afterInitialization() {
         NativeUiRuntimeDiagnostics.record("elementaAfterInitialization", "true");
         NativeUiRuntimeDiagnostics.record("elementaShellRoute", route.name());
+        NativeUiRuntimeDiagnostics.record("elementaBackgroundBlur", "disabled");
         if (layout != null) {
             NativeUiRuntimeDiagnostics.record("elementaLayout", layout.diagnosticValue());
         }
@@ -347,67 +353,51 @@ public final class OpusElementaShellScreen extends WindowScreen {
         private final SmoothTextScale textScale;
         private final Runnable action;
 
-        private ShellButton(String label, OpusLegacyBlock surface, UIText text, Runnable action) {
+        private ShellButton(
+                String label,
+                OpusLegacyBlock surface,
+                ButtonLabel content,
+                Runnable action) {
             this.label = label;
             this.surface = surface;
-            this.textScale = new SmoothTextScale(text);
+            this.textScale = new SmoothTextScale(content);
             this.action = action;
         }
     }
 
     /**
-     * A text component whose Elementa bounds stay at the font's intrinsic
-     * size while its visible font scale is controlled independently.
-     *
-     * <p>{@link UIText} derives its draw scale from a text-width constraint.
-     * During a native resize that constraint is recalculated alongside the
-     * viewport, which makes free-standing text jump even when its requested
-     * scale is interpolated. This component keeps only stable intrinsic
-     * bounds in the constraint tree and passes the interpolated scale directly
-     * to the same Elementa font provider used by {@code UIText}.</p>
+     * Button content whose font and icon scale are both interpolated directly
+     * during native window resizing. It uses stable full-button bounds, so
+     * neither the text nor the icon can jump at an Elementa constraint
+     * recalculation boundary.
      */
-    private static final class SmoothText extends UIComponent {
+    private static final class ButtonLabel extends UIComponent {
         private final FontProvider fontProvider = DefaultFonts.getVANILLA_FONT_RENDERER();
-        private final boolean shadow;
-        private final java.awt.Color shadowColor;
+        private final String value;
+        private final ButtonGlyph glyph;
         private final java.awt.Color color;
-        private String value;
         private float renderScale = 1f;
 
-        private SmoothText(String value, boolean shadow, java.awt.Color color) {
+        private ButtonLabel(
+                String value,
+                ButtonGlyph glyph,
+                java.awt.Color color) {
             if (value == null) {
                 throw new IllegalArgumentException("value cannot be null");
             }
             if (color == null) {
                 throw new IllegalArgumentException("color cannot be null");
             }
+            if (glyph == null) {
+                throw new IllegalArgumentException("glyph cannot be null");
+            }
             this.value = value;
-            this.shadow = shadow;
-            this.shadowColor = null;
+            this.glyph = glyph;
             this.color = color;
-            updateIntrinsicBounds();
-        }
-
-        private void setText(String nextValue) {
-            if (nextValue == null) {
-                throw new IllegalArgumentException("value cannot be null");
-            }
-            if (value.equals(nextValue)) {
-                return;
-            }
-            value = nextValue;
-            updateIntrinsicBounds();
         }
 
         private void setRenderScale(float nextScale) {
             renderScale = Math.max(0.001f, nextScale);
-        }
-
-        private void updateIntrinsicBounds() {
-            float width = Math.max(1f, fontProvider.getStringWidth(value, 10f));
-            float height = Math.max(1f, fontProvider.getStringHeight(value, 10f));
-            setWidth(new PixelConstraint(width));
-            setHeight(new PixelConstraint(height));
         }
 
         @Override
@@ -418,40 +408,145 @@ public final class OpusElementaShellScreen extends WindowScreen {
                         && !ElementaVersion.Companion.getAtLeastV9Active$Elementa()) {
                     UGraphics.enableBlend();
                 }
-                fontProvider.drawString(
-                        matrixStack,
-                        value,
-                        color,
-                        getLeft(),
-                        getTop(),
-                        10f,
-                        renderScale,
-                        shadow,
-                        shadowColor);
+
+                boolean iconOnly = glyph == ButtonGlyph.POWER;
+                float textWidth = iconOnly
+                        ? 0f
+                        : fontProvider.getStringWidth(value, 10f) * renderScale;
+                float textHeight = iconOnly
+                        ? 0f
+                        : fontProvider.getStringHeight(value, 10f) * renderScale;
+                float iconSize = glyph == ButtonGlyph.NONE ? 0f : 8f * renderScale;
+                float gap = glyph == ButtonGlyph.SETTINGS ? 4f * renderScale : 0f;
+                float contentWidth = iconSize + gap + textWidth;
+                float drawLeft = getLeft() + (getWidth() - contentWidth) / 2f;
+                float centerY = getTop() + getHeight() / 2f;
+
+                if (glyph == ButtonGlyph.SETTINGS) {
+                    drawSettingsGlyph(
+                            drawLeft,
+                            centerY - iconSize / 2f,
+                            iconSize,
+                            color.getRGB());
+                    drawLeft += iconSize + gap;
+                } else if (glyph == ButtonGlyph.POWER) {
+                    drawPowerGlyph(
+                            drawLeft,
+                            centerY - iconSize / 2f,
+                            iconSize,
+                            color.getRGB());
+                }
+
+                if (!iconOnly) {
+                    fontProvider.drawString(
+                            matrixStack,
+                            value,
+                            color,
+                            drawLeft,
+                            centerY - textHeight / 2f,
+                            10f,
+                            renderScale,
+                            false,
+                            null);
+                }
             }
             super.draw(matrixStack);
         }
-    }
 
-    private interface TextScaleSink {
-        void set(float value);
+        private static void drawSettingsGlyph(
+                float left,
+                float top,
+                float size,
+                int color) {
+            float stroke = Math.max(1f, size * 0.13f);
+            float knob = Math.max(2f, size * 0.28f);
+            float[] rows = new float[]{0.18f, 0.50f, 0.82f};
+            float[] knobs = new float[]{0.28f, 0.70f, 0.43f};
+            for (int index = 0; index < rows.length; index++) {
+                float y = top + size * rows[index];
+                drawRect(left, y - stroke / 2f, left + size, y + stroke / 2f, color);
+                float centerX = left + size * knobs[index];
+                drawRect(
+                        centerX - knob / 2f,
+                        y - knob / 2f,
+                        centerX + knob / 2f,
+                        y + knob / 2f,
+                        color);
+            }
+        }
+
+        private static void drawPowerGlyph(
+                float left,
+                float top,
+                float size,
+                int color) {
+            float stroke = Math.max(1f, size * 0.14f);
+            float centerX = left + size / 2f;
+            drawRect(
+                    centerX - stroke / 2f,
+                    top,
+                    centerX + stroke / 2f,
+                    top + size * 0.50f,
+                    color);
+
+            drawRect(
+                    left + size * 0.16f,
+                    top + size * 0.25f,
+                    left + size * 0.30f,
+                    top + size * 0.70f,
+                    color);
+            drawRect(
+                    left + size * 0.70f,
+                    top + size * 0.25f,
+                    left + size * 0.84f,
+                    top + size * 0.70f,
+                    color);
+            drawRect(
+                    left + size * 0.26f,
+                    top + size * 0.68f,
+                    left + size * 0.42f,
+                    top + size * 0.84f,
+                    color);
+            drawRect(
+                    left + size * 0.58f,
+                    top + size * 0.68f,
+                    left + size * 0.74f,
+                    top + size * 0.84f,
+                    color);
+            drawRect(
+                    left + size * 0.40f,
+                    top + size * 0.78f,
+                    left + size * 0.60f,
+                    top + size * 0.92f,
+                    color);
+        }
+
+        private static void drawRect(
+                float left,
+                float top,
+                float right,
+                float bottom,
+                int color) {
+            Gui.drawRect(
+                    (int) Math.floor(left),
+                    (int) Math.floor(top),
+                    (int) Math.ceil(right),
+                    (int) Math.ceil(bottom),
+                    color);
+        }
     }
 
     private static final class SmoothTextScale {
         private final OpusSmoothScale value = new OpusSmoothScale();
-        private final TextScaleSink sink;
+        private final ButtonLabel label;
 
-        private SmoothTextScale(UIText text) {
-            sink = current -> text.setTextScale(new PixelConstraint(current));
-        }
-
-        private SmoothTextScale(SmoothText text) {
-            sink = text::setRenderScale;
+        private SmoothTextScale(ButtonLabel label) {
+            this.label = label;
         }
 
         private void setTarget(float nextTarget) {
             if (value.setTarget(nextTarget)) {
-                sink.set(value.getCurrent());
+                label.setRenderScale(value.getCurrent());
             }
         }
 
@@ -459,7 +554,7 @@ public final class OpusElementaShellScreen extends WindowScreen {
             float previous = value.getCurrent();
             float next = value.update(deltaSeconds);
             if (next != previous) {
-                sink.set(next);
+                label.setRenderScale(next);
             }
         }
     }

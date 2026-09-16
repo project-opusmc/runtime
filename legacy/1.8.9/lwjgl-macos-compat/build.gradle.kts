@@ -26,8 +26,8 @@ val replacementNative = "liblwjgl.dylib"
 val replacementNativeSha1 = "9ade823779dae4be29556dc39ed28b42ba5508e1"
 val replacementNativeSize = 838_892L
 val resizeGuardNativeName = "libopus_lwjgl_resize_guard.dylib"
-val resizeGuardNativeSha1 = "290bf81664ee45a3f699f11ef658724be94a05de"
-val resizeGuardNativeSize = 15_224L
+val resizeGuardNativeSha1 = "b80da68bc3de6c8823bcfdee42d660a90246a09f"
+val resizeGuardNativeSize = 15_696L
 val replacementRootClass = "org/lwjgl/MacOSXSysImplementation.class"
 val patchedOpenGlClasses = setOf(
     "org/lwjgl/opengl/MacOSXDisplay.class",
@@ -278,6 +278,9 @@ tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
                 check(displaySymbols.contains("OPUS_COCOA_LIVE_RESIZE_HANDSHAKE_V10_APPKIT_DRAWABLE_UPDATE")) {
                     "Compatibility display class does not carry the Cocoa live-resize handshake"
                 }
+                check(displaySymbols.contains("opus.lwjgl.macos.liveResizeGuard")) {
+                    "Compatibility display class cannot isolate the live-resize guard for M3 preview"
+                }
                 val peerInfoSymbols = compatibility
                     .getInputStream(compatibility.getJarEntry("org/lwjgl/opengl/MacOSXCanvasPeerInfo.class"))
                     .use { String(it.readBytes(), Charsets.ISO_8859_1) }
@@ -325,7 +328,7 @@ tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
                 }
                 check(
                     String(guardBytes, Charsets.ISO_8859_1)
-                        .contains("OPUS_COCOA_LIVE_RESIZE_GUARD_V9_APPKIT_DRAWABLE_UPDATE"),
+                        .contains("OPUS_COCOA_LIVE_RESIZE_GUARD_V10_MAIN_QUEUE_INSTALL"),
                 ) {
                     "Resize guard marker is missing"
                 }

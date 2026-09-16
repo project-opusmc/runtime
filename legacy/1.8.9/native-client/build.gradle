@@ -56,6 +56,14 @@ def opusSelectedArtifacts = opusSelectedArtifactIds.collect { artifactId ->
     }
     [record: artifact, file: new File(opusNativeUiCacheDir, artifact.file)]
 }
+def opusLwjglCompatPath = System.getenv('OPUS_LWJGL_COMPAT_JAR')?.trim()
+def opusLwjglCompatFile = opusLwjglCompatPath == null || opusLwjglCompatPath.isEmpty()
+        ? null
+        : file(opusLwjglCompatPath)
+if (opusLwjglCompatFile != null && !opusLwjglCompatFile.isFile()) {
+    throw new GradleException("OPUS_LWJGL_COMPAT_JAR is not a file: ${opusLwjglCompatFile}")
+}
+def opusLwjglCompatNativeDir = file("${buildDir}/opus-lwjgl-compat-natives")
 
 def opusSha256 = { File artifact ->
     MessageDigest digest = MessageDigest.getInstance('SHA-256')
@@ -99,6 +107,13 @@ dependencies {
     // runtime configuration, not sourceSets.main.runtimeClasspath. OneConfig's
     // tweaker must therefore be present here before LaunchWrapper starts.
     runtime files(opusSelectedArtifacts.collect { it.file })
+    if (opusLwjglCompatFile != null) {
+        // The packaged runtime supplies this sealed LWJGL replacement before
+        // the legacy implementation. Keep it opt-in here so the ordinary
+        // development lane remains usable without the macOS compatibility
+        // artifact, while exact resize proof can exercise the real runtime.
+        runtime files(opusLwjglCompatFile)
+    }
 }
 
 sourceSets.main.compileClasspath += configurations.nativeUiCompile
@@ -524,7 +539,63 @@ task stageNativeUiRunMods(dependsOn: [verifyNativeClientArtifact, verifyNativeUi
     }
 }
 
+task stageOpusLwjglCompatNatives {
+    group = 'run'
+    description = 'Extracts the verified macOS LWJGL compatibility natives for an exact resize-proof run.'
+    onlyIf { opusLwjglCompatFile != null }
+    if (opusLwjglCompatFile != null) {
+        inputs.file(opusLwjglCompatFile)
+        outputs.dir(opusLwjglCompatNativeDir)
+    }
+    doLast {
+        delete opusLwjglCompatNativeDir
+        opusLwjglCompatNativeDir.mkdirs()
+        copy {
+            from zipTree(opusLwjglCompatFile)
+            include 'liblwjgl.dylib'
+            include 'libopus_lwjgl_resize_guard.dylib'
+            into opusLwjglCompatNativeDir
+        }
+        for (requiredNative in ['liblwjgl.dylib', 'libopus_lwjgl_resize_guard.dylib']) {
+            if (!new File(opusLwjglCompatNativeDir, requiredNative).isFile()) {
+                throw new GradleException(
+                        "LWJGL compatibility native is missing after extraction: ${requiredNative}")
+            }
+        }
+    }
+}
+
 tasks.getByName('runClient').dependsOn stageNativeUiRunMods
+if (opusLwjglCompatFile != null) {
+    tasks.getByName('runClient').dependsOn stageOpusLwjglCompatNatives
+    tasks.getByName('runClient').doFirst {
+        /*
+         * The packaged launcher removes Mojang's sealed LWJGL Java JAR before
+         * putting this complete replacement first. Mirror that classpath
+         * contract in the isolated proof lane; leaving both JARs present
+         * produces sealed-package errors in LaunchWrapper.
+         */
+        classpath = classpath.filter { File entry ->
+            entry.name != 'lwjgl-2.9.2-nightly-20140822.jar'
+        }
+
+        def configuredNativePath = getJvmArgs().find { String argument ->
+            argument.startsWith('-Djava.library.path=')
+        }
+        def originalNativePath = configuredNativePath == null
+                ? ''
+                : configuredNativePath.substring('-Djava.library.path='.length())
+        def combinedNativePath = originalNativePath.isEmpty()
+                ? opusLwjglCompatNativeDir.absolutePath
+                : opusLwjglCompatNativeDir.absolutePath + File.pathSeparator + originalNativePath
+        getJvmArgs().removeAll { String argument ->
+            argument.startsWith('-Djava.library.path=') ||
+                    argument.startsWith('-Dorg.lwjgl.librarypath=')
+        }
+        jvmArgs "-Djava.library.path=${combinedNativePath}"
+        jvmArgs "-Dorg.lwjgl.librarypath=${combinedNativePath}"
+    }
+}
 tasks.getByName('runClient').doFirst {
     def session = UUID.randomUUID().toString()
     opusRuntimeSessionFile.parentFile.mkdirs()

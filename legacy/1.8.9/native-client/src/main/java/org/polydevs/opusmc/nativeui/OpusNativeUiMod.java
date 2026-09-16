@@ -8,6 +8,7 @@ import net.minecraft.client.gui.GuiControls;
 import net.minecraft.client.gui.GuiIngameMenu;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.audio.SoundCategory;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraftforge.client.event.GuiOpenEvent;
 import net.minecraftforge.client.event.GuiScreenEvent;
@@ -20,6 +21,7 @@ import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.InputEvent;
+import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.GL11;
 
@@ -44,14 +46,18 @@ public final class OpusNativeUiMod {
 
     private static final long TOGGLE_DEBOUNCE_NANOS = 150_000_000L;
     private static GuiScreen returnScreen;
+    private static OpusNativeUiMod instance;
 
     private KeyBinding openOpusConfig;
     private OpusConfigModule opusConfig;
     private long lastToggleNanos;
     private String activeScreen;
+    private boolean musicDefaultApplied;
+    private boolean opusConfigVsyncOverride;
 
     @Mod.EventHandler
     public void preInitialize(FMLPreInitializationEvent event) {
+        instance = this;
         NativeUiRuntimeDiagnostics.initialize(event.getModConfigurationDirectory().getParentFile());
         NativeUiRuntimeDiagnostics.recordLifecycle("opus-native-ui-pre-init");
         opusConfig = new OpusConfigModule();
@@ -60,6 +66,7 @@ public final class OpusNativeUiMod {
     @Mod.EventHandler
     public void initialize(FMLInitializationEvent event) {
         NativeUiRuntimeDiagnostics.recordLifecycle("opus-native-ui-init");
+        applyDefaultMusicMute();
 
         openOpusConfig = new KeyBinding(
                 "Open OpusConfig",
@@ -78,6 +85,47 @@ public final class OpusNativeUiMod {
         NativeUiRuntimeDiagnostics.record("controls", "RIGHT_SHIFT=OpusConfig");
         NativeUiRuntimeDiagnostics.record("shellRoutes", "main-menu,pause-menu,minecraft-settings");
         NativeUiLiveProof.installIfRequested(this, Minecraft.getMinecraft().mcDataDir);
+    }
+
+    /**
+     * Applies the requested default once the Minecraft settings and sound
+     * handler are available. The client may still change the Music slider
+     * later in the session, but this policy is not reapplied every tick.
+     */
+    private void applyDefaultMusicMute() {
+        if (musicDefaultApplied) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft == null || minecraft.gameSettings == null) {
+            return;
+        }
+
+        float previousVolume = minecraft.gameSettings.getSoundLevel(SoundCategory.MUSIC);
+        minecraft.gameSettings.setSoundLevel(SoundCategory.MUSIC, 0.0F);
+        if (Float.compare(previousVolume, 0.0F) != 0) {
+            minecraft.gameSettings.saveOptions();
+        }
+
+        float currentVolume = minecraft.gameSettings.getSoundLevel(SoundCategory.MUSIC);
+        musicDefaultApplied = true;
+        NativeUiRuntimeDiagnostics.record("musicPolicy", "startup-default-off");
+        NativeUiRuntimeDiagnostics.record("musicDisabled", Boolean.toString(currentVolume <= 0.0F));
+        NativeUiRuntimeDiagnostics.record("musicVolumeBefore", Float.toString(previousVolume));
+        NativeUiRuntimeDiagnostics.record("musicVolumeAfter", Float.toString(currentVolume));
+    }
+
+    /**
+     * Forge initialization normally runs after GameSettings exists. This
+     * one-shot fallback also covers launch paths where the settings object is
+     * published a few ticks later.
+     */
+    @SubscribeEvent
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase == TickEvent.Phase.END) {
+            applyDefaultMusicMute();
+        }
     }
 
     @SubscribeEvent
@@ -109,6 +157,7 @@ public final class OpusNativeUiMod {
             return;
         }
         returnScreen = minecraft.currentScreen;
+        enableOpusConfigFramePacing();
         GuiUtils.displayScreen(OneConfigGui.create());
         NativeUiRuntimeDiagnostics.record("lastInput", "opusconfig-open");
     }
@@ -118,10 +167,51 @@ public final class OpusNativeUiMod {
         if (!(minecraft.currentScreen instanceof OneConfigGui)) {
             return false;
         }
+        disableOpusConfigFramePacing();
         minecraft.displayGuiScreen(returnScreen);
         returnScreen = null;
         NativeUiRuntimeDiagnostics.record("lastInput", "opusconfig-restore");
         return true;
+    }
+
+    /**
+     * OneConfig renders through NanoVG and is sensitive to a low refresh
+     * interval inherited from the Minecraft drawable. Release VSync only for
+     * the lifetime of the config screen so its interaction and animation
+     * frames are not paced at 30 Hz on the macOS compatibility driver.
+     * Minecraft's user preference is never changed and is restored on exit.
+     */
+    private static void enableOpusConfigFramePacing() {
+        OpusNativeUiMod instance = getInstance();
+        if (instance == null
+                || instance.opusConfigVsyncOverride
+                || !Display.isCreated()) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft == null
+                || minecraft.gameSettings == null
+                || !minecraft.gameSettings.enableVsync) {
+            NativeUiRuntimeDiagnostics.record("opusConfigVsync", "unchanged");
+            return;
+        }
+        Display.setVSyncEnabled(false);
+        instance.opusConfigVsyncOverride = true;
+        NativeUiRuntimeDiagnostics.record("opusConfigVsync", "temporarily-disabled");
+    }
+
+    private static void disableOpusConfigFramePacing() {
+        OpusNativeUiMod instance = getInstance();
+        if (instance == null || !instance.opusConfigVsyncOverride || !Display.isCreated()) {
+            return;
+        }
+        Display.setVSyncEnabled(true);
+        instance.opusConfigVsyncOverride = false;
+        NativeUiRuntimeDiagnostics.record("opusConfigVsync", "restored");
+    }
+
+    private static OpusNativeUiMod getInstance() {
+        return instance;
     }
 
     private boolean handleGuiKey(int eventKey, String source) {
@@ -167,6 +257,12 @@ public final class OpusNativeUiMod {
             event.gui = new OpusElementaShellScreen(OpusElementaShellScreen.Route.MAIN_MENU);
         } else if (event.gui instanceof GuiIngameMenu) {
             event.gui = new OpusElementaShellScreen(OpusElementaShellScreen.Route.PAUSE_MENU);
+        }
+
+        if (event.gui instanceof OneConfigGui) {
+            enableOpusConfigFramePacing();
+        } else if (Minecraft.getMinecraft().currentScreen instanceof OneConfigGui) {
+            disableOpusConfigFramePacing();
         }
 
         String next = screenName(event.gui);

@@ -1,4 +1,13 @@
-# Game side: Forge bridge, Core Mod, transformers, and vanilla UI
+# Game side: Forge bridge, Core Mod, transformers, and current UI baseline
+
+> **Implementation-contract notice — September 15, 2026:** when this Runtime is
+> checked out through the Opus superproject,
+> [Decision 0008](../../docs/decisions/0008-opus-client-launcher-ui-first-mainline.md)
+> makes Client + Launcher, UI first, the active product mainline. This document
+> records the current Forge/Core-Mod artifact contract and its no-product-UI
+> constraints; it does not select the future UI renderer or claim a changed
+> Runtime artifact. Existing `legacy/1.8.9/client/` source is retained
+> reference material, not a current staged product surface.
 
 Everything under this Runtime repository produces Java 8 bytecode for OPUS's pinned Forge +
 OptiFine 1.8.9 runtime. Forge owns Minecraft classloading. OPUS joins that
@@ -18,7 +27,7 @@ failure.
 | `forge` | `bootstrap`, `core`, `patches`, Forge/LaunchWrapper at compile time | Packages `opus-forge-coremod-*.jar` with the `FMLCorePlugin` manifest and telemetry-only Forge transformer adapter. |
 | `patches` | `bootstrap`, `core`, `mappings`, ASM | Verified telemetry and lifecycle bytecode patches only; no product UI transformer or generated screen. |
 | `mappings` | — | Obfuscated-name reference for the locked 1.8.9 target. |
-| `legacy/1.8.9/client/` | legacy ForgeGradle 2.1 lane | Quarantined UI research source. It is not built, packaged, staged, or launched by the production runtime. |
+| `legacy/1.8.9/client/` | legacy ForgeGradle 2.1 lane | Retained Client/UI reference source. It is not built, packaged, staged, or launched by the current production runtime. |
 
 `./gradlew prepareBootstrap` builds and syncs exactly the launcher artifacts
 needed by the Forge path into `build/bootstrap`:
