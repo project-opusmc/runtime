@@ -196,6 +196,23 @@ task harnessWebSurfaceCoordinates(type: JavaExec) {
     }
 }
 
+
+task harnessWebSurfaceTransport(type: JavaExec) {
+    group = 'verification'
+    description = 'Proves Web Surface V2 negotiated three-slot shared-memory transport through 5K Retina.'
+    dependsOn 'harnessClasses', 'buildWebViewHelper'
+    main = 'org.polydevs.opusmc.client.W3FrameTransportHarness'
+    doFirst {
+        classpath = files(
+                sourceSets.harness.output,
+                sourceSets.main.output,
+                sourceSets.main.runtimeClasspath)
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
+    }
+}
+
 processResources {
     dependsOn buildUiDist
     inputs.property 'version', project.version

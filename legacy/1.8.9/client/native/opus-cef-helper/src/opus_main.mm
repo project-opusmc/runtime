@@ -10,6 +10,7 @@
 // Protocol (line-based, loopback TCP; helper is the server):
 //   Java -> helper : HELLO <token>
 //                    VIEW <generation> <w> <h> <scale> <url>
+//                    SHM_RESIZE <request> <total_bytes>
 //                    RELEASE <seq> <slot> | RELOAD <generation> | PING | BYE
 //                    INPUT move <x> <y>
 //                    INPUT leave <x> <y>
@@ -18,6 +19,8 @@
 //                    INPUT char <codepoint>
 //                    INPUT key <windows_vk> <1|0 down>
 //   helper -> Java : READY
+//                    SHM_READY <request> <total_bytes> <slot_bytes>
+//                    SHM_ERROR <request> <reason>
 //                    FRAME <seq> <generation> <slot> <w> <h> <byte_offset>
 //                    PONG
 //
@@ -27,11 +30,10 @@
 // the game's framebuffer — that is what keeps web text crisp instead of an
 // upscaled low-resolution blur.
 //
-// The shared buffer is DOUBLE-BUFFERED: it holds two equally sized slots and
-// each paint lands in the slot the game is not reading, so the game never
-// uploads a half-written frame. Without this, a torn frame would persist on
-// screen indefinitely, because CEF only repaints when something actually
-// changes — there is no next frame to correct it.
+// The shared buffer uses three ownership slots. The Java host grows the same
+// sparse file on demand and waits for SHM_READY before publishing a larger VIEW.
+// Remapping therefore happens on the CEF UI thread between paints, so no frame
+// can be written with a slot stride that the Java host has not acknowledged.
 
 #import <Cocoa/Cocoa.h>
 #include <arpa/inet.h>
@@ -40,6 +42,7 @@
 #include <netinet/in.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -74,14 +77,16 @@ void Log(const char* fmt, ...) {
   fprintf(stderr, "[opus-cef] %s\n", buf);
 }
 
-constexpr size_t kSlots = 2;         // double buffering; see header comment
+constexpr size_t kSlots = 3;
+constexpr size_t kMaxSlotBytes = static_cast<size_t>(128) << 20;
+constexpr size_t kMaxShmBytes = kMaxSlotBytes * kSlots;
 
 // State touched only on the CEF UI thread unless noted.
 std::string g_token;
 int g_width = 1280;
 int g_height = 720;
 float g_scale = 1.0f;                // device scale factor (framebuffer px / DIP)
-unsigned char* g_shm = nullptr;      // mmap'd shared frame buffer (2 slots)
+unsigned char* g_shm = nullptr;      // mmap'd shared frame buffer (3 slots)
 size_t g_shm_cap = 0;                // total mapped bytes
 size_t g_slot_bytes = 0;             // bytes per frame slot (g_shm_cap / kSlots)
 int g_shm_fd = -1;                   // owned descriptor for the mapping
@@ -167,6 +172,51 @@ void RequestShutdownOnUI() {
     // produce one, so the loop can stop immediately.
     CefQuitMessageLoop();
   }
+}
+
+
+bool RemapSharedBuffer(size_t new_cap) {
+  CEF_REQUIRE_UI_THREAD();
+  if (g_shm_fd < 0 || new_cap < kSlots * 4 || new_cap % kSlots != 0
+      || new_cap > kMaxShmBytes || new_cap < g_shm_cap) {
+    return false;
+  }
+  if (new_cap == g_shm_cap) {
+    return true;
+  }
+
+  struct stat info{};
+  if (fstat(g_shm_fd, &info) != 0 || info.st_size < 0
+      || static_cast<uint64_t>(info.st_size) < static_cast<uint64_t>(new_cap)) {
+    Log("shared file is smaller than resize request: file=%lld request=%zu",
+        static_cast<long long>(info.st_size), new_cap);
+    return false;
+  }
+
+  void* mapping = mmap(nullptr, new_cap, PROT_READ | PROT_WRITE, MAP_SHARED,
+                       g_shm_fd, 0);
+  if (mapping == MAP_FAILED) {
+    Log("shared remap to %zu bytes failed", new_cap);
+    return false;
+  }
+
+  unsigned char* old_mapping = g_shm;
+  const size_t old_cap = g_shm_cap;
+  g_shm = static_cast<unsigned char*>(mapping);
+  g_shm_cap = new_cap;
+  g_slot_bytes = new_cap / kSlots;
+  for (size_t index = 0; index < kSlots; ++index) {
+    g_slot_sequence[index].store(0);
+  }
+  g_paint_blocked.store(false);
+  g_geometry_repaint_pending.store(false);
+
+  if (old_mapping != nullptr && old_cap > 0) {
+    munmap(old_mapping, old_cap);
+  }
+  Log("shared transport remapped to %zu bytes (%zu slots of %zu)",
+      g_shm_cap, kSlots, g_slot_bytes);
+  return true;
 }
 
 // <!-- APPEND-CLIENT -->
@@ -543,6 +593,30 @@ bool HandleLine(const std::string& line, bool& authed) {
         }
       });
     }
+  } else if (line.rfind("SHM_RESIZE ", 0) == 0) {
+    unsigned long long request = 0;
+    unsigned long long requested_cap = 0;
+    if (sscanf(line.c_str(), "SHM_RESIZE %llu %llu", &request, &requested_cap) == 2
+        && request > 0 && requested_cap >= kSlots * 4
+        && requested_cap <= kMaxShmBytes
+        && requested_cap % kSlots == 0) {
+      PostUI([request, requested_cap] {
+        const size_t target = static_cast<size_t>(requested_cap);
+        if (RemapSharedBuffer(target)) {
+          SendToClient("SHM_READY " + std::to_string(request) + " "
+                       + std::to_string(g_shm_cap) + " "
+                       + std::to_string(g_slot_bytes));
+          if (g_browser) {
+            g_browser->GetHost()->WasResized();
+            g_browser->GetHost()->Invalidate(PET_VIEW);
+          }
+        } else {
+          SendToClient("SHM_ERROR " + std::to_string(request) + " remap_failed");
+        }
+      });
+    } else {
+      SendToClient("SHM_ERROR " + std::to_string(request) + " invalid_request");
+    }
   } else if (line.rfind("RELEASE ", 0) == 0) {
     unsigned long long sequence = 0;
     int slot = -1;
@@ -692,9 +766,9 @@ int main(int argc, char* argv[]) {
   std::string url = "about:blank";
   std::string shm_path;
   std::string cache_path;
-  // Total mapped bytes across all slots. Sized for a 4K slot so any window the
-  // game can open fits without renegotiating the mapping.
-  size_t shm_cap = static_cast<size_t>(3840) * 2160 * 4 * kSlots;
+  // Java supplies the initial sparse mapping size. It may grow in-process
+  // through SHM_RESIZE as larger Retina viewports are requested.
+  size_t shm_cap = (static_cast<size_t>(1) << 20) * kSlots;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--port" && i + 1 < argc) port = atoi(argv[++i]);
@@ -734,7 +808,6 @@ int main(int argc, char* argv[]) {
     g_cache_path = cache_path;
   }
 
-  constexpr size_t kMaxShmBytes = static_cast<size_t>(3840) * 2160 * 4 * kSlots;
   if (shm_path.empty() || shm_cap < kSlots * 4
       || shm_cap % kSlots != 0 || shm_cap > kMaxShmBytes) {
     Log("FATAL: valid --shm and --shm-size are required");

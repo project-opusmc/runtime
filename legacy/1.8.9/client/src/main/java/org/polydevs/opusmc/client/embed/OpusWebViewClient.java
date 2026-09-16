@@ -17,6 +17,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.logging.log4j.Logger;
 
@@ -34,21 +36,20 @@ import org.apache.logging.log4j.Logger;
  * control socket. A 4K frame is ~33 MB; pushing that through a socket every
  * paint was the instability ceiling of the previous WKWebView helper. Now the
  * socket carries only a one-line notification and the pixels are read straight
- * out of the mapping with zero copies. The mapping is double-buffered by the
- * helper, so the game never uploads a half-written frame.</p>
+ * out of the mapping with zero copies. The mapping uses three ownership slots
+ * and grows on demand when the framebuffer exceeds the current slot capacity.</p>
  *
  * <p>Everything here is fail-closed: an error marks the embedded surface as
  * failed so the Minecraft host can show its minimal lifecycle shell. There is
  * deliberately no second product UI fallback.</p>
  */
 public final class OpusWebViewClient {
-    /** Bytes reserved per frame slot: enough for one 4K BGRA frame. */
-    private static final long SLOT_BYTES = 3840L * 2160L * 4L;
-    private static final int MAX_FRAME_WIDTH = 3840;
-    private static final int MAX_FRAME_HEIGHT = 2160;
+    private static final long MIN_SLOT_BYTES = 1L << 20;
+    private static final long MAX_SLOT_BYTES = 128L << 20;
+    private static final int MAX_FRAME_DIMENSION = 8192;
     /** Must match kSlots in native/opus-cef-helper/src/opus_main.mm. */
-    private static final int SLOTS = 2;
-    private static final long SHM_BYTES = SLOT_BYTES * SLOTS;
+    private static final int SLOTS = 3;
+    private static final long SHM_RESIZE_TIMEOUT_MS = 5000L;
 
     private static final String HELPER_APP = "opus-webview-helper.app";
     private static final String HELPER_BIN = "opus-webview-helper";
@@ -69,6 +70,7 @@ public final class OpusWebViewClient {
         public final int slot;
         public final int width;
         public final int height;
+        private final AtomicBoolean released = new AtomicBoolean();
 
         Frame(ByteBuffer pixels, long sequence, long generation, int slot, int width, int height) {
             this.pixels = pixels;
@@ -83,7 +85,9 @@ public final class OpusWebViewClient {
     private final Logger log;
     private final String helperPath;
     private final AtomicReference<Frame> latest = new AtomicReference<Frame>();
+    private final AtomicInteger outstandingFrames = new AtomicInteger();
     private final Object writeLock = new Object();
+    private final Object shmResizeLock = new Object();
 
     private volatile boolean running;
     private volatile boolean failed;
@@ -98,6 +102,15 @@ public final class OpusWebViewClient {
     private File shmFile;
     private RandomAccessFile shmHandle;
     private volatile MappedByteBuffer shm;
+    private volatile long slotBytes;
+    private volatile long shmBytes;
+    private MappedByteBuffer pendingShm;
+    private long pendingSlotBytes;
+    private long pendingShmBytes;
+    private long pendingShmRequest;
+    private long nextShmRequest;
+    private boolean pendingShmResizeFailed;
+    private volatile boolean transportResizing;
     private int width = 1280;
     private int height = 720;
     private float scale = 1.0F;
@@ -142,7 +155,7 @@ public final class OpusWebViewClient {
                     "--port", Integer.toString(port),
                     "--token", token,
                     "--shm", shmFile.getAbsolutePath(),
-                    "--shm-size", Long.toString(SHM_BYTES),
+                    "--shm-size", Long.toString(shmBytes),
                     "--url", this.url,
                     "--width", Integer.toString(this.width),
                     "--height", Integer.toString(this.height),
@@ -192,16 +205,18 @@ public final class OpusWebViewClient {
     }
 
     /**
-     * Creates and maps the shared frame buffer. The file is sparse: the length is
-     * reserved up front so the mapping never has to be renegotiated on resize,
-     * but only the pages actually painted consume disk.
+     * Creates the initial sparse shared buffer sized for the current viewport.
+     * Larger viewports grow the same file through the SHM_RESIZE handshake.
      */
     private void openSharedBuffer() throws IOException {
+        long required = requiredFrameBytes(width, height, scale);
+        slotBytes = chooseSlotCapacity(required);
+        shmBytes = checkedTotalBytes(slotBytes);
         shmFile = File.createTempFile("opus-cef-", ".shm");
         shmFile.deleteOnExit();
         shmHandle = new RandomAccessFile(shmFile, "rw");
-        shmHandle.setLength(SHM_BYTES);
-        shm = shmHandle.getChannel().map(FileChannel.MapMode.READ_ONLY, 0L, SHM_BYTES);
+        shmHandle.setLength(shmBytes);
+        shm = shmHandle.getChannel().map(FileChannel.MapMode.READ_ONLY, 0L, shmBytes);
         shm.order(ByteOrder.nativeOrder());
     }
 
@@ -213,8 +228,15 @@ public final class OpusWebViewClient {
     /** Releases a published shared-memory slot after upload or rejection. */
     public void release(Frame frame) {
         if (frame != null && frame.sequence > 0L
-                && frame.slot >= 0 && frame.slot < SLOTS) {
+                && frame.slot >= 0 && frame.slot < SLOTS
+                && frame.released.compareAndSet(false, true)) {
             sendLine("RELEASE " + frame.sequence + " " + frame.slot);
+            int remaining = outstandingFrames.decrementAndGet();
+            if (remaining < 0) {
+                outstandingFrames.set(0);
+                log.error("Opus CEF frame ownership accounting underflow");
+                fail();
+            }
         }
     }
 
@@ -238,7 +260,7 @@ public final class OpusWebViewClient {
      * Updates the logical viewport and the device scale factor together. Both are
      * sent only when they change, so calling this every frame is free.
      */
-    public void resize(int width, int height, float scale) {
+    public synchronized void resize(int width, int height, float scale) {
         if (!running || failed) {
             return;
         }
@@ -248,11 +270,174 @@ public final class OpusWebViewClient {
         if (w == this.width && h == this.height && nextScale == this.scale) {
             return;
         }
+        final long required;
+        try {
+            required = requiredFrameBytes(w, h, nextScale);
+        } catch (IllegalArgumentException invalid) {
+            log.warn("Opus CEF viewport is outside the supported transport envelope", invalid);
+            fail();
+            return;
+        }
+        if (!ensureSharedCapacity(required)) {
+            return;
+        }
         this.width = w;
         this.height = h;
         this.scale = nextScale;
         advanceGeneration();
         sendView();
+    }
+
+    public int sharedSlotCount() {
+        return SLOTS;
+    }
+
+    public long sharedSlotBytes() {
+        return slotBytes;
+    }
+
+    public long sharedBufferBytes() {
+        return shmBytes;
+    }
+
+    public int outstandingFrameCount() {
+        return outstandingFrames.get();
+    }
+
+    private boolean ensureSharedCapacity(long required) {
+        if (required <= slotBytes) {
+            return true;
+        }
+        final long targetSlot;
+        final long targetTotal;
+        try {
+            targetSlot = chooseSlotCapacity(required);
+            targetTotal = checkedTotalBytes(targetSlot);
+        } catch (IllegalArgumentException invalid) {
+            log.warn("Opus CEF shared-memory growth request is invalid", invalid);
+            fail();
+            return false;
+        }
+
+        synchronized (shmResizeLock) {
+            if (required <= slotBytes) {
+                return true;
+            }
+            if (pendingShmRequest != 0L || shmHandle == null) {
+                log.warn("Opus CEF shared-memory resize overlapped another transport transition");
+                fail();
+                return false;
+            }
+
+            transportResizing = true;
+            Frame stale = latest.getAndSet(null);
+            release(stale);
+            if (outstandingFrames.get() != 0) {
+                transportResizing = false;
+                log.warn("Opus CEF cannot grow shared memory while {} frame(s) are still owned",
+                        outstandingFrames.get());
+                fail();
+                return false;
+            }
+            try {
+                shmHandle.setLength(targetTotal);
+                MappedByteBuffer mapping = shmHandle.getChannel().map(
+                        FileChannel.MapMode.READ_ONLY, 0L, targetTotal);
+                mapping.order(ByteOrder.nativeOrder());
+                pendingShm = mapping;
+            } catch (IOException failure) {
+                transportResizing = false;
+                log.warn("Opus CEF could not grow its shared frame buffer", failure);
+                fail();
+                return false;
+            }
+
+            if (nextShmRequest >= Long.MAX_VALUE - 1L) {
+                transportResizing = false;
+                log.error("Opus CEF shared-memory request sequence exhausted");
+                fail();
+                return false;
+            }
+            long request = ++nextShmRequest;
+            pendingShmRequest = request;
+            pendingSlotBytes = targetSlot;
+            pendingShmBytes = targetTotal;
+            pendingShmResizeFailed = false;
+            sendLine("SHM_RESIZE " + request + " " + targetTotal);
+
+            long deadline = System.currentTimeMillis() + SHM_RESIZE_TIMEOUT_MS;
+            while (pendingShmRequest == request && running && !failed) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0L) {
+                    break;
+                }
+                try {
+                    shmResizeLock.wait(Math.min(remaining, 100L));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    pendingShmResizeFailed = true;
+                    break;
+                }
+            }
+
+            if (pendingShmRequest == request) {
+                pendingShmRequest = 0L;
+                pendingShm = null;
+                pendingSlotBytes = 0L;
+                pendingShmBytes = 0L;
+                transportResizing = false;
+                log.warn("Opus CEF timed out waiting for shared-memory resize ACK");
+                fail();
+                return false;
+            }
+            if (pendingShmResizeFailed || slotBytes < required) {
+                transportResizing = false;
+                log.warn("Opus CEF shared-memory resize failed");
+                fail();
+                return false;
+            }
+            return true;
+        }
+    }
+
+    private static long requiredFrameBytes(int logicalWidth, int logicalHeight, float scale) {
+        long rasterWidth = Math.max(1L, Math.round(Math.max(1, logicalWidth) * (double) clampScale(scale)));
+        long rasterHeight = Math.max(1L, Math.round(Math.max(1, logicalHeight) * (double) clampScale(scale)));
+        if (rasterWidth > MAX_FRAME_DIMENSION || rasterHeight > MAX_FRAME_DIMENSION) {
+            throw new IllegalArgumentException("frame dimensions exceed " + MAX_FRAME_DIMENSION
+                    + ": " + rasterWidth + "x" + rasterHeight);
+        }
+        if (rasterWidth > Long.MAX_VALUE / rasterHeight
+                || rasterWidth * rasterHeight > Long.MAX_VALUE / 4L) {
+            throw new IllegalArgumentException("frame byte size overflows");
+        }
+        long bytes = rasterWidth * rasterHeight * 4L;
+        if (bytes <= 0L || bytes > MAX_SLOT_BYTES) {
+            throw new IllegalArgumentException("frame requires " + bytes
+                    + " bytes; max slot is " + MAX_SLOT_BYTES);
+        }
+        return bytes;
+    }
+
+    private static long chooseSlotCapacity(long required) {
+        if (required <= 0L || required > MAX_SLOT_BYTES) {
+            throw new IllegalArgumentException("unsupported slot requirement: " + required);
+        }
+        long capacity = MIN_SLOT_BYTES;
+        while (capacity < required && capacity < MAX_SLOT_BYTES) {
+            capacity <<= 1;
+        }
+        if (capacity < required || capacity > MAX_SLOT_BYTES) {
+            throw new IllegalArgumentException("could not size slot for " + required);
+        }
+        return capacity;
+    }
+
+    private static long checkedTotalBytes(long oneSlot) {
+        if (oneSlot <= 0L || oneSlot > Long.MAX_VALUE / SLOTS) {
+            throw new IllegalArgumentException("shared-memory size overflow");
+        }
+        return oneSlot * SLOTS;
     }
 
     public void navigate(String url) {
@@ -384,6 +569,18 @@ public final class OpusWebViewClient {
         // reference leaves it to the collector. The backing file is deleted so it
         // does not outlive the session.
         shm = null;
+        synchronized (shmResizeLock) {
+            pendingShm = null;
+            pendingSlotBytes = 0L;
+            pendingShmBytes = 0L;
+            pendingShmRequest = 0L;
+            pendingShmResizeFailed = false;
+            transportResizing = false;
+            outstandingFrames.set(0);
+            slotBytes = 0L;
+            shmBytes = 0L;
+            shmResizeLock.notifyAll();
+        }
         if (shmHandle != null) {
             try {
                 shmHandle.close();
@@ -418,6 +615,10 @@ public final class OpusWebViewClient {
                 if (header.equals("READY")) {
                     ready = true;
                     log.info("Opus CEF helper is ready");
+                } else if (header.startsWith("SHM_READY ")) {
+                    handleSharedResizeReady(header);
+                } else if (header.startsWith("SHM_ERROR ")) {
+                    handleSharedResizeError(header);
                 } else if (header.startsWith("FRAME ")) {
                     publishFrame(header);
                 }
@@ -434,6 +635,73 @@ public final class OpusWebViewClient {
                 fail();
             }
         }
+    }
+
+    private void handleSharedResizeReady(String header) {
+        String[] parts = header.split(" ");
+        if (parts.length != 4) {
+            warnOnce("Opus CEF helper sent malformed SHM_READY: " + header);
+            return;
+        }
+        try {
+            long request = Long.parseLong(parts[1]);
+            long total = Long.parseLong(parts[2]);
+            long oneSlot = Long.parseLong(parts[3]);
+            synchronized (shmResizeLock) {
+                if (request != pendingShmRequest || request == 0L) {
+                    return;
+                }
+                if (pendingShm == null || total != pendingShmBytes
+                        || oneSlot != pendingSlotBytes || total != oneSlot * SLOTS) {
+                    pendingShmResizeFailed = true;
+                } else {
+                    shm = pendingShm;
+                    slotBytes = oneSlot;
+                    shmBytes = total;
+                    pendingShmResizeFailed = false;
+                    log.info("Opus CEF shared-memory transport grew to {} slots x {} bytes",
+                            SLOTS, oneSlot);
+                }
+                transportResizing = false;
+                pendingShm = null;
+                pendingSlotBytes = 0L;
+                pendingShmBytes = 0L;
+                pendingShmRequest = 0L;
+                shmResizeLock.notifyAll();
+            }
+        } catch (RuntimeException malformed) {
+            synchronized (shmResizeLock) {
+                pendingShmResizeFailed = true;
+                transportResizing = false;
+                pendingShmRequest = 0L;
+                shmResizeLock.notifyAll();
+            }
+            warnOnce("Opus CEF helper sent unparseable SHM_READY: " + header);
+        }
+    }
+
+    private void handleSharedResizeError(String header) {
+        String[] parts = header.split(" ", 3);
+        long request = 0L;
+        if (parts.length >= 2) {
+            try {
+                request = Long.parseLong(parts[1]);
+            } catch (RuntimeException ignored) {
+                request = 0L;
+            }
+        }
+        synchronized (shmResizeLock) {
+            if (request == pendingShmRequest && request != 0L) {
+                pendingShmResizeFailed = true;
+                transportResizing = false;
+                pendingShm = null;
+                pendingSlotBytes = 0L;
+                pendingShmBytes = 0L;
+                pendingShmRequest = 0L;
+                shmResizeLock.notifyAll();
+            }
+        }
+        warnOnce("Opus CEF helper rejected shared-memory resize: " + header);
     }
 
     /** Parses {@code FRAME <seq> <generation> <slot> <w> <h> <offset>}. */
@@ -456,20 +724,28 @@ public final class OpusWebViewClient {
             int w = Integer.parseInt(parts[4]);
             int h = Integer.parseInt(parts[5]);
             long offset = Long.parseLong(parts[6]);
+            if (transportResizing) {
+                releaseHeaderSlot(sequence, slot);
+                return;
+            }
             if (sequence <= 0L || frameGeneration <= 0L || slot < 0 || slot >= SLOTS
-                    || w <= 0 || h <= 0 || w > MAX_FRAME_WIDTH || h > MAX_FRAME_HEIGHT
+                    || w <= 0 || h <= 0 || w > MAX_FRAME_DIMENSION || h > MAX_FRAME_DIMENSION
                     || offset < 0L) {
                 releaseHeaderSlot(sequence, slot);
                 warnOnce("Opus CEF helper sent an out-of-range frame: " + header);
                 return;
             }
             long bytes = (long) w * h * 4L;
-            long expectedOffset = (long) slot * SLOT_BYTES;
-            if (offset != expectedOffset || offset > SHM_BYTES
-                    || bytes <= 0L || bytes > SHM_BYTES - offset) {
+            long currentSlotBytes = slotBytes;
+            long currentShmBytes = shmBytes;
+            long expectedOffset = (long) slot * currentSlotBytes;
+            if (currentSlotBytes <= 0L || currentShmBytes <= 0L
+                    || offset != expectedOffset || offset > currentShmBytes
+                    || bytes <= 0L || bytes > currentSlotBytes
+                    || bytes > currentShmBytes - offset) {
                 releaseHeaderSlot(sequence, slot);
                 warnOnce("Opus CEF frame " + w + "x" + h + " at " + offset
-                        + " does not fit the shared buffer; dropping");
+                        + " does not fit the negotiated shared buffer; dropping");
                 return;
             }
             ByteBuffer view = mapping.duplicate();
@@ -482,6 +758,7 @@ public final class OpusWebViewClient {
                     slot,
                     w,
                     h);
+            outstandingFrames.incrementAndGet();
             if (frameGeneration != generation) {
                 release(frame);
                 return;
@@ -521,6 +798,10 @@ public final class OpusWebViewClient {
         }
         running = false;
         ready = false;
+        synchronized (shmResizeLock) {
+            transportResizing = false;
+            shmResizeLock.notifyAll();
+        }
         closeQuietly(socket);
     }
 

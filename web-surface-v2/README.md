@@ -27,3 +27,15 @@ Run the complete W2 gate:
 ```
 
 The CEF oracle validates real BGRA pixels through DPR 2.0 at a 3840x2160 raster. The coordinate contract itself also covers 5120x2880; W3 must replace the legacy fixed-4K shared-memory capacity before that larger raster can be transported.
+
+## W3 — negotiated frame transport
+
+W3 replaces the fixed 4K double buffer with three ownership slots and grow-on-demand shared memory. Growth is acknowledged through `SHM_RESIZE` / `SHM_READY`, stale mappings are never adopted before helper acknowledgement, and remap is fail-closed while an old frame remains owned.
+
+The transport has been proven through a `5120x2880` BGRA CEF raster (`2560x1440 @2x`) using `3 x 64 MiB` slots.
+
+Run:
+
+```bash
+./web-surface-v2/scripts/run-w3.sh
+```
