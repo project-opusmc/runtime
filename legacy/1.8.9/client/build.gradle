@@ -57,6 +57,8 @@ minecraft {
 
 def opusUiDir = file('../../../../ui')
 def opusUiDist = file("${opusUiDir}/dist")
+def opusUiV2Dir = file('../../../../ui-v2')
+def opusUiV2Dist = file("${opusUiV2Dir}/dist")
 
 /**
  * Builds the Opus web UI SPA (Svelte 5 + Vite) before the client mod is
@@ -78,6 +80,23 @@ task buildUiDist(type: Exec) {
     inputs.dir("${opusUiDir}/src")
     inputs.dir("${opusUiDir}/public")
     outputs.dir opusUiDist
+}
+
+
+task buildUiV2Dist(type: Exec) {
+    description = 'Builds the W5 React Web Surface V2 bundle without switching production resources.'
+    group = 'verification'
+    workingDir opusUiV2Dir
+    commandLine 'npm', 'run', 'build'
+    inputs.files(
+            "${opusUiV2Dir}/package.json",
+            "${opusUiV2Dir}/package-lock.json",
+            "${opusUiV2Dir}/vite.config.ts",
+            "${opusUiV2Dir}/tsconfig.json",
+            "${opusUiV2Dir}/tsconfig.node.json",
+            "${opusUiV2Dir}/index.html")
+    inputs.dir("${opusUiV2Dir}/src")
+    outputs.dir opusUiV2Dist
 }
 
 def opusJavac = System.getenv('OPUS_FORGE_UI_JAVAC')
@@ -228,6 +247,24 @@ task harnessWebSurfaceInput(type: JavaExec) {
         if (opusCefHelperHarnessApp.isDirectory()) {
             systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
         }
+    }
+}
+
+
+task harnessWebSurfaceReactV2(type: JavaExec) {
+    group = 'verification'
+    description = 'Proves the production React Web Surface V2 bundle through CEF OSR.'
+    dependsOn 'harnessClasses', 'buildWebViewHelper', 'buildUiV2Dist'
+    main = 'org.polydevs.opusmc.client.W5ReactSurfaceHarness'
+    doFirst {
+        classpath = files(
+                sourceSets.harness.output,
+                sourceSets.main.output,
+                sourceSets.main.runtimeClasspath)
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
+        systemProperty 'opus.ui.v2.dist', opusUiV2Dist.absolutePath
     }
 }
 

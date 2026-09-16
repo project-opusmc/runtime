@@ -43,7 +43,7 @@ public final class W2CefCoordinateHarness {
                 float scale = row[2] / 100.0F;
                 if (index > 0) client.resize(logicalWidth, logicalHeight, scale);
 
-                OpusWebViewClient.Frame frame = awaitFrame(
+                OpusWebViewClient.Frame frame = awaitPatternFrame(
                         client, logicalWidth, logicalHeight, scale);
                 OpusDisplayMetrics metrics = tracker.update(
                         logicalWidth, logicalHeight, frame.width, frame.height);
@@ -122,6 +122,40 @@ public final class W2CefCoordinateHarness {
 
     private static boolean close(int actual, int expected) {
         return Math.abs(actual - expected) <= 2;
+    }
+
+    private static OpusWebViewClient.Frame awaitPatternFrame(OpusWebViewClient client,
+            int logicalWidth, int logicalHeight, float scale) throws Exception {
+        long deadline = System.currentTimeMillis() + FRAME_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            require(!client.isFailed(), "CEF helper entered failed state");
+            OpusWebViewClient.Frame frame = client.consumeFrame();
+            if (frame != null) {
+                if (client.isCurrent(frame, logicalWidth, logicalHeight, scale)) {
+                    OpusDisplayMetrics metrics = new OpusDisplayMetrics(
+                            1L, logicalWidth, logicalHeight, frame.width, frame.height);
+                    if (colorMatches(frame, metrics, 160, 104, 17, 68, 119)) return frame;
+                }
+                client.release(frame);
+            }
+            Thread.sleep(10L);
+        }
+        throw new IllegalStateException("timed out waiting for fully rasterized CEF pattern");
+    }
+
+    private static boolean colorMatches(OpusWebViewClient.Frame frame, OpusDisplayMetrics metrics,
+            int logicalX, int logicalY, int red, int green, int blue) {
+        int x = metrics.logicalToFramebufferX(logicalX);
+        int y = metrics.logicalToFramebufferTopY(logicalY);
+        int offset = (y * frame.width + x) * 4;
+        ByteBuffer pixels = frame.pixels.duplicate();
+        if (offset < 0 || offset + 3 >= pixels.limit()) return false;
+        int actualBlue = pixels.get(offset) & 0xFF;
+        int actualGreen = pixels.get(offset + 1) & 0xFF;
+        int actualRed = pixels.get(offset + 2) & 0xFF;
+        int actualAlpha = pixels.get(offset + 3) & 0xFF;
+        return actualAlpha == 255
+                && close(actualRed, red) && close(actualGreen, green) && close(actualBlue, blue);
     }
 
     private static OpusWebViewClient.Frame awaitFrame(OpusWebViewClient client,

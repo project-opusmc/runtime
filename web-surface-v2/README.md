@@ -49,3 +49,13 @@ Run:
 ```bash
 ./web-surface-v2/scripts/run-w4.sh
 ```
+
+## W5 — React Web Surface V2
+
+W5 adds the separate `ui-v2/` React/TypeScript/Vite lane and proves its real production bundle through CEF OSR. The existing Svelte UI remains the production Minecraft resource target until W6.
+
+Run:
+
+```bash
+./web-surface-v2/scripts/run-w5.sh
+```
