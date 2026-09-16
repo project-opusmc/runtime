@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "platform": "macosarm64",
+  "cefVersion": "144.0.35+g12f1636+chromium-144.0.7559.262",
+  "chromiumVersion": "144.0.7559.262",
+  "file": "cef_binary_144.0.35+g12f1636+chromium-144.0.7559.262_macosarm64.tar.bz2",
+  "url": "https://cef-builds.spotifycdn.com/cef_binary_144.0.35+g12f1636+chromium-144.0.7559.262_macosarm64.tar.bz2",
+  "size": 265016044,
+  "sha1": "a948048e1c5638652ac8d06278a6f66cc78e9c6e"
+}

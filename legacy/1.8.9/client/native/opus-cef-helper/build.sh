@@ -34,7 +34,7 @@ GUARD="$APP/Contents/Frameworks/opus-keychain-guard.dylib"
 
 echo "== compile main =="
 echo "== compile Keychain guard =="
-clang++ "${CXXFLAGS[@]}" -dynamiclib \
+clang++ -std=c++20 -arch arm64 -arch x86_64 -O2 -Wall -Wno-unused-parameter -Wno-deprecated-declarations -dynamiclib \
   "$HERE/src/opus_keychain_guard.mm" -framework Security \
   -install_name '@rpath/opus-keychain-guard.dylib' \
   -o "$GUARD"

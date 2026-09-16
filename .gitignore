@@ -19,3 +19,5 @@
 /.vscode/
 /.DS_Store
 *.iml
+
+/legacy/1.8.9/client/.gradle-v2-harness/
