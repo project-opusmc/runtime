@@ -20,7 +20,7 @@ final class OpusForgeClassTransformerTest {
 
     @Test
     void reportsTheTelemetryAndOptiFineForgeTransformerChain() {
-        assertEquals(6, OpusForgeClassTransformer.transformerCount());
+        assertEquals(7, OpusForgeClassTransformer.transformerCount());
     }
 
     @Test
@@ -31,7 +31,7 @@ final class OpusForgeClassTransformerTest {
 
         byte[] transformed = transformer.transform(className, className, placeholder);
 
-        assertEquals(6, transformer.configuredTransformerCount());
+        assertEquals(7, transformer.configuredTransformerCount());
         assertEquals("java/lang/Object", new ClassReader(transformed).getSuperName());
     }
 
