@@ -267,6 +267,22 @@ task harnessWebSurfaceReactV2(type: JavaExec) {
     }
 }
 
+task harnessWebSurfaceHostNavigation(type: JavaExec) {
+    group = 'verification'
+    description = 'Proves production React host-mode navigation ACKs through the real InteropServer and CEF helper.'
+    dependsOn 'harnessClasses', 'processResources', 'buildWebViewHelper'
+    main = 'org.polydevs.opusmc.client.HostNavigationAckHarness'
+    doFirst {
+        classpath = files(
+                sourceSets.harness.output,
+                sourceSets.main.output,
+                sourceSets.main.runtimeClasspath)
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
+    }
+}
+
 task harnessWebSurfaceLifecycleW7(type: JavaExec) {
     group = 'verification'
     description = 'Stress-tests CEF lifecycle, resize/DPR transitions, forced death, and recovery.'

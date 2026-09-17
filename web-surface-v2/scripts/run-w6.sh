@@ -17,7 +17,7 @@ echo 'W6 production compile/resource/bridge gate'
 cd "$client"
 env OPUS_FORGE_UI_JAVAC="$jdk8/bin/javac" \
   GRADLE_USER_HOME="$cache/harness-gradle-home" JAVA_HOME="$jdk8" PATH="$jdk8/bin:$PATH" \
-  "$gradle" --no-daemon compileJava processResources harnessBridge
+  "$gradle" --no-daemon compileJava processResources harnessBridge harnessWebSurfaceHostNavigation
 
 screen="$client/src/main/java/org/polydevs/opusmc/client/OpusClientScreen.java"
 if grep -q 'MinecraftUiScale' "$screen"; then
