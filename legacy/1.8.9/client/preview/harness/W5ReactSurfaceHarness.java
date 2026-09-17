@@ -46,7 +46,7 @@ public final class W5ReactSurfaceHarness {
             awaitOracle(client, 1280, 720, 1.5F, HOME);
             System.out.println("PASS real React production bundle reaches Home oracle");
 
-            click(client, 105, 166, 0);
+            click(client, 70, 200, 0);
             awaitOracle(client, 1280, 720, 1.5F, MODULES_ON);
             System.out.println("PASS native pointer routes Home -> Modules in React bundle");
 
@@ -54,9 +54,9 @@ public final class W5ReactSurfaceHarness {
             // completed its final layout pass. Give Chromium one bounded settle
             // interval before exercising the fixed native hit point.
             Thread.sleep(250L);
-            client.sendMouseMove(1180, 170);
+            client.sendMouseMove(1230, 694);
             Thread.sleep(50L);
-            click(client, 1180, 170, 0);
+            click(client, 1230, 694, 0);
             awaitOracle(client, 1280, 720, 1.5F, MODULES_OFF);
             System.out.println("PASS native pointer toggles selected React module");
 
@@ -64,7 +64,7 @@ public final class W5ReactSurfaceHarness {
             awaitOracle(client, 1280, 720, 1.5F, SETTINGS);
             System.out.println("PASS native keyboard S routes Modules -> Settings");
 
-            click(client, 1060, 255, 0);
+            click(client, 500, 194, 0);
             awaitOracle(client, 1280, 720, 1.5F, SETTINGS_CHANGED);
             System.out.println("PASS settings pointer interaction repaints deterministic React state");
 

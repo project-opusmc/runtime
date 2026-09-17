@@ -36,6 +36,13 @@ public final class W7LifecycleHarness {
             awaitFrame(client, 960, 540, 2.0F);
             pass("initial helper renders React surface");
 
+            long reloadGeneration = client.reload();
+            require(reloadGeneration > 0L, "reload did not allocate a new generation");
+            awaitFrame(client, 960, 540, 2.0F);
+            require(client.hasPublishedGeneration(reloadGeneration),
+                    "reload generation was not published before readiness");
+            pass("reload waits for a newly published CEF generation");
+
             int[][] sizes = {{1280, 720}, {800, 500}, {1440, 900}, {960, 540}};
             float[] scales = {1.5F, 2.0F, 1.25F, 2.0F};
             for (int round = 0; round < 3; round++) {

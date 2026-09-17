@@ -483,12 +483,21 @@ public final class OpusWebViewClient {
      * navigation desync recovery: a plain {@link #navigate} to the same
      * route is a no-op, so recovery must ask for a real reload instead.
      */
-    public void reload() {
+    public synchronized long reload() {
         if (!running || failed) {
-            return;
+            return -1L;
         }
         advanceGeneration();
+        if (failed) {
+            return -1L;
+        }
         sendLine("RELOAD " + generation);
+        return generation;
+    }
+
+    /** True after CEF has published a frame for this generation or a newer one. */
+    public boolean hasPublishedGeneration(long expectedGeneration) {
+        return expectedGeneration > 0L && lastPublishedGeneration >= expectedGeneration;
     }
 
     private void sendView() {

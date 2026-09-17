@@ -1,6 +1,7 @@
 package org.polydevs.opusmc.client;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.audio.SoundCategory;
 import net.minecraft.client.gui.GuiIngameMenu;
 import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiMultiplayer;
@@ -72,6 +73,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     private final ModuleRegistry moduleRegistry;
     private final HudManager hudManager;
     private final UiPreviewSession previewSession;
+    private final OpusControlSession controlSession;
     private final OpusInteropServer interopServer;
     private final UiNavigationManager uiNavigation;
     private final String[] captureRouteNames = captureRoutes(System.getProperty("opus.ui.capture.route"));
@@ -112,6 +114,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         this.moduleRegistry.register(armorStatusModule);
         this.hudManager = new HudManager(Arrays.asList(fpsModule.widget(), armorStatusModule.widget()));
         this.previewSession = UiPreviewSession.fromSystemProperties(log);
+        this.controlSession = OpusControlSession.fromSystemProperties(log);
         this.interopServer = new OpusInteropServer(log);
         this.uiNavigation = new UiNavigationManager(log, interopServer);
         this.interopServer.setNavigationManager(uiNavigation);
@@ -122,6 +125,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
 
     void initialize() {
         settingsStore.reload();
+        enforceMinecraftMusicDisabled();
         ClientRegistry.registerKeyBinding(openOptionsKey);
         MinecraftForge.EVENT_BUS.register(this);
         FMLCommonHandler.instance().bus().register(this);
@@ -163,12 +167,22 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         interopServer.stop();
     }
 
+    private void enforceMinecraftMusicDisabled() {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft.gameSettings != null
+                && minecraft.gameSettings.getSoundLevel(SoundCategory.MUSIC) != 0.0F) {
+            minecraft.gameSettings.setSoundLevel(SoundCategory.MUSIC, 0.0F);
+            minecraft.gameSettings.saveOptions();
+        }
+    }
+
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
 
+        enforceMinecraftMusicDisabled();
         updateEscapePauseGuard();
 
         while (openOptionsKey.isPressed()) {
@@ -182,6 +196,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
                 }
             }
         }
+        controlSession.tick(this);
         previewSession.tick(this);
         runCaptureProbe();
     }
@@ -1150,6 +1165,59 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     public void moveHudModule(String moduleId, int x, int y) {
         setModuleSetting(moduleId, "offsetX", String.valueOf(Math.max(0, x)));
         setModuleSetting(moduleId, "offsetY", String.valueOf(Math.max(0, y)));
+    }
+
+    boolean controlOpenRoute(String routeId, String moduleId, String settingsSection) {
+        UiRoute route = routeFromWeb(routeId, moduleId, settingsSection);
+        if (route == null || !canNavigateTo(route)) {
+            return false;
+        }
+        openPreviewRoute(route);
+        return true;
+    }
+
+    long controlReloadUi() {
+        OpusWebViewClient webView = embeddedWebView;
+        if (webView == null || webView.isFailed()) {
+            return -1L;
+        }
+        return webView.reload();
+    }
+
+    boolean controlGenerationPublished(long generation) {
+        OpusWebViewClient webView = embeddedWebView;
+        return webView != null && !webView.isFailed() && webView.hasPublishedGeneration(generation);
+    }
+
+    String controlRouteName() {
+        return previewRouteName();
+    }
+
+    boolean controlProductSurfaceReady() {
+        return previewProductSurfaceReady();
+    }
+
+    boolean controlProductSurfaceFailed() {
+        return previewProductSurfaceFailed();
+    }
+
+    String controlProductSurfaceState() {
+        return previewProductSurfaceState();
+    }
+
+    UiBounds controlProductViewport() {
+        return previewProductViewport();
+    }
+
+    float controlDeviceScale() {
+        UiBounds viewport = previewProductViewport();
+        if (viewport.width <= 0 || viewport.height <= 0) {
+            return 0.0F;
+        }
+        Minecraft minecraft = Minecraft.getMinecraft();
+        float scaleX = minecraft.displayWidth / (float) viewport.width;
+        float scaleY = minecraft.displayHeight / (float) viewport.height;
+        return Math.min(scaleX, scaleY);
     }
 
     /**

@@ -166,8 +166,6 @@ final class OpusClientScreen extends GuiScreen {
                 if (webView.isCurrent(
                         frame, productViewport.width, productViewport.height, embeddedScale())) {
                     webSurface.upload(frame);
-                } else {
-                    webSurface.dispose();
                 }
             } finally {
                 webView.release(frame);
@@ -423,7 +421,8 @@ final class OpusClientScreen extends GuiScreen {
 
     private void commitNavigation() {
         clearInputOwnership();
-        webSurface.dispose();
+        // Keep the last good texture visible while the browser commits the
+        // next route, but disable embedded input until a current frame lands.
         webState = WebState.STARTING;
         controller.onNavigationChanged(navigation);
         if (webView != null && !webView.isFailed()) {
@@ -525,7 +524,9 @@ final class OpusClientScreen extends GuiScreen {
         inputMapper = new OpusInputMapper(displayMetrics);
         productViewport = new UiBounds(0, 0, logicalWidth, logicalHeight);
         clearInputOwnership();
-        webSurface.dispose();
+        // Do not destroy the previous generation during live resize. The last
+        // good texture remains visible and is temporarily stretched to the
+        // new logical viewport until CEF publishes the current generation.
         webState = WebState.STARTING;
         if (webView != null && !webView.isFailed()) {
             webView.resize(productViewport.width, productViewport.height, embeddedScale());
@@ -545,7 +546,7 @@ final class OpusClientScreen extends GuiScreen {
     }
 
     private boolean productSurfaceReady() {
-        return embeddedInputActive() && webSurface.hasTexture();
+        return webView != null && !webView.isFailed() && webSurface.hasTexture();
     }
 
     private boolean nativeHudCanvasOwnsPoint(int x, int y) {
