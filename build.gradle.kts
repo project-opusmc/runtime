@@ -53,12 +53,15 @@ val oneConfigForkJar = oneConfigProject.file(
 )
 val nativeClientProject = layout.projectDirectory.dir("legacy/1.8.9/native-client")
 val nativeClientJar = nativeClientProject.file("build/libs/opus-native-ui-1.8.9-0.1.0.jar")
+val webClientProject = layout.projectDirectory.dir("legacy/1.8.9/client")
+val webClientJar = webClientProject.file("build/libs/opus-forge-client-0.0.1-preview.3.jar")
 val nativeUiBuildCache = layout.buildDirectory.dir("native-ui-cache")
 val nativeUiSourceCache = file(
     System.getenv("OPUS_NATIVE_UI_CACHE_DIR")
         ?: "${System.getProperty("user.home")}/.cache/opus-native-ui",
 )
 val nativeUiGradleUserHome = layout.buildDirectory.dir("native-client-gradle-user-home")
+val webClientGradleUserHome = layout.buildDirectory.dir("web-client-gradle-user-home")
 val oneConfigGradleUserHome = layout.buildDirectory.dir("oneconfig-gradle-user-home")
 val oneConfigGradle = file(
     System.getenv("OPUS_ONECONFIG_GRADLE")
@@ -70,7 +73,7 @@ val oneConfigLauncherJdk = file(
 )
 val oneConfigJava8Home = file(
     System.getenv("OPUS_ONECONFIG_JAVA8_HOME")
-        ?: "/Users/zvwgvx/.cache/opus-oneconfig-stock-build/toolchains/jdk8u502-b07/Contents/Home",
+        ?: "${System.getProperty("user.home")}/.cache/opus-forge-ui/jdk8u502-b07/Contents/Home",
 )
 
 val buildOpusConfig = tasks.register<Exec>("buildOpusConfig") {
@@ -154,23 +157,40 @@ val buildNativeUi = tasks.register<Exec>("buildNativeUi") {
     )
 }
 
+val buildWebClient = tasks.register<Exec>("buildWebClient") {
+    group = "build"
+    description = "Builds the React/CEF Web Surface Forge client shipped as the active product UI."
+    workingDir(webClientProject)
+    inputs.dir(webClientProject.dir("src"))
+    inputs.dir(layout.projectDirectory.dir("../ui-v2"))
+    inputs.dir(layout.projectDirectory.dir("web-surface-v2"))
+    inputs.file(webClientProject.file("build.gradle"))
+    outputs.file(webClientJar)
+    environment("JAVA_HOME", oneConfigJava8Home)
+    environment("OPUS_FORGE_UI_JAVAC", oneConfigJava8Home.resolve("bin/javac"))
+    environment("GRADLE_USER_HOME", webClientGradleUserHome.get().asFile.absolutePath)
+    environment("PATH", "${oneConfigJava8Home}/bin:${System.getenv("PATH") ?: ""}")
+    val legacyGradle = file(
+        System.getenv("OPUS_FORGE_UI_GRADLE")
+            ?: "${System.getProperty("user.home")}/.cache/opus-forge-ui/gradle-2.14.1/bin/gradle",
+    )
+    commandLine(legacyGradle.absolutePath, "--no-daemon", "clean", "verifyClientArtifact")
+}
+
 tasks.register<Sync>("prepareBootstrap") {
     dependsOn(
         ":bootstrap:verifyBootstrapArtifact",
         ":legacy:1.8.9:forge:verifyCoremodArtifact",
         ":legacy:1.8.9:lwjgl-macos-compat:verifyMacOsLwjglCompatibilityArtifact",
-        buildNativeUi,
+        buildWebClient,
     )
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     from(project(":bootstrap").tasks.named("jar"))
     from(project(":legacy:1.8.9:forge").tasks.named("jar"))
     from(project(":legacy:1.8.9:lwjgl-macos-compat").tasks.named("jar"))
-    from(nativeClientJar)
-    from(nativeUiBuildCache) {
-        include("opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar")
-        include("elementa-762.jar")
-        include("universalcraft-1.8.9-forge-516.jar")
+    from(webClientJar) {
+        rename { "opus-native-ui-1.8.9-0.1.0.jar" }
     }
     into(layout.buildDirectory.dir("bootstrap"))
 }
@@ -201,21 +221,6 @@ val runtimeArtifacts = listOf(
         role = "native-ui",
         sourceName = "opus-native-ui-1.8.9-0.1.0.jar",
         releaseName = "opus-native-ui-1.8.9-0.1.0.jar",
-    ),
-    RuntimeArtifact(
-        role = "opusconfig",
-        sourceName = "opusconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
-        releaseName = "opus-oneconfig-1.8.9-forge-0.2.2-alpha228-full.jar",
-    ),
-    RuntimeArtifact(
-        role = "elementa",
-        sourceName = "elementa-762.jar",
-        releaseName = "opus-elementa-762.jar",
-    ),
-    RuntimeArtifact(
-        role = "universalcraft",
-        sourceName = "universalcraft-1.8.9-forge-516.jar",
-        releaseName = "opus-universalcraft-1.8.9-forge-516.jar",
     ),
 )
 val runtimeVersion = project.version.toString()

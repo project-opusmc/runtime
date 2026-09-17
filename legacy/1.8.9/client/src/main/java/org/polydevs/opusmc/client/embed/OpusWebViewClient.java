@@ -50,6 +50,7 @@ public final class OpusWebViewClient {
     /** Must match kSlots in native/opus-cef-helper/src/opus_main.mm. */
     private static final int SLOTS = 3;
     private static final long SHM_RESIZE_TIMEOUT_MS = 5000L;
+    private static final long PAINT_RETRY_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(150L);
 
     private static final String HELPER_APP = "opus-webview-helper.app";
     private static final String HELPER_BIN = "opus-webview-helper";
@@ -116,6 +117,10 @@ public final class OpusWebViewClient {
     private float scale = 1.0F;
     private String url = "about:blank";
     private volatile long generation = 1L;
+    private volatile long lastPublishedGeneration;
+    private volatile long lastViewSentNanos;
+    private long paintRetryGeneration;
+    private int paintRetryCount;
 
     public OpusWebViewClient(Logger log, String helperPath) {
         this.log = log;
@@ -222,7 +227,31 @@ public final class OpusWebViewClient {
 
     /** Returns the most recent frame and clears it, or null if none is new. */
     public Frame consumeFrame() {
-        return latest.getAndSet(null);
+        Frame frame = latest.getAndSet(null);
+        if (frame == null) {
+            retryCurrentGenerationPaintIfNeeded();
+        }
+        return frame;
+    }
+
+    private void retryCurrentGenerationPaintIfNeeded() {
+        if (!running || failed || transportResizing || generation == lastPublishedGeneration) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (now - lastViewSentNanos < PAINT_RETRY_INTERVAL_NANOS) {
+            return;
+        }
+        if (paintRetryGeneration != generation) {
+            paintRetryGeneration = generation;
+            paintRetryCount = 0;
+        }
+        paintRetryCount++;
+        if (paintRetryCount == 1 || paintRetryCount % 20 == 0) {
+            log.info("Opus CEF generation {} has not painted yet; retrying VIEW ({})",
+                    generation, paintRetryCount);
+        }
+        sendView();
     }
 
     /** Releases a published shared-memory slot after upload or rejection. */
@@ -463,6 +492,7 @@ public final class OpusWebViewClient {
     }
 
     private void sendView() {
+        lastViewSentNanos = System.nanoTime();
         sendLine("VIEW " + generation + " " + width + " " + height + " " + scale + " " + url);
     }
 
@@ -473,6 +503,8 @@ public final class OpusWebViewClient {
             return;
         }
         generation++;
+        paintRetryGeneration = generation;
+        paintRetryCount = 0;
         Frame stale = latest.getAndSet(null);
         release(stale);
     }
@@ -793,6 +825,7 @@ public final class OpusWebViewClient {
                 release(frame);
                 return;
             }
+            lastPublishedGeneration = frameGeneration;
             Frame dropped = latest.getAndSet(frame);
             release(dropped);
             if (framesSeen++ == 0) {

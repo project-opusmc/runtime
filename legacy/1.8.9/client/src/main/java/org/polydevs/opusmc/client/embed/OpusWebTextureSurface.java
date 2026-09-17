@@ -9,6 +9,9 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL14;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL21;
+import org.lwjgl.opengl.GLContext;
 
 /**
  * Uploads the helper's BGRA frames to an OpenGL texture and draws them
@@ -16,9 +19,14 @@ import org.lwjgl.opengl.GL14;
  * the renderer is untouched; this class owns nothing beyond its own texture.
  */
 public final class OpusWebTextureSurface {
+    private static final int PBO_COUNT = 3;
+
     private int textureId = -1;
     private int textureWidth;
     private int textureHeight;
+    private final int[] pixelUploadBuffers = new int[PBO_COUNT];
+    private int pixelUploadIndex;
+    private boolean pixelUploadBuffersInitialized;
 
     /**
      * Uploads a frame; allocates/reallocates the texture as the size changes.
@@ -49,32 +57,72 @@ public final class OpusWebTextureSurface {
             GlStateManager.bindTexture(textureId);
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
 
-            if (frame.width != textureWidth || frame.height != textureHeight) {
+            boolean resized = frame.width != textureWidth || frame.height != textureHeight;
+            if (resized) {
                 textureWidth = frame.width;
                 textureHeight = frame.height;
                 GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
                 GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
                 GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
                 GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
-                GL11.glTexImage2D(
-                        GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
-                        textureWidth, textureHeight, 0,
-                        GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, pixels);
-            } else {
-                GL11.glTexSubImage2D(
-                        GL11.GL_TEXTURE_2D, 0, 0, 0,
-                        textureWidth, textureHeight,
-                        GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, pixels);
             }
 
-            // The CEF helper owns the mapped frame slot and may reuse it as
-            // soon as the client sends RELEASE. AppleMetalOpenGLRenderer has
-            // been observed to defer texture uploads, so complete this upload
-            // before the caller releases the slot back to the helper.
-            GL11.glFinish();
+            if (supportsPixelUploadBuffers()) {
+                ensurePixelUploadBuffers();
+                int pbo = pixelUploadBuffers[pixelUploadIndex];
+                pixelUploadIndex = (pixelUploadIndex + 1) % PBO_COUNT;
+                GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, pbo);
+                // glBufferData replaces the PBO's data store. The driver may keep
+                // the previous store alive for an outstanding texture transfer,
+                // while this call synchronously copies the current mmap bytes into
+                // independent GL-owned storage. The CEF slot can therefore be
+                // RELEASEd immediately after upload() returns without glFinish().
+                GL15.glBufferData(GL21.GL_PIXEL_UNPACK_BUFFER, pixels, GL15.GL_STREAM_DRAW);
+                if (resized) {
+                    GL11.glTexImage2D(
+                            GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
+                            textureWidth, textureHeight, 0,
+                            GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, 0L);
+                } else {
+                    GL11.glTexSubImage2D(
+                            GL11.GL_TEXTURE_2D, 0, 0, 0,
+                            textureWidth, textureHeight,
+                            GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, 0L);
+                }
+            } else {
+                // Client-memory pixel uploads must be consumed before the call
+                // returns by the OpenGL contract. This fallback exists for old
+                // non-PBO contexts; production macOS 1.8.9 uses the PBO path.
+                if (resized) {
+                    GL11.glTexImage2D(
+                            GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
+                            textureWidth, textureHeight, 0,
+                            GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, pixels);
+                } else {
+                    GL11.glTexSubImage2D(
+                            GL11.GL_TEXTURE_2D, 0, 0, 0,
+                            textureWidth, textureHeight,
+                            GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, pixels);
+                }
+            }
         } finally {
             state.restore();
         }
+    }
+
+    private static boolean supportsPixelUploadBuffers() {
+        return GLContext.getCapabilities().OpenGL21
+                || GLContext.getCapabilities().GL_ARB_pixel_buffer_object;
+    }
+
+    private void ensurePixelUploadBuffers() {
+        if (pixelUploadBuffersInitialized) {
+            return;
+        }
+        for (int i = 0; i < pixelUploadBuffers.length; i++) {
+            pixelUploadBuffers[i] = GL15.glGenBuffers();
+        }
+        pixelUploadBuffersInitialized = true;
     }
 
     public boolean hasTexture() {
@@ -131,6 +179,19 @@ public final class OpusWebTextureSurface {
         }
         textureWidth = 0;
         textureHeight = 0;
+        if (pixelUploadBuffersInitialized) {
+            int previous = GL11.glGetInteger(GL21.GL_PIXEL_UNPACK_BUFFER_BINDING);
+            GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+            for (int i = 0; i < pixelUploadBuffers.length; i++) {
+                if (pixelUploadBuffers[i] != 0) {
+                    GL15.glDeleteBuffers(pixelUploadBuffers[i]);
+                    pixelUploadBuffers[i] = 0;
+                }
+            }
+            GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, previous);
+            pixelUploadBuffersInitialized = false;
+            pixelUploadIndex = 0;
+        }
     }
 
     /** Captures both the raw GL boundary and values mirrored by GlStateManager. */
@@ -145,6 +206,7 @@ public final class OpusWebTextureSurface {
         private final boolean texture0Enabled;
         private final int texture0Binding;
         private final int unpackAlignment;
+        private final int pixelUnpackBufferBinding;
         private final int blendSrc;
         private final int blendDst;
         private final int blendSrcAlpha;
@@ -176,6 +238,7 @@ public final class OpusWebTextureSurface {
                 GL13.glActiveTexture(activeTexture);
             }
             unpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT);
+            pixelUnpackBufferBinding = GL11.glGetInteger(GL21.GL_PIXEL_UNPACK_BUFFER_BINDING);
             blendSrc = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB);
             blendDst = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
             blendSrcAlpha = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA);
@@ -226,6 +289,7 @@ public final class OpusWebTextureSurface {
             setEnabled(GL11.GL_TEXTURE_2D, texture0Enabled);
             GL13.glActiveTexture(activeTexture);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureBinding);
+            GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, pixelUnpackBufferBinding);
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, unpackAlignment);
             GL14.glBlendFuncSeparate(blendSrc, blendDst, blendSrcAlpha, blendDstAlpha);
             GL11.glViewport(viewportX, viewportY, viewportWidth, viewportHeight);

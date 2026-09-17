@@ -267,6 +267,19 @@ task harnessWebSurfaceReactV2(type: JavaExec) {
     }
 }
 
+task harnessWebSurfaceLifecycleW7(type: JavaExec) {
+    group = 'verification'
+    description = 'Stress-tests CEF lifecycle, resize/DPR transitions, forced death, and recovery.'
+    dependsOn 'harnessClasses', 'buildWebViewHelper', 'buildUiV2Dist'
+    main = 'org.polydevs.opusmc.client.W7LifecycleHarness'
+    doFirst {
+        classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
+        systemProperty 'opus.ui.v2.dist', opusUiV2Dist.absolutePath
+    }
+}
 
 processResources {
     dependsOn buildUiDist

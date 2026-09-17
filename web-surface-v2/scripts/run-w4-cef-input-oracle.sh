@@ -4,7 +4,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 client="$root/legacy/1.8.9/client"
 cache="${OPUS_CEF_V2_CACHE:-$HOME/.cache/opus-cef-v2}"
-app="$($here/build-w1-helper.sh | tail -1)"
+app="${OPUS_CEF_HELPER_APP:-}"
+if [[ -z "$app" ]]; then
+  app="$($here/build-w1-helper.sh | tail -1)"
+fi
 jdk8="${OPUS_FORGE_UI_JAVA_HOME:-$HOME/.cache/opus-forge-ui/jdk8u502-b07/Contents/Home}"
 gradle="${OPUS_FORGE_UI_GRADLE:-$HOME/.cache/opus-forge-ui/gradle-2.14.1/bin/gradle}"
 cd "$client"
