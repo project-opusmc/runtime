@@ -89,6 +89,7 @@ public final class OpusWebTextureSurface {
                             textureWidth, textureHeight,
                             GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, 0L);
                 }
+                GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
             } else {
                 // Client-memory pixel uploads must be consumed before the call
                 // returns by the OpenGL contract. This fallback exists for old
@@ -111,8 +112,7 @@ public final class OpusWebTextureSurface {
     }
 
     private static boolean supportsPixelUploadBuffers() {
-        return GLContext.getCapabilities().OpenGL21
-                || GLContext.getCapabilities().GL_ARB_pixel_buffer_object;
+        return false; // Disabled to prevent AppleMetalOpenGLRenderer crashes on Mac
     }
 
     private void ensurePixelUploadBuffers() {
@@ -206,7 +206,6 @@ public final class OpusWebTextureSurface {
         private final boolean texture0Enabled;
         private final int texture0Binding;
         private final int unpackAlignment;
-        private final int pixelUnpackBufferBinding;
         private final int blendSrc;
         private final int blendDst;
         private final int blendSrcAlpha;
@@ -238,7 +237,7 @@ public final class OpusWebTextureSurface {
                 GL13.glActiveTexture(activeTexture);
             }
             unpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT);
-            pixelUnpackBufferBinding = GL11.glGetInteger(GL21.GL_PIXEL_UNPACK_BUFFER_BINDING);
+
             blendSrc = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB);
             blendDst = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
             blendSrcAlpha = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA);
@@ -289,7 +288,6 @@ public final class OpusWebTextureSurface {
             setEnabled(GL11.GL_TEXTURE_2D, texture0Enabled);
             GL13.glActiveTexture(activeTexture);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureBinding);
-            GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, pixelUnpackBufferBinding);
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, unpackAlignment);
             GL14.glBlendFuncSeparate(blendSrc, blendDst, blendSrcAlpha, blendDstAlpha);
             GL11.glViewport(viewportX, viewportY, viewportWidth, viewportHeight);

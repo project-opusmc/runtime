@@ -23,14 +23,15 @@ val lwjglMacOsNativeCoordinate =
 val lwjglMacOsNativeArchiveSha1 = "79f5ce2fea02e77fe47a3c745219167a542121d7"
 val lwjglMacOsNativeArchiveSize = 468_116L
 val replacementNative = "liblwjgl.dylib"
-val replacementNativeSha1 = "9ade823779dae4be29556dc39ed28b42ba5508e1"
+val replacementNativeSha1 = "5d53a208e2f5bffa1d8d4b3755190fb5cb835022"
 val replacementNativeSize = 838_892L
 val resizeGuardNativeName = "libopus_lwjgl_resize_guard.dylib"
-val resizeGuardNativeSha1 = "b80da68bc3de6c8823bcfdee42d660a90246a09f"
-val resizeGuardNativeSize = 15_696L
+val resizeGuardNativeSha1 = "6005c797463267ed1089231d3b6fb88f3bc0b0fd"
+val resizeGuardNativeSize = 21_184L
 val replacementRootClass = "org/lwjgl/MacOSXSysImplementation.class"
 val patchedOpenGlClasses = setOf(
     "org/lwjgl/opengl/MacOSXDisplay.class",
+    "org/lwjgl/opengl/MacOSXContextImplementation.class",
     "org/lwjgl/opengl/MacOSXCanvasPeerInfo.class",
     "org/lwjgl/opengl/MacOSXCanvasPeerInfo\$1.class",
 )
@@ -54,10 +55,14 @@ val resizeGuardSource = layout.projectDirectory.file(
     "src/main/native/opus_lwjgl_resize_guard.m",
 )
 val resizeGuardNative = layout.buildDirectory.file("patched-native/$resizeGuardNativeName")
+val drawableOwnershipTestSource = layout.projectDirectory.file(
+    "src/test/native/drawable_ownership_test.m",
+)
+val drawableOwnershipTest = layout.buildDirectory.file("native-tests/drawable-ownership")
 
 val patchNativeResize = tasks.register("patchNativeResize") {
     group = "build"
-    description = "Removes LWJGL's unsafe AppKit-side GL context update during live resize."
+    description = "Stages the locked LWJGL native; live-resize suppression is guarded dynamically."
     inputs.files(lwjglMacOsNativeOriginal)
     outputs.file(patchedNative)
 
@@ -68,61 +73,9 @@ val patchNativeResize = tasks.register("patchNativeResize") {
                 ?: error("Missing $replacementNative in $sourceArchive")
             archive.getInputStream(entry).use { it.readBytes() }
         }
-        val bytes = sourceBytes.copyOf()
-
-        fun findUnique(needle: ByteArray, label: String): Int {
-            val matches = mutableListOf<Int>()
-            for (start in 0..(bytes.size - needle.size)) {
-                var equal = true
-                for (index in needle.indices) {
-                    if (bytes[start + index] != needle[index]) {
-                        equal = false
-                        break
-                    }
-                }
-                if (equal) matches += start
-            }
-            check(matches.size == 1) {
-                "Expected one $label machine-code site, found ${matches.size}"
-            }
-            return matches.single()
-        }
-
-        // x86_64: exact function body of
-        // -[MacOSXOpenGLView _surfaceNeedsUpdate:] in the locked LWJGL
-        // native binary. A short prologue is not specific enough because
-        // many Objective-C methods share it.
-        val x86_64Site = findUnique(
-            byteArrayOf(
-                0x55, 0x48, 0x89.toByte(), 0xe5.toByte(),
-                0x48, 0x8b.toByte(), 0x05, 0xe5.toByte(), 0x3e, 0x03, 0x00,
-                0x48, 0x8d.toByte(), 0x35, 0xde.toByte(), 0x3e, 0x03, 0x00,
-                0x5d, 0xff.toByte(), 0xe0.toByte(),
-            ),
-            "x86_64 AppKit resize callback",
-        )
-        // i386: exact function body of the same callback in the 32-bit
-        // slice. Keep both architecture patches because the artifact is a
-        // universal binary even though current Java 8 runs x86_64.
-        val i386Site = findUnique(
-            byteArrayOf(
-                0x55, 0x89.toByte(), 0xe5.toByte(), 0x83.toByte(), 0xec.toByte(), 0x08,
-                0xe8.toByte(), 0x00, 0x00, 0x00, 0x00, 0x58, 0x8b.toByte(), 0x4d,
-                0x08, 0x8b.toByte(), 0x80.toByte(), 0x01, 0xe0.toByte(), 0x01, 0x00,
-                0x89.toByte(), 0x44, 0x24, 0x04, 0x89.toByte(), 0x0c, 0x24,
-                0xe8.toByte(), 0xfd.toByte(), 0x8f.toByte(), 0x01, 0x00,
-                0x83.toByte(), 0xc4.toByte(), 0x08, 0x5d, 0xc3.toByte(),
-            ),
-            "i386 AppKit resize callback",
-        )
-        check(bytes[x86_64Site] == 0x55.toByte())
-        check(bytes[i386Site] == 0x55.toByte())
-        bytes[x86_64Site] = 0xc3.toByte()
-        bytes[i386Site] = 0xc3.toByte()
-
         val destination = patchedNative.get().asFile
         destination.parentFile.mkdirs()
-        destination.writeBytes(bytes)
+        destination.writeBytes(sourceBytes)
     }
 }
 
@@ -160,6 +113,34 @@ val compileResizeGuardNative = tasks.register<Exec>("compileResizeGuardNative") 
             resizeGuardSource.asFile.absolutePath,
         )
     }
+}
+
+val compileDrawableOwnershipTest = tasks.register<Exec>("compileDrawableOwnershipTest") {
+    group = "verification"
+    description = "Compiles the production drawable hooks against a window-free Cocoa test view."
+    inputs.files(resizeGuardSource, drawableOwnershipTestSource)
+    outputs.file(drawableOwnershipTest)
+
+    doFirst {
+        val includeRoot = File(System.getProperty("java.home")).resolve("include")
+        check(includeRoot.resolve("jni.h").isFile) { "JNI headers are missing from $includeRoot" }
+        val output = drawableOwnershipTest.get().asFile
+        output.parentFile.mkdirs()
+        commandLine(
+            "xcrun", "clang", "-arch", "x86_64", "-O2",
+            "-Wno-deprecated-declarations", "-Wl,-export_dynamic",
+            "-I${includeRoot.absolutePath}", "-I${includeRoot.resolve("darwin").absolutePath}",
+            "-framework", "Cocoa", "-o", output.absolutePath,
+            drawableOwnershipTestSource.asFile.absolutePath,
+        )
+    }
+}
+
+val testDrawableOwnership = tasks.register<Exec>("testDrawableOwnership") {
+    group = "verification"
+    description = "Checks ordinary, fullscreen, live-resize and focus notifications without controlling the desktop."
+    dependsOn(compileDrawableOwnershipTest)
+    commandLine(drawableOwnershipTest.get().asFile.absolutePath)
 }
 
 dependencies {
@@ -204,7 +185,7 @@ tasks.jar {
 tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
     group = "verification"
     description = "Verifies the complete sealed LWJGL Java replacement and macOS compatibility classes."
-    dependsOn(tasks.jar)
+    dependsOn(tasks.jar, testDrawableOwnership)
 
     doLast {
         val source = lwjglOriginal.singleFile
@@ -281,6 +262,12 @@ tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
                 check(displaySymbols.contains("opus.lwjgl.macos.liveResizeGuard")) {
                     "Compatibility display class cannot isolate the live-resize guard for M3 preview"
                 }
+                val contextSymbols = compatibility
+                    .getInputStream(compatibility.getJarEntry("org/lwjgl/opengl/MacOSXContextImplementation.class"))
+                    .use { String(it.readBytes(), Charsets.ISO_8859_1) }
+                check(contextSymbols.contains("bindContextView")) {
+                    "Compatibility context class does not use the AppKit-owned view binding"
+                }
                 val peerInfoSymbols = compatibility
                     .getInputStream(compatibility.getJarEntry("org/lwjgl/opengl/MacOSXCanvasPeerInfo.class"))
                     .use { String(it.readBytes(), Charsets.ISO_8859_1) }
@@ -328,7 +315,7 @@ tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
                 }
                 check(
                     String(guardBytes, Charsets.ISO_8859_1)
-                        .contains("OPUS_COCOA_LIVE_RESIZE_GUARD_V10_MAIN_QUEUE_INSTALL"),
+                        .contains("OPUS_COCOA_LIVE_RESIZE_GUARD_V14_RENDER_THREAD_DRAWABLE_OWNERSHIP"),
                 ) {
                     "Resize guard marker is missing"
                 }
@@ -337,6 +324,15 @@ tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
                 }.standardOutput.asText.get()
                 check(guardLoadCommands.lineSequence().any { it.trim() == "cmd LC_UUID" }) {
                     "Resize guard is missing the LC_UUID load command required by modern macOS"
+                }
+                val guardExports = providers.exec {
+                    commandLine("nm", "-gU", resizeGuardNative.get().asFile.absolutePath)
+                }.standardOutput.asText.get()
+                check(guardExports.contains("_Java_org_lwjgl_opengl_MacOSXDisplay_nBindContextView")) {
+                    "Resize guard does not export the AppKit context-view binding entry point"
+                }
+                check(guardExports.contains("_Java_org_lwjgl_opengl_MacOSXDisplay_nConsumeDrawableUpdate")) {
+                    "Resize guard does not export render-thread drawable notification consumption"
                 }
             }
         }

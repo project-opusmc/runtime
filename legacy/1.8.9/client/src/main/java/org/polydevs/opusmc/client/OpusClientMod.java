@@ -53,6 +53,15 @@ public final class OpusClientMod {
         log.info("Opus Forge client module loaded; the canonical CEF product surface is ready.");
     }
 
+    public void initializeStandalone() {
+        this.log = org.apache.logging.log4j.LogManager.getLogger(MOD_ID);
+        if (isUiEnabled()) {
+            this.overlayController = new ClientOverlayController(this.log);
+            this.overlayController.initialize();
+            this.log.info("Opus Standalone client module loaded; the canonical CEF product surface is ready.");
+        }
+    }
+
     static boolean isUiEnabled() {
         return Boolean.getBoolean(UI_ENABLE_PROPERTY);
     }

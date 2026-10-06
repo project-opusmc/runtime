@@ -3,6 +3,7 @@ package org.polydevs.opusmc.client;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -17,17 +18,22 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.util.Locale;
+import javax.imageio.ImageIO;
 import org.apache.logging.log4j.Logger;
 import org.polydevs.opusmc.client.embed.OpusWebViewClient;
 import org.polydevs.opusmc.websurface.OpusDisplayMetrics;
 
 public final class W5ReactSurfaceHarness {
     private static final long TIMEOUT_MS = 45000L;
-    private static final int HOME = 0x2A4CFF;
-    private static final int MODULES_ON = 0x19B87A;
-    private static final int MODULES_OFF = 0xE14E66;
-    private static final int SETTINGS = 0x8A5CFF;
-    private static final int SETTINGS_CHANGED = 0xE99B39;
+    private static BufferedImage lastMatchedImage;
+    // Match visible neutral glass surfaces instead of exact palette pixels.
+    // The video backdrop changes every frame, so the oracle verifies the
+    // luminance/neutrality signature of the product controls and route title.
+    private static final int HOME_SURFACE_MIN_LUMA = 30;
+    private static final int HOME_SURFACE_MAX_LUMA = 66;
+    private static final int ROUTE_SURFACE_MIN_LUMA = 12;
+    private static final int ROUTE_SURFACE_MAX_LUMA = 38;
+    private static final int NEUTRAL_CHANNEL_SPREAD = 14;
 
     public static void main(String[] args) throws Exception {
         Logger log = logger();
@@ -42,49 +48,98 @@ public final class W5ReactSurfaceHarness {
 
         OpusWebViewClient client = new OpusWebViewClient(log, helper);
         try {
-            require(client.start(1280, 720, 1.5F, url), "CEF helper did not start React V2");
-            awaitOracle(client, 1280, 720, 1.5F, HOME);
-            System.out.println("PASS real React production bundle reaches Home oracle");
+            require(client.start(1280, 720, 2.0F, url), "CEF helper did not start React V2");
+            VisualFingerprint home = awaitHome(client, 1280, 720, 2.0F, 298);
+            System.out.println("PASS real React production bundle reaches the Home launch surface at DPR 2");
+            captureIfRequested(client, 1280, 720, 2.0F, "home");
 
-            click(client, 70, 200, 0);
-            awaitOracle(client, 1280, 720, 1.5F, MODULES_ON);
-            System.out.println("PASS native pointer routes Home -> Modules in React bundle");
+            // Exercise the responsive glass launch controls at their rendered
+            // positions rather than the retired left-side menu coordinates.
+            click(client, 846, 298, 0);
+            VisualFingerprint singleplayer = awaitRouteShell(client, 1280, 720, 2.0F);
+            requireDistinct(home, singleplayer, "Home click did not visibly open Singleplayer");
+            System.out.println("PASS native pointer opens Singleplayer at the normal DPR 2 viewport");
+            captureIfRequested(client, 1280, 720, 2.0F, "singleplayer");
 
-            // The route oracle can be painted before the local variable font has
-            // completed its final layout pass. Give Chromium one bounded settle
-            // interval before exercising the fixed native hit point.
-            Thread.sleep(250L);
-            client.sendMouseMove(1230, 694);
-            Thread.sleep(50L);
-            click(client, 1230, 694, 0);
-            awaitOracle(client, 1280, 720, 1.5F, MODULES_OFF);
-            System.out.println("PASS native pointer toggles selected React module");
+            click(client, 70, 47, 0);
+            awaitHome(client, 1280, 720, 2.0F, 298);
+            System.out.println("PASS native pointer returns from Singleplayer to Home");
 
-            key(client, 0x53); // S
-            awaitOracle(client, 1280, 720, 1.5F, SETTINGS);
-            System.out.println("PASS native keyboard S routes Modules -> Settings");
-
-            click(client, 500, 194, 0);
-            awaitOracle(client, 1280, 720, 1.5F, SETTINGS_CHANGED);
-            System.out.println("PASS settings pointer interaction repaints deterministic React state");
-
-            key(client, 0x48); // H
-            awaitOracle(client, 1280, 720, 1.5F, HOME);
-            System.out.println("PASS native keyboard H routes Settings -> Home");
-
-            key(client, 0x4D); // M
-            awaitOracle(client, 1280, 720, 1.5F, MODULES_OFF);
-            System.out.println("PASS native keyboard M returns to Modules and preserves state");
+            click(client, 846, 378, 0);
+            VisualFingerprint multiplayer = awaitRouteShell(client, 1280, 720, 2.0F);
+            requireDistinct(singleplayer, multiplayer,
+                    "Singleplayer and Multiplayer did not paint distinct library content");
+            System.out.println("PASS native pointer opens Multiplayer at the normal DPR 2 viewport");
+            captureIfRequested(client, 1280, 720, 2.0F, "multiplayer");
 
             client.resize(900, 600, 2.0F);
-            awaitOracle(client, 900, 600, 2.0F, MODULES_OFF);
-            System.out.println("PASS React bundle remains current after 900x600 @2x resize");
+            awaitRouteShell(client, 900, 600, 2.0F);
+            System.out.println("PASS routed React surface remains current after 900x600 @2x resize");
+
+            click(client, 70, 47, 0);
+            awaitHome(client, 900, 600, 2.0F, 238);
+            System.out.println("PASS Back remains live after a normal-window resize");
+
+            client.resize(427, 240, 2.0F);
+            awaitHome(client, 427, 240, 2.0F, 88);
+            click(client, 271, 88, 0);
+            awaitRouteShell(client, 427, 240, 2.0F);
+            System.out.println("PASS compact 427x240 Home primary action remains clickable at DPR 2");
+
+            client.resize(960, 540, 2.0F);
+            client.navigate(url + "#/game_menu");
+            awaitVisual(client, 960, 540, 2.0F, new FrameMatcher() {
+                @Override
+                public boolean matches(OpusWebViewClient.Frame frame, int width, int height) {
+                    return alphaAt(frame, 16, 16) < 160
+                            && alphaAt(frame, frame.width / 2, frame.height / 2) > 180;
+                }
+            }, "transparent pause backdrop with opaque centered menu");
+            System.out.println("PASS pause CEF frame leaves the game visible behind its centered menu");
+            captureIfRequested(client, 960, 540, 2.0F, "pause-menu");
+            click(client, 480, 294, 0);
+            awaitRouteShell(client, 960, 540, 2.0F);
+            System.out.println("PASS the transparent pause scrim does not block Client Settings");
         } finally {
             client.stop();
             staticServer.stop(0);
         }
 
         System.out.println("W5 REACT CEF ORACLE: ALL PASSED");
+    }
+
+    private static void captureIfRequested(OpusWebViewClient client, int logicalWidth,
+            int logicalHeight, float scale, String name) throws Exception {
+        String directory = System.getenv("OPUS_VISUAL_CAPTURE_DIR");
+        if (directory == null || directory.trim().isEmpty()) return;
+        File output = new File(directory.trim(), name + ".png");
+        File parent = output.getParentFile();
+        if (parent != null) parent.mkdirs();
+        BufferedImage latest = lastMatchedImage;
+        lastMatchedImage = null;
+        require(latest != null, "no current CEF frame available for " + name + " capture");
+        ImageIO.write(latest, "png", output);
+        System.out.println("PASS visual capture written to " + output.getAbsolutePath());
+    }
+
+    private static BufferedImage image(OpusWebViewClient.Frame frame) {
+        BufferedImage image = new BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB);
+        ByteBuffer pixels = frame.pixels.duplicate();
+        for (int y = 0; y < frame.height; y++) {
+            for (int x = 0; x < frame.width; x++) {
+                int offset = (y * frame.width + x) * 4;
+                int blue = pixels.get(offset) & 0xFF;
+                int green = pixels.get(offset + 1) & 0xFF;
+                int red = pixels.get(offset + 2) & 0xFF;
+                int alpha = pixels.get(offset + 3) & 0xFF;
+                image.setRGB(x, y, (alpha << 24) | (red << 16) | (green << 8) | blue);
+            }
+        }
+        return image;
+    }
+
+    private static int alphaAt(OpusWebViewClient.Frame frame, int x, int y) {
+        return frame.pixels.get((y * frame.width + x) * 4 + 3) & 0xFF;
     }
 
     private static HttpServer startStaticServer(final File dist) throws IOException {
@@ -134,6 +189,10 @@ public final class W5ReactSurfaceHarness {
         if (name.endsWith(".css")) return "text/css; charset=utf-8";
         if (name.endsWith(".woff2")) return "font/woff2";
         if (name.endsWith(".svg")) return "image/svg+xml";
+        if (name.endsWith(".png")) return "image/png";
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+        if (name.endsWith(".webm")) return "video/webm";
+        if (name.endsWith(".mp4")) return "video/mp4";
         if (name.endsWith(".json")) return "application/json; charset=utf-8";
         return "application/octet-stream";
     }
@@ -144,24 +203,54 @@ public final class W5ReactSurfaceHarness {
         client.sendMouseButton(x, y, button, false);
     }
 
-    private static void key(OpusWebViewClient client, int windowsVirtualKey) {
-        client.sendKey(windowsVirtualKey, true);
-        client.sendKey(windowsVirtualKey, false);
+    private static VisualFingerprint awaitHome(OpusWebViewClient client, int logicalWidth,
+            int logicalHeight, float scale, final int primaryCenterY) throws Exception {
+        return awaitVisual(client, logicalWidth, logicalHeight, scale, new FrameMatcher() {
+            @Override
+            public boolean matches(OpusWebViewClient.Frame frame, int width, int height) {
+                int primaryCenterX = width * 2 / 3;
+                return regionHasNeutralCoverage(frame, width, height,
+                        HOME_SURFACE_MIN_LUMA, HOME_SURFACE_MAX_LUMA,
+                        NEUTRAL_CHANNEL_SPREAD, 78,
+                        primaryCenterX - 120, primaryCenterY - 14,
+                        primaryCenterX + 120, primaryCenterY + 14);
+            }
+        }, "Home primary action surface");
     }
 
-    private static void awaitOracle(OpusWebViewClient client, int logicalWidth,
-            int logicalHeight, float scale, int expectedRgb) throws Exception {
+    private static VisualFingerprint awaitRouteShell(OpusWebViewClient client, int logicalWidth,
+            int logicalHeight, float scale) throws Exception {
+        return awaitVisual(client, logicalWidth, logicalHeight, scale, new FrameMatcher() {
+            @Override
+            public boolean matches(OpusWebViewClient.Frame frame, int width, int height) {
+                int headerTop = height <= 380 ? 6 : 18;
+                int headerBottom = height <= 380 ? 42 : 76;
+                int left = width / 2 - 90;
+                int right = width / 2 + 90;
+                return regionHasNeutralCoverage(frame, width, height,
+                        ROUTE_SURFACE_MIN_LUMA, ROUTE_SURFACE_MAX_LUMA,
+                        NEUTRAL_CHANNEL_SPREAD, 68,
+                        left, headerTop, right, headerBottom)
+                        && regionHasNeutralCoverage(frame, width, height,
+                                150, 255, 20, 1,
+                                left, headerTop, right, headerBottom);
+            }
+        }, "routed client header");
+    }
+
+    private static VisualFingerprint awaitVisual(OpusWebViewClient client, int logicalWidth,
+            int logicalHeight, float scale, FrameMatcher matcher, String expected) throws Exception {
         long deadline = System.currentTimeMillis() + TIMEOUT_MS;
-        int last = -1;
         while (System.currentTimeMillis() < deadline) {
             require(!client.isFailed(), "CEF helper entered failed state");
             OpusWebViewClient.Frame frame = client.consumeFrame();
             if (frame != null) {
                 try {
                     if (client.isCurrent(frame, logicalWidth, logicalHeight, scale)) {
-                        last = oracleRgb(frame, logicalWidth, logicalHeight);
-                        if (last == expectedRgb
-                                || oracleRegionContains(frame, logicalWidth, logicalHeight, expectedRgb)) return;
+                        if (matcher.matches(frame, logicalWidth, logicalHeight)) {
+                            lastMatchedImage = image(frame);
+                            return fingerprint(frame);
+                        }
                     }
                 } finally {
                     client.release(frame);
@@ -169,42 +258,95 @@ public final class W5ReactSurfaceHarness {
             }
             Thread.sleep(10L);
         }
-        throw new IllegalStateException("timed out waiting for React oracle #"
-                + Integer.toHexString(expectedRgb) + "; last=#" + Integer.toHexString(last));
+        throw new IllegalStateException("timed out waiting for " + expected);
     }
 
-    private static boolean oracleRegionContains(OpusWebViewClient.Frame frame, int logicalWidth,
-            int logicalHeight, int expectedRgb) {
+    private static boolean regionHasNeutralCoverage(OpusWebViewClient.Frame frame,
+            int logicalWidth, int logicalHeight, int minLuma, int maxLuma,
+            int maxChannelSpread, int minCoveragePercent,
+            int left, int top, int right, int bottom) {
         OpusDisplayMetrics metrics = new OpusDisplayMetrics(
                 1L, logicalWidth, logicalHeight, frame.width, frame.height);
-        int minX = metrics.logicalToFramebufferX(Math.max(0, logicalWidth - 32));
-        int maxX = metrics.logicalToFramebufferX(logicalWidth - 1);
-        int minY = metrics.logicalToFramebufferTopY(Math.max(0, logicalHeight - 32));
-        int maxY = metrics.logicalToFramebufferTopY(logicalHeight - 1);
+        int minX = metrics.logicalToFramebufferX(Math.max(0, Math.min(logicalWidth - 1, left)));
+        int maxX = metrics.logicalToFramebufferX(Math.max(0, Math.min(logicalWidth - 1, right)));
+        int minY = metrics.logicalToFramebufferTopY(Math.max(0, Math.min(logicalHeight - 1, top)));
+        int maxY = metrics.logicalToFramebufferTopY(Math.max(0, Math.min(logicalHeight - 1, bottom)));
         ByteBuffer pixels = frame.pixels.duplicate();
+        int matched = 0;
+        int sampled = 0;
         for (int y = minY; y <= maxY; y++) {
             for (int x = minX; x <= maxX; x++) {
                 int offset = (y * frame.width + x) * 4;
                 int blue = pixels.get(offset) & 0xFF;
                 int green = pixels.get(offset + 1) & 0xFF;
                 int red = pixels.get(offset + 2) & 0xFF;
-                if (((red << 16) | (green << 8) | blue) == expectedRgb) return true;
+                int maximum = Math.max(red, Math.max(green, blue));
+                int minimum = Math.min(red, Math.min(green, blue));
+                int luminance = (red * 3 + green * 6 + blue) / 10;
+                sampled++;
+                if (maximum - minimum <= maxChannelSpread
+                        && luminance >= minLuma && luminance <= maxLuma) {
+                    matched++;
+                }
             }
         }
-        return false;
+        return sampled > 0 && matched * 100L >= sampled * (long) minCoveragePercent;
     }
 
-    private static int oracleRgb(OpusWebViewClient.Frame frame, int logicalWidth, int logicalHeight) {
-        OpusDisplayMetrics metrics = new OpusDisplayMetrics(
-                1L, logicalWidth, logicalHeight, frame.width, frame.height);
-        int x = metrics.logicalToFramebufferX(logicalWidth - 12);
-        int y = metrics.logicalToFramebufferTopY(logicalHeight - 12);
-        int offset = (y * frame.width + x) * 4;
+    private static VisualFingerprint fingerprint(OpusWebViewClient.Frame frame) {
+        final int columns = 32;
+        final int rows = 18;
+        int[] samples = new int[columns * rows];
         ByteBuffer pixels = frame.pixels.duplicate();
-        int blue = pixels.get(offset) & 0xFF;
-        int green = pixels.get(offset + 1) & 0xFF;
-        int red = pixels.get(offset + 2) & 0xFF;
-        return (red << 16) | (green << 8) | blue;
+        int index = 0;
+        for (int row = 0; row < rows; row++) {
+            int y = Math.min(frame.height - 1, (row * 2 + 1) * frame.height / (rows * 2));
+            for (int column = 0; column < columns; column++) {
+                int x = Math.min(frame.width - 1,
+                        (column * 2 + 1) * frame.width / (columns * 2));
+                int offset = (y * frame.width + x) * 4;
+                int blue = pixels.get(offset) & 0xFF;
+                int green = pixels.get(offset + 1) & 0xFF;
+                int red = pixels.get(offset + 2) & 0xFF;
+                samples[index++] = (red << 16) | (green << 8) | blue;
+            }
+        }
+        return new VisualFingerprint(samples);
+    }
+
+    private static void requireDistinct(VisualFingerprint left, VisualFingerprint right,
+            String message) {
+        require(!left.equals(right), message);
+    }
+
+    private interface FrameMatcher {
+        boolean matches(OpusWebViewClient.Frame frame, int logicalWidth, int logicalHeight);
+    }
+
+    private static final class VisualFingerprint {
+        private final int[] samples;
+
+        VisualFingerprint(int[] samples) {
+            this.samples = samples;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof VisualFingerprint)) return false;
+            int[] candidate = ((VisualFingerprint) other).samples;
+            if (candidate.length != samples.length) return false;
+            for (int index = 0; index < samples.length; index++) {
+                if (samples[index] != candidate[index]) return false;
+            }
+            return true;
+        }
+
+        @Override
+        public int hashCode() {
+            int hash = 1;
+            for (int sample : samples) hash = 31 * hash + sample;
+            return hash;
+        }
     }
 
     private static Logger logger() {

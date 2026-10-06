@@ -1,7 +1,13 @@
 package org.polydevs.opusmc.client.interop;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -10,8 +16,15 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.Base64;
+import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -32,11 +45,14 @@ import org.apache.logging.log4j.Logger;
 public final class OpusInteropServer {
     public static final String AUTH_COOKIE = "opus_auth";
     private static final String WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    private static final Gson GSON = new Gson();
+    private static final Object ACCOUNT_CATALOG_LOCK = new Object();
 
     private final Logger log;
     private final String authCode;
     private final List<OpusWebSocket> sessions = new CopyOnWriteArrayList<OpusWebSocket>();
     private final ExecutorService workers;
+    private final ServerStatusProbe serverStatusProbe;
     private ServerSocket serverSocket;
     private Thread acceptThread;
     private volatile int port = -1;
@@ -48,6 +64,7 @@ public final class OpusInteropServer {
         this.log = log;
         this.authCode = randomAuthCode();
         this.workers = Executors.newCachedThreadPool(daemonThreads("opus-bridge"));
+        this.serverStatusProbe = new ServerStatusProbe();
     }
 
     public void setNavigationManager(UiNavigationManager navigationManager) {
@@ -88,6 +105,7 @@ public final class OpusInteropServer {
             session.close(1001);
         }
         workers.shutdownNow();
+        serverStatusProbe.stop();
     }
 
     public int port() {
@@ -276,6 +294,14 @@ public final class OpusInteropServer {
     }
 
     private void handleApi(Request request, OutputStream out) throws IOException {
+        if ("/api/v1/client/assets/title-background".equals(request.path)
+                && "GET".equals(request.method)) {
+            serveMinecraftResource(
+                    "/assets/minecraft/textures/gui/title/background/panorama_0.png",
+                    "image/png",
+                    out);
+            return;
+        }
         if ("/api/v1/client".equals(request.path) && "GET".equals(request.method)) {
             respond(out, 200, "application/json",
                     OpusJson.object(
@@ -287,6 +313,27 @@ public final class OpusInteropServer {
                             "session", currentSessionName(),
                             "accountKind", currentSessionKind()),
                     null);
+            return;
+        }
+        if ("/api/v1/client/accounts".equals(request.path) && "GET".equals(request.method)) {
+            respond(out, 200, "application/json", accountsJson(), null);
+            return;
+        }
+        if ("/api/v1/client/accounts/select".equals(request.path)
+                && "POST".equals(request.method)) {
+            String id = OpusJson.extractString(request.body, "id");
+            if (id == null || id.trim().isEmpty()) {
+                respond(out, 400, "application/json",
+                        OpusJson.object("error", "Missing account id"), null);
+                return;
+            }
+            String result = selectAccount(id.trim());
+            if (result == null) {
+                respond(out, 404, "application/json",
+                        OpusJson.object("error", "Account does not exist"), null);
+                return;
+            }
+            respond(out, 200, "application/json", result, null);
             return;
         }
         if ("/api/v1/client/ui-state".equals(request.path)
@@ -323,6 +370,8 @@ public final class OpusInteropServer {
             if (!("navigate".equals(action)
                     || "back".equals(action)
                     || "close".equals(action)
+                    || "minecraft-settings".equals(action)
+                    || "create-world".equals(action)
                     || "quit".equals(action))) {
                 respond(out, 400, "application/json",
                         OpusJson.object("error", "Unknown UI action"), null);
@@ -333,7 +382,7 @@ public final class OpusInteropServer {
                         OpusJson.object("error", "Missing navigation revision"), null);
                 return;
             }
-            if (expectedRevision != null
+            if (!"quit".equals(action) && expectedRevision != null
                     && navigationManager != null
                     && !navigationManager.isCurrentRevision(expectedRevision.longValue())) {
                 respond(out, 409, "application/json",
@@ -400,6 +449,12 @@ public final class OpusInteropServer {
                     return;
                 }
             }
+        }
+        if ("/api/v1/client/servers/status".equals(request.path)
+                && ("GET".equals(request.method) || "POST".equals(request.method))) {
+            boolean refresh = "POST".equals(request.method);
+            respond(out, 200, "application/json", serverStatusesJson(refresh), null);
+            return;
         }
         if ("/api/v1/client/servers/connect".equals(request.path)
                 && "POST".equals(request.method) && bridgeProvider != null) {
@@ -523,12 +578,39 @@ public final class OpusInteropServer {
                         OpusJson.object("error", "Invalid UI input region"), null);
                 return;
             }
+            List<int[]> exclusions = new ArrayList<int[]>();
+            try {
+                JsonObject body = new JsonParser().parse(request.body).getAsJsonObject();
+                if (body.has("exclusions")) {
+                    JsonArray holes = body.getAsJsonArray("exclusions");
+                    if (holes.size() > 8) throw new IllegalArgumentException("Too many exclusions");
+                    for (JsonElement hole : holes) {
+                        JsonObject rect = hole.getAsJsonObject();
+                        int[] values = new int[4];
+                        String[] keys = {"x", "y", "width", "height"};
+                        for (int i = 0; i < keys.length; i++) {
+                            JsonElement value = rect.get(keys[i]);
+                            if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
+                                throw new IllegalArgumentException("Bad exclusion");
+                            values[i] = value.getAsBigDecimal().intValueExact();
+                            if (i >= 2 && values[i] < 0) throw new IllegalArgumentException("Bad exclusion size");
+                        }
+                        if ((long) values[0] + values[2] > Integer.MAX_VALUE
+                                || (long) values[1] + values[3] > Integer.MAX_VALUE)
+                            throw new IllegalArgumentException("Exclusion overflow");
+                        exclusions.add(values);
+                    }
+                }
+            } catch (RuntimeException invalid) {
+                respond(out, 400, "application/json", OpusJson.object("error", "Invalid HUD chrome exclusions"), null);
+                return;
+            }
             bridgeProvider.updateHudEditorCanvas(
                     revision.longValue(),
                     x.intValue(),
                     y.intValue(),
                     width.intValue(),
-                    height.intValue());
+                    height.intValue(), exclusions);
             log.info("Opus HUD editor input region revision {}: {}x{} at {},{}",
                     revision, width, height, x, y);
             respond(out, 204, "application/json", new byte[0], null);
@@ -568,6 +650,138 @@ public final class OpusInteropServer {
         }
         out.append("]}");
         return out.toString();
+    }
+
+    private static String accountsJson() throws IOException {
+        synchronized (ACCOUNT_CATALOG_LOCK) {
+            JsonObject catalog = readAccountCatalog();
+            JsonArray source = catalog.has("accounts") && catalog.get("accounts").isJsonArray()
+                    ? catalog.getAsJsonArray("accounts")
+                    : new JsonArray();
+            String selected = jsonString(catalog, "selectedAccountId");
+            String currentName = currentSessionName();
+            String currentKind = currentSessionKind();
+            JsonArray safe = new JsonArray();
+            for (JsonElement element : source) {
+                if (!element.isJsonObject()) {
+                    continue;
+                }
+                JsonObject account = element.getAsJsonObject();
+                String id = jsonString(account, "id");
+                String username = jsonString(account, "username");
+                String kind = jsonString(account, "kind");
+                String badge = jsonString(account, "badge");
+                if (id.isEmpty() || username.isEmpty()
+                        || !("microsoft".equals(kind) || "offline".equals(kind))) {
+                    continue;
+                }
+                JsonObject row = new JsonObject();
+                row.addProperty("id", id);
+                row.addProperty("username", username);
+                row.addProperty("kind", kind);
+                row.addProperty("badge", badge.isEmpty() ? kind : badge);
+                row.addProperty("selected", id.equals(selected));
+                boolean current = username.equals(currentName)
+                        && (("official".equals(currentKind) && "microsoft".equals(kind))
+                        || ("unofficial".equals(currentKind) && "offline".equals(kind)));
+                row.addProperty("current", current);
+                safe.add(row);
+            }
+            JsonObject result = new JsonObject();
+            result.add("accounts", safe);
+            result.addProperty("selectedAccountId", selected);
+            return GSON.toJson(result);
+        }
+    }
+
+    private static String selectAccount(String id) throws IOException {
+        synchronized (ACCOUNT_CATALOG_LOCK) {
+            File file = accountCatalogFile();
+            if (file == null || !file.isFile()) {
+                return null;
+            }
+            JsonObject catalog = readAccountCatalog();
+            JsonArray source = catalog.has("accounts") && catalog.get("accounts").isJsonArray()
+                    ? catalog.getAsJsonArray("accounts")
+                    : new JsonArray();
+            boolean found = false;
+            for (JsonElement element : source) {
+                if (element.isJsonObject() && id.equals(jsonString(element.getAsJsonObject(), "id"))) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return null;
+            }
+            catalog.addProperty("selectedAccountId", id);
+            writeAccountCatalog(file.toPath(), catalog);
+            return accountsJson();
+        }
+    }
+
+    private static JsonObject readAccountCatalog() throws IOException {
+        File file = accountCatalogFile();
+        if (file == null || !file.isFile()) {
+            JsonObject empty = new JsonObject();
+            empty.add("accounts", new JsonArray());
+            empty.addProperty("selectedAccountId", "");
+            return empty;
+        }
+        byte[] bytes = Files.readAllBytes(file.toPath());
+        try {
+            JsonElement parsed = new JsonParser().parse(new String(bytes, StandardCharsets.UTF_8));
+            if (parsed.isJsonObject()) {
+                return parsed.getAsJsonObject();
+            }
+        } catch (RuntimeException ignored) {
+            // Invalid launcher metadata must not break the title UI.
+        }
+        JsonObject empty = new JsonObject();
+        empty.add("accounts", new JsonArray());
+        empty.addProperty("selectedAccountId", "");
+        return empty;
+    }
+
+    private static void writeAccountCatalog(Path path, JsonObject catalog) throws IOException {
+        Path parent = path.getParent();
+        if (parent == null) {
+            throw new IOException("Account catalog path has no parent");
+        }
+        Files.createDirectories(parent);
+        Path temporary = parent.resolve(path.getFileName().toString()
+                + ".opus-" + Long.toHexString(System.nanoTime()) + ".tmp");
+        byte[] content = (GSON.toJson(catalog) + "\n").getBytes(StandardCharsets.UTF_8);
+        Files.write(temporary, content, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        try {
+            Files.move(temporary, path,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static File accountCatalogFile() {
+        String configured = System.getProperty("opus.accounts.file", "").trim();
+        return configured.isEmpty() ? null : new File(configured);
+    }
+
+    private static String jsonString(JsonObject object, String key) {
+        if (object == null || key == null || !object.has(key)) {
+            return "";
+        }
+        JsonElement value = object.get(key);
+        if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) {
+            return "";
+        }
+        try {
+            return value.getAsString();
+        } catch (RuntimeException ignored) {
+            return "";
+        }
     }
 
     private static String currentSessionName() {
@@ -826,6 +1040,69 @@ public final class OpusInteropServer {
         return out.toString();
     }
 
+    private String serverStatusesJson(boolean refresh) {
+        if (refresh) {
+            List<String[]> servers = bridgeProvider == null
+                    ? java.util.Collections.<String[]>emptyList()
+                    : bridgeProvider.listServers();
+            serverStatusProbe.refresh(servers);
+        }
+
+        List<ServerStatusProbe.Snapshot> statuses = serverStatusProbe.snapshots();
+        StringBuilder out = new StringBuilder("{\"servers\":[");
+        for (int index = 0; index < statuses.size(); index++) {
+            if (index > 0) {
+                out.append(',');
+            }
+            ServerStatusProbe.Snapshot status = statuses.get(index);
+            out.append("{\"address\":\"").append(OpusJson.escape(status.address))
+                    .append("\",\"state\":\"").append(OpusJson.escape(status.state))
+                    .append('\"');
+            if (!status.motd.isEmpty()) {
+                out.append(",\"motd\":\"").append(OpusJson.escape(status.motd)).append('\"');
+            }
+            if (status.onlinePlayers >= 0) {
+                out.append(",\"onlinePlayers\":").append(status.onlinePlayers);
+            }
+            if (status.maxPlayers >= 0) {
+                out.append(",\"maxPlayers\":").append(status.maxPlayers);
+            }
+            if (!status.version.isEmpty()) {
+                out.append(",\"version\":\"").append(OpusJson.escape(status.version)).append('\"');
+            }
+            if (status.pingMs >= 0L) {
+                out.append(",\"pingMs\":").append(status.pingMs);
+            }
+            out.append('}');
+        }
+        out.append("]}");
+        return out.toString();
+    }
+
+    private void serveMinecraftResource(
+            String resource,
+            String contentType,
+            OutputStream out) throws IOException {
+        InputStream stream = OpusInteropServer.class.getResourceAsStream(resource);
+        if (stream == null) {
+            respond(out, 404, "text/plain",
+                    "Minecraft resource unavailable".getBytes(StandardCharsets.UTF_8),
+                    null);
+            return;
+        }
+        try {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int count;
+            while ((count = stream.read(chunk)) >= 0) {
+                buffer.write(chunk, 0, count);
+            }
+            respond(out, 200, contentType, buffer.toByteArray(), null);
+        } finally {
+            stream.close();
+        }
+    }
+
     private void serveSpa(
             Request request,
             OutputStream out,
@@ -845,12 +1122,29 @@ public final class OpusInteropServer {
             while ((count = stream.read(chunk)) >= 0) {
                 buffer.write(chunk, 0, count);
             }
-            respond(
-                    out,
-                    200,
-                    mimeFor(resource),
-                    buffer.toByteArray(),
-                    extraHeaders);
+            byte[] body = buffer.toByteArray();
+            Map<String, String> responseHeaders = extraHeaders == null
+                    ? new HashMap<String, String>()
+                    : new HashMap<String, String>(extraHeaders);
+            if (resource.endsWith(".mp4") || resource.endsWith(".webm")) {
+                responseHeaders.put("Accept-Ranges", "bytes");
+                long[] range = parseByteRange(request.headers.get("range"), body.length);
+                if (range != null) {
+                    int start = (int) range[0];
+                    int end = (int) range[1];
+                    responseHeaders.put(
+                            "Content-Range",
+                            "bytes " + start + "-" + end + "/" + body.length);
+                    respond(
+                            out,
+                            206,
+                            mimeFor(resource),
+                            Arrays.copyOfRange(body, start, end + 1),
+                            responseHeaders);
+                    return;
+                }
+            }
+            respond(out, 200, mimeFor(resource), body, responseHeaders);
         } finally {
             stream.close();
         }
@@ -884,13 +1178,57 @@ public final class OpusInteropServer {
         if (resource.endsWith(".png")) {
             return "image/png";
         }
+        if (resource.endsWith(".jpg") || resource.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
         if (resource.endsWith(".woff2")) {
             return "font/woff2";
         }
         if (resource.endsWith(".json")) {
             return "application/json";
         }
+        if (resource.endsWith(".webm")) {
+            return "video/webm";
+        }
+        if (resource.endsWith(".mp4")) {
+            return "video/mp4";
+        }
         return "application/octet-stream";
+    }
+
+    private static long[] parseByteRange(String header, int length) {
+        if (header == null || length <= 0 || !header.startsWith("bytes=")) {
+            return null;
+        }
+        String value = header.substring("bytes=".length()).trim();
+        if (value.indexOf(',') >= 0) {
+            return null; // The embedded UI only needs a single media range.
+        }
+        int separator = value.indexOf('-');
+        if (separator < 0) {
+            return null;
+        }
+        try {
+            String startText = value.substring(0, separator).trim();
+            String endText = value.substring(separator + 1).trim();
+            long start;
+            long end;
+            if (startText.isEmpty()) {
+                long suffix = Long.parseLong(endText);
+                if (suffix <= 0L) return null;
+                start = Math.max(0L, length - suffix);
+                end = length - 1L;
+            } else {
+                start = Long.parseLong(startText);
+                end = endText.isEmpty() ? length - 1L : Long.parseLong(endText);
+            }
+            if (start < 0L || start >= length || end < start) {
+                return null;
+            }
+            return new long[] {start, Math.min(end, length - 1L)};
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private boolean authorized(Request request) {
@@ -1053,6 +1391,8 @@ public final class OpusInteropServer {
         switch (status) {
             case 200:
                 return "OK";
+            case 206:
+                return "Partial Content";
             case 204:
                 return "No Content";
             case 400:

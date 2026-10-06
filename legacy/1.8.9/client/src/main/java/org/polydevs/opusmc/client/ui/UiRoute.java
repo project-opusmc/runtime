@@ -34,6 +34,7 @@ public final class UiRoute {
         PAUSE_MENU,
         SINGLEPLAYER,
         MULTIPLAYER,
+        CONNECTION,
         GAME_OPTIONS,
         ACCOUNTS,
         QUICK_HUB,
@@ -66,6 +67,11 @@ public final class UiRoute {
 
     public static UiRoute multiplayer() {
         return new UiRoute(Kind.MULTIPLAYER, null, null);
+    }
+
+    /** Host-only route; its data and lifecycle come from Minecraft. */
+    public static UiRoute connection() {
+        return new UiRoute(Kind.CONNECTION, null, null);
     }
 
     public static UiRoute gameOptions() {

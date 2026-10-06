@@ -135,11 +135,72 @@ task harnessBridge(type: JavaExec) {
     }
 }
 
+task harnessSystemScreens(type: JavaExec) {
+    group = 'verification'
+    description = 'Verifies native connection lifecycle delegation and revisioned CEF status.'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.SystemScreenHarness'
+    doFirst {
+        classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+    }
+}
+
+task harnessNativeMusic(type: JavaExec) {
+    group = 'verification'
+    description = 'Verifies the production music veto while preserving every other sound category.'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.NativeMusicHarness'
+    doFirst {
+        classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+    }
+}
+
+task harnessScreenInput(type: JavaExec) {
+    group = 'verification'
+    description = 'Checks real GuiScreen dispatch from isolated raw LWJGL mouse state without a display.'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.ScreenInputHarness'
+    doFirst {
+        // GuiScreen asks LWJGL for its monotonic timer. Use the production
+        // compatibility adapter (no eager AWT) and locked native timer; do not
+        // create a display or any physical input devices in this harness.
+        def compatibility = file('../lwjgl-macos-compat/build/libs/opus-lwjgl-macos-compat-2.9.2-nightly-20140822.jar')
+        if (!compatibility.isFile()) throw new GradleException('Build the verified LWJGL compatibility artifact before harnessScreenInput.')
+        classpath = files(compatibility, sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+        systemProperty 'org.lwjgl.librarypath', file('../lwjgl-macos-compat/build/patched-native').absolutePath
+    }
+}
+
+['harnessHudEditor': 'HudEditorHarness', 'harnessHudSettings': 'HudSettingsHarness',
+ 'harnessKeystrokes': 'KeystrokesHarness'].each { taskName, harnessClass ->
+    tasks.create(name: taskName, type: JavaExec) {
+        group = 'verification'
+        description = 'Checks real HUD editor/widget state without physical input or a GL display.'
+        dependsOn 'harnessClasses'
+        main = "org.polydevs.opusmc.client.${harnessClass}"
+        doFirst {
+            classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+        }
+    }
+}
+
 def opusCefHelperDir = file('native/opus-cef-helper')
 def opusCefHelperApp = file("${opusCefHelperDir}/build/opus-webview-helper.app")
 def opusCefHelperHarnessApp = file(System.getenv('OPUS_CEF_HELPER_APP') ?: opusCefHelperApp)
+def opusCefLock = new groovy.json.JsonSlurper().parse(file('../../../web-surface-v2/cef-lock.json'))
+def opusCefV2Cache = file(System.getenv('OPUS_CEF_V2_CACHE')
+        ?: "${System.getProperty('user.home')}/.cache/opus-cef-v2")
+def opusCefLockedRoot = new File(
+        opusCefV2Cache,
+        "dist/${opusCefLock.file.toString().replace('_macosarm64.tar.bz2', '_macosarm64')}")
+// CEF V2 owns a versioned, checksum-pinned cache. Prefer it over the retired
+// ~/.cache/opus-cef/current convention so a normal runtime/desktop build also
+// rebuilds the helper when its native source changes.
 def opusCefRoot = file(System.getenv('CEF_ROOT')
-        ?: "${System.getProperty('user.home')}/.cache/opus-cef/current")
+        ?: System.getenv('OPUS_CEF_ROOT')
+        ?: (opusCefLockedRoot.isDirectory()
+                ? opusCefLockedRoot.absolutePath
+                : "${System.getProperty('user.home')}/.cache/opus-cef/current"))
 def opusIsMac = System.getProperty('os.name', '').toLowerCase().contains('mac')
 
 /**
@@ -273,10 +334,27 @@ task harnessWebSurfaceHostNavigation(type: JavaExec) {
     dependsOn 'harnessClasses', 'processResources', 'buildWebViewHelper'
     main = 'org.polydevs.opusmc.client.HostNavigationAckHarness'
     doFirst {
+        def compatibility = file('../lwjgl-macos-compat/build/libs/opus-lwjgl-macos-compat-2.9.2-nightly-20140822.jar')
+        if (!compatibility.isFile()) throw new GradleException('Build the verified LWJGL compatibility artifact before the game-screen input fixture.')
         classpath = files(
+                compatibility,
                 sourceSets.harness.output,
                 sourceSets.main.output,
                 sourceSets.main.runtimeClasspath)
+        systemProperty 'org.lwjgl.librarypath', file('../lwjgl-macos-compat/build/patched-native').absolutePath
+        if (opusCefHelperHarnessApp.isDirectory()) {
+            systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
+        }
+    }
+}
+
+task harnessCefRouteInput(type: JavaExec) {
+    group = 'verification'
+    description = 'Checks repeated production React route/composer input with native CEF and a disposable provider.'
+    dependsOn 'harnessClasses', 'processResources', 'buildWebViewHelper'
+    main = 'org.polydevs.opusmc.client.CefRouteInputHarness'
+    doFirst {
+        classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
         if (opusCefHelperHarnessApp.isDirectory()) {
             systemProperty 'opus.webview.helper', opusCefHelperHarnessApp.absolutePath
         }

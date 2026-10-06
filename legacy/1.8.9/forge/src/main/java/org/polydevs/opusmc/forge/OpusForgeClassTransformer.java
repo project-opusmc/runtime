@@ -8,6 +8,7 @@ import org.polydevs.opusmc.patches.NetworkTelemetryTransformer;
 import org.polydevs.opusmc.patches.OptiFineCloudRendererTransformer;
 import org.polydevs.opusmc.patches.RenderTelemetryTransformer;
 import org.polydevs.opusmc.patches.RetinaBackbufferTransformer;
+import org.polydevs.opusmc.patches.RetinaGuiInputTransformer;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -16,7 +17,8 @@ import net.minecraft.launchwrapper.IClassTransformer;
 
 /** Adapts Opus's verified 1.8.9 bytecode patches to Forge's class loader. */
 public final class OpusForgeClassTransformer implements IClassTransformer {
-    private static final int BASE_TRANSFORMER_COUNT = 7;
+    private static final int BASE_TRANSFORMER_COUNT = 8;
+    private static final String VANILLA_GUI_PREFIX = "net.minecraft.client.gui.";
     private static final Set<String> BASE_TARGET_CLASSES = Collections.unmodifiableSet(new HashSet<String>(
             Arrays.asList(
                     "ave",
@@ -39,7 +41,8 @@ public final class OpusForgeClassTransformer implements IClassTransformer {
         }
 
         String className = targetClassName(name, transformedName);
-        if (!BASE_TARGET_CLASSES.contains(className)) {
+        if (!BASE_TARGET_CLASSES.contains(className)
+                && !className.startsWith(VANILLA_GUI_PREFIX)) {
             return basicClass;
         }
 
@@ -77,22 +80,29 @@ public final class OpusForgeClassTransformer implements IClassTransformer {
             return normalizedName;
         }
 
-        if ("net.minecraft.client.Minecraft".equals(transformedName)) {
+        String normalizedTransformedName = normalize(transformedName);
+        if (normalizedTransformedName.startsWith(VANILLA_GUI_PREFIX)) {
+            return normalizedTransformedName;
+        }
+        if (normalizedName.startsWith(VANILLA_GUI_PREFIX)) {
+            return normalizedName;
+        }
+        if ("net.minecraft.client.Minecraft".equals(normalizedTransformedName)) {
             return "ave";
         }
-        if ("net.minecraft.client.LoadingScreenRenderer".equals(transformedName)) {
+        if ("net.minecraft.client.LoadingScreenRenderer".equals(normalizedTransformedName)) {
             return "avi";
         }
-        if ("net.minecraft.client.renderer.EntityRenderer".equals(transformedName)) {
+        if ("net.minecraft.client.renderer.EntityRenderer".equals(normalizedTransformedName)) {
             return "bfk";
         }
-        if ("net.minecraft.client.multiplayer.PlayerControllerMP".equals(transformedName)) {
+        if ("net.minecraft.client.multiplayer.PlayerControllerMP".equals(normalizedTransformedName)) {
             return "bda";
         }
-        if ("net.minecraft.client.network.NetHandlerPlayClient".equals(transformedName)) {
+        if ("net.minecraft.client.network.NetHandlerPlayClient".equals(normalizedTransformedName)) {
             return "bcy";
         }
-        if ("net.minecraft.network.NetworkManager".equals(transformedName)) {
+        if ("net.minecraft.network.NetworkManager".equals(normalizedTransformedName)) {
             return "ek";
         }
         return normalizedName;
@@ -102,6 +112,7 @@ public final class OpusForgeClassTransformer implements IClassTransformer {
         java.util.List<ClassTransformer> transformers = new java.util.ArrayList<ClassTransformer>();
         transformers.add(new ForgeLifecycleTransformer());
         transformers.add(new RetinaBackbufferTransformer());
+        transformers.add(new RetinaGuiInputTransformer());
         transformers.add(new MinecraftTelemetryTransformer());
         transformers.add(new RenderTelemetryTransformer());
         transformers.add(new CombatTelemetryTransformer());

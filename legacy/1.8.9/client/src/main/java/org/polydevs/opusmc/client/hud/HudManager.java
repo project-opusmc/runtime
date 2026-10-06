@@ -74,6 +74,11 @@ public final class HudManager {
         HudRenderContext context = new HudRenderContext(minecraft, renderer, viewport);
         editorBounds.clear();
         renderWidgets(context);
+        // Editing is immediately discoverable, even before any hover. These
+        // are outlines of the real enabled widgets, not preview placeholders.
+        for (UiBounds bounds : editorBounds.values()) {
+            renderer.border(bounds.inset(-3), 1, 0x889FA4AE);
+        }
         UiBounds outline = preparePointer(input.mouseX, input.mouseY);
         if (outline == null) {
             return;
@@ -202,7 +207,7 @@ public final class HudManager {
         for (int index = widgets.size() - 1; index >= 0; index--) {
             HudWidget widget = widgets.get(index);
             UiBounds bounds = editorBounds.get(widget.moduleId());
-            if (bounds != null && bounds.inset(-3).contains(mouseX, mouseY)) {
+            if (widget.isVisible() && bounds != null && bounds.inset(-3).contains(mouseX, mouseY)) {
                 return widget.moduleId();
             }
         }
@@ -223,7 +228,7 @@ public final class HudManager {
             return null;
         }
         for (HudWidget widget : widgets) {
-            if (moduleId.equals(widget.moduleId())) {
+            if (moduleId.equals(widget.moduleId()) && widget.isVisible()) {
                 return widget;
             }
         }

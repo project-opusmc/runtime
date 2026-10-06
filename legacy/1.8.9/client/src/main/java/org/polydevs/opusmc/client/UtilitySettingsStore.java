@@ -29,6 +29,7 @@ final class UtilitySettingsStore {
     private static final String UTILITIES_PROPERTY = "utilities";
     private static final String FPS_ID = "fps";
     private static final String ARMOR_STATUS_ID = "armor-status";
+    private static final String KEYSTROKES_ID = "keystrokes";
     private static final Pattern OFFSET_PATTERN =
             Pattern.compile("\\s*(-?\\d+)\\s*(?:·|,|x|×)\\s*(-?\\d+)\\s*");
 
@@ -39,8 +40,10 @@ final class UtilitySettingsStore {
     private JsonObject document = new JsonObject();
     private PerformanceOverlaySettings performanceOverlay = PerformanceOverlaySettings.defaults();
     private ArmorStatusSettings armorStatus = ArmorStatusSettings.defaults();
+    private KeystrokesSettings keystrokes = KeystrokesSettings.defaults();
     private PerformanceOverlaySettings persistedPerformanceOverlay = performanceOverlay;
     private ArmorStatusSettings persistedArmorStatus = armorStatus;
+    private KeystrokesSettings persistedKeystrokes = keystrokes;
     private String lastSaveError;
 
     private UtilitySettingsStore(Logger log, Path settingsPath) {
@@ -67,8 +70,10 @@ final class UtilitySettingsStore {
         document = new JsonObject();
         performanceOverlay = PerformanceOverlaySettings.defaults();
         armorStatus = ArmorStatusSettings.defaults();
+        keystrokes = KeystrokesSettings.defaults();
         persistedPerformanceOverlay = performanceOverlay;
         persistedArmorStatus = armorStatus;
+        persistedKeystrokes = keystrokes;
         lastSaveError = null;
 
         if (settingsPath == null || !Files.isRegularFile(settingsPath)) {
@@ -99,16 +104,21 @@ final class UtilitySettingsStore {
             if (armor != null) {
                 armorStatus = readArmorStatus(armor);
             }
+            JsonObject keys = utilities == null ? null : childObject(utilities, KEYSTROKES_ID, false);
+            if (keys != null) keystrokes = readKeystrokes(keys);
             persistedPerformanceOverlay = performanceOverlay;
             persistedArmorStatus = armorStatus;
+            persistedKeystrokes = keystrokes;
         } catch (Exception exception) {
             // A damaged preferences file is never allowed to take down the
             // game or manufacture a plausible-looking HUD. It fails closed.
             document = new JsonObject();
             performanceOverlay = PerformanceOverlaySettings.defaults();
             armorStatus = ArmorStatusSettings.defaults();
+            keystrokes = KeystrokesSettings.defaults();
             persistedPerformanceOverlay = performanceOverlay;
             persistedArmorStatus = armorStatus;
+            persistedKeystrokes = keystrokes;
             log.warn("Unable to read Opus utility settings; the Performance Overlay remains disabled.", exception);
         }
     }
@@ -119,6 +129,50 @@ final class UtilitySettingsStore {
 
     synchronized ArmorStatusSettings armorStatus() {
         return armorStatus;
+    }
+
+    synchronized KeystrokesSettings keystrokes() { return keystrokes; }
+
+    synchronized boolean updateKeystrokes(KeystrokesSettings next) {
+        previewKeystrokes(next);
+        return persistKeystrokes();
+    }
+
+    synchronized void previewKeystrokes(KeystrokesSettings next) {
+        keystrokes = next;
+        lastSaveError = null;
+    }
+
+    synchronized void cancelKeystrokesPreview() { keystrokes = persistedKeystrokes; }
+
+    synchronized boolean persistKeystrokes() {
+        if (settingsPath == null) {
+            lastSaveError = "The launcher did not provide a settings file.";
+            cancelKeystrokesPreview();
+            return false;
+        }
+        JsonObject previousDocument = copyDocument();
+        try {
+            document.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
+            JsonObject utilities = childObject(document, UTILITIES_PROPERTY, true);
+            JsonObject keys = childObject(utilities, KEYSTROKES_ID, true);
+            keys.addProperty("enabled", keystrokes.enabled());
+            keys.addProperty("anchor", keystrokes.anchor().storageValue());
+            keys.addProperty("offset", keystrokes.offsetX() + " · " + keystrokes.offsetY());
+            keys.addProperty("scale", keystrokes.scale());
+            keys.addProperty("opacity", keystrokes.opacity());
+            keys.addProperty("showMouseButtons", keystrokes.showMouseButtons());
+            keys.addProperty("showJump", keystrokes.showJump());
+            writeAtomically(gson.toJson(document));
+            persistedKeystrokes = keystrokes;
+            return true;
+        } catch (Exception exception) {
+            document = previousDocument;
+            lastSaveError = "Could not save the Keystrokes setting.";
+            cancelKeystrokesPreview();
+            log.warn(lastSaveError, exception);
+            return false;
+        }
     }
 
     synchronized String lastSaveError() {
@@ -156,9 +210,11 @@ final class UtilitySettingsStore {
     synchronized boolean persistPerformanceOverlay() {
         if (settingsPath == null) {
             lastSaveError = "The launcher did not provide a settings file.";
+            cancelPerformanceOverlayPreview();
             return false;
         }
 
+        JsonObject previousDocument = copyDocument();
         try {
             document.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
             JsonObject utilities = childObject(document, UTILITIES_PROPERTY, true);
@@ -172,6 +228,8 @@ final class UtilitySettingsStore {
             persistedPerformanceOverlay = performanceOverlay;
             return true;
         } catch (Exception exception) {
+            document = previousDocument;
+            cancelPerformanceOverlayPreview();
             lastSaveError = "Could not save the Performance Overlay setting.";
             log.warn(lastSaveError, exception);
             return false;
@@ -181,8 +239,10 @@ final class UtilitySettingsStore {
     synchronized boolean persistArmorStatus() {
         if (settingsPath == null) {
             lastSaveError = "The launcher did not provide a settings file.";
+            cancelArmorStatusPreview();
             return false;
         }
+        JsonObject previousDocument = copyDocument();
         try {
             document.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
             JsonObject utilities = childObject(document, UTILITIES_PROPERTY, true);
@@ -197,6 +257,8 @@ final class UtilitySettingsStore {
             persistedArmorStatus = armorStatus;
             return true;
         } catch (Exception exception) {
+            document = previousDocument;
+            cancelArmorStatusPreview();
             lastSaveError = "Could not save the Armor Status setting.";
             log.warn(lastSaveError, exception);
             return false;
@@ -235,6 +297,15 @@ final class UtilitySettingsStore {
                 readBoolean(object, "showDurability", defaults.showDurability()));
     }
 
+    private KeystrokesSettings readKeystrokes(JsonObject object) {
+        KeystrokesSettings defaults = KeystrokesSettings.defaults();
+        int[] offset = readOffset(readString(object, "offset", "12 · 50"), defaults.offsetX(), defaults.offsetY());
+        return new KeystrokesSettings(readBoolean(object, "enabled", defaults.enabled()),
+                PerformanceOverlaySettings.Anchor.fromStorage(readString(object, "anchor", defaults.anchor().storageValue())),
+                offset[0], offset[1], readInt(object, "scale", defaults.scale()), readInt(object, "opacity", defaults.opacity()),
+                readBoolean(object, "showMouseButtons", defaults.showMouseButtons()), readBoolean(object, "showJump", defaults.showJump()));
+    }
+
     private static JsonObject childObject(JsonObject parent, String name, boolean create) {
         JsonElement candidate = parent.get(name);
         if (candidate != null && candidate.isJsonObject()) {
@@ -246,6 +317,10 @@ final class UtilitySettingsStore {
         JsonObject child = new JsonObject();
         parent.add(name, child);
         return child;
+    }
+
+    private JsonObject copyDocument() {
+        return new JsonParser().parse(gson.toJson(document)).getAsJsonObject();
     }
 
     private static boolean readBoolean(JsonObject object, String name, boolean fallback) {

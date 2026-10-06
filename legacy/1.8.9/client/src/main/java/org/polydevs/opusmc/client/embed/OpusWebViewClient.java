@@ -93,6 +93,7 @@ public final class OpusWebViewClient {
     private volatile boolean running;
     private volatile boolean failed;
     private volatile boolean ready;
+    private volatile boolean surfaceVisible = true;
     private volatile boolean stopping;
     private volatile boolean warned;
     private volatile long framesSeen;
@@ -133,6 +134,30 @@ public final class OpusWebViewClient {
 
     public boolean isReady() {
         return ready;
+    }
+
+    public boolean isSurfaceVisible() {
+        return running && !failed && surfaceVisible;
+    }
+
+    /** Park or reveal the same CEF browser without closing its process/socket. */
+    public synchronized void setSurfaceVisible(boolean visible) {
+        if (surfaceVisible == visible || !running || failed) {
+            return;
+        }
+        if (!visible) {
+            surfaceVisible = false;
+            release(latest.getAndSet(null));
+            sendLine("SURFACE HIDE");
+            return;
+        }
+        advanceGeneration();
+        if (failed) {
+            return;
+        }
+        surfaceVisible = true;
+        sendLine("SURFACE SHOW");
+        sendView();
     }
 
     /**
@@ -228,6 +253,10 @@ public final class OpusWebViewClient {
     /** Returns the most recent frame and clears it, or null if none is new. */
     public Frame consumeFrame() {
         Frame frame = latest.getAndSet(null);
+        if (!surfaceVisible) {
+            release(frame);
+            return null;
+        }
         if (frame == null) {
             retryCurrentGenerationPaintIfNeeded();
         }
@@ -235,7 +264,8 @@ public final class OpusWebViewClient {
     }
 
     private void retryCurrentGenerationPaintIfNeeded() {
-        if (!running || failed || transportResizing || generation == lastPublishedGeneration) {
+        if (!running || failed || !surfaceVisible || transportResizing
+                || generation == lastPublishedGeneration) {
             return;
         }
         long now = System.nanoTime();
@@ -271,7 +301,7 @@ public final class OpusWebViewClient {
 
     /** True only for a frame from the current route/viewport generation. */
     public boolean isCurrent(Frame frame, int logicalWidth, int logicalHeight, float deviceScale) {
-        if (frame == null || frame.generation != generation) {
+        if (!surfaceVisible || frame == null || frame.generation != generation) {
             return false;
         }
         double safeScale = clampScale(deviceScale);
@@ -495,6 +525,19 @@ public final class OpusWebViewClient {
         return generation;
     }
 
+    /** Repaint the already-loaded route after React has committed and ACKed it. */
+    public synchronized long requestCommittedFrame() {
+        if (!running || failed || !surfaceVisible) {
+            return -1L;
+        }
+        advanceGeneration();
+        if (failed) {
+            return -1L;
+        }
+        sendView();
+        return generation;
+    }
+
     /** True after CEF has published a frame for this generation or a newer one. */
     public boolean hasPublishedGeneration(long expectedGeneration) {
         return expectedGeneration > 0L && lastPublishedGeneration >= expectedGeneration;
@@ -529,6 +572,7 @@ public final class OpusWebViewClient {
     }
 
     public void sendMouseMove(int x, int y, int modifiers) {
+        if (!surfaceVisible) return;
         sendLine("INPUT " + generation + " move " + x + " " + y + " " + modifiers);
     }
 
@@ -538,6 +582,7 @@ public final class OpusWebViewClient {
     }
 
     public void sendMouseLeave(int x, int y, int modifiers) {
+        if (!surfaceVisible) return;
         sendLine("INPUT " + generation + " leave " + x + " " + y + " " + modifiers);
     }
 
@@ -547,6 +592,7 @@ public final class OpusWebViewClient {
     }
 
     public void sendMouseButton(int x, int y, int button, boolean down, int modifiers) {
+        if (!surfaceVisible) return;
         sendLine("INPUT " + generation + " " + (down ? "down " : "up ")
                 + x + " " + y + " " + button + " " + modifiers);
     }
@@ -557,6 +603,7 @@ public final class OpusWebViewClient {
     }
 
     public void sendWheel(int x, int y, int deltaY, int modifiers) {
+        if (!surfaceVisible) return;
         sendLine("INPUT " + generation + " wheel " + x + " " + y + " " + deltaY
                 + " " + modifiers);
     }
@@ -567,7 +614,7 @@ public final class OpusWebViewClient {
     }
 
     public void sendChar(int codePoint, int modifiers) {
-        if (codePoint < 0 || codePoint > 0xFFFF) {
+        if (!surfaceVisible || codePoint < 0 || codePoint > 0xFFFF) {
             return;
         }
         sendLine("INPUT " + generation + " char " + codePoint + " " + modifiers);
@@ -579,6 +626,7 @@ public final class OpusWebViewClient {
     }
 
     public void sendKey(int windowsVirtualKey, boolean down, int modifiers) {
+        if (!surfaceVisible) return;
         sendLine("INPUT " + generation + " key " + windowsVirtualKey + " "
                 + (down ? 1 : 0) + " " + modifiers);
     }
@@ -590,6 +638,7 @@ public final class OpusWebViewClient {
         stopping = true;
         running = false;
         ready = false;
+        surfaceVisible = false;
         Frame outstanding = latest.getAndSet(null);
         release(outstanding);
         sendLineQuietly("BYE");
@@ -830,7 +879,7 @@ public final class OpusWebViewClient {
                     w,
                     h);
             outstandingFrames.incrementAndGet();
-            if (frameGeneration != generation) {
+            if (!surfaceVisible || frameGeneration != generation) {
                 release(frame);
                 return;
             }
@@ -945,7 +994,7 @@ public final class OpusWebViewClient {
                 return new Socket(InetAddress.getByName("127.0.0.1"), port);
             } catch (IOException retry) {
                 try {
-                    Thread.sleep(50L);
+                    Thread.sleep(15L);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     return null;

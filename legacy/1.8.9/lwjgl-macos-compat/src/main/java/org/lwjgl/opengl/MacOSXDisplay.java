@@ -130,6 +130,32 @@ public final class MacOSXDisplay implements DisplayImplementation {
 	private long liveResizeStepPrepared;
 	private long liveResizeStepApplied;
 	private long appKitResizeStep;
+	/*
+	 * A native fullscreen transition can arrive while Minecraft is still
+	 * creating its first GL frame. There is no render-thread handoff partner
+	 * yet, so blocking AppKit there leaves the view at its old dimensions and
+	 * produces a partly blank fullscreen surface. The native hook uses this
+	 * bootstrap flag to apply that one initial geometry update normally; once
+	 * wasResized() has run, all user-driven resizing uses the guarded path.
+	 */
+	private boolean liveResizeRenderReady;
+	private boolean liveResizeBootstrapFallback;
+	/*
+	 * A fullscreen request can race the title-screen boot after the first
+	 * wasResized() call but before the render thread can service a live-resize
+	 * handshake. Keep that exceptional transaction distinct from the normal
+	 * guarded path: AppKit may scale the last completed frame for the remainder
+	 * of this one resize instead of leaving the view at its old size or touching
+	 * a GL context that the stalled render thread still owns.
+	 */
+	private boolean liveResizeEmergencyFallback;
+	/*
+	 * Keep AppKit's automatic _surfaceNeedsUpdate: callback suppressed until
+	 * the render thread has consumed the final geometry. viewDidEndLiveResize
+	 * can run before Minecraft's next Display.update(), and releasing the guard
+	 * there lets AppKit touch NSOpenGLContext concurrently with glClear.
+	 */
+	private boolean liveResizeFinalizationPending;
 
 	/**
 	 * The stock LWJGL 2 macOS implementation calls NSOpenGLContext.update()
@@ -147,6 +173,13 @@ public final class MacOSXDisplay implements DisplayImplementation {
 	}
 
 	private static native boolean nInstallLiveResizeGuard();
+	private static native boolean nBindContextView(ByteBuffer peerHandle, ByteBuffer contextHandle, boolean force);
+	private static native void nCompleteLiveResizeGuard();
+	private static native boolean nConsumeDrawableUpdate();
+
+	static boolean bindContextView(ByteBuffer peerHandle, ByteBuffer contextHandle, boolean force) {
+		return resizeGuardInstalled && nBindContextView(peerHandle, contextHandle, force);
+	}
 
 	private static synchronized boolean ensureLiveResizeGuardInstalled() throws LWJGLException {
 		if (!Boolean.parseBoolean(System.getProperty(OPUS_LIVE_RESIZE_GUARD_PROPERTY, "true"))) {
@@ -461,6 +494,16 @@ public final class MacOSXDisplay implements DisplayImplementation {
 		 */
 		if (!liveResizeRequested) {
 			updateNativeDrawable(false);
+			boolean completeGuard = false;
+			synchronized (liveResizeMonitor) {
+				if (liveResizeFinalizationPending) {
+					liveResizeFinalizationPending = false;
+					completeGuard = true;
+				}
+			}
+			if (completeGuard && resizeGuardInstalled) {
+				nCompleteLiveResizeGuard();
+			}
 		}
 		
 		if (native_mode && updateNativeCursor) {
@@ -493,8 +536,9 @@ public final class MacOSXDisplay implements DisplayImplementation {
 		int nativeHeight = nGetHeight(window);
 		boolean geometryChanged = nativeWidth > 0 && nativeHeight > 0
 				&& (nativeWidth != lastWindowWidth || nativeHeight != lastWindowHeight);
+		boolean drawableDirty = resizeGuardInstalled && nConsumeDrawableUpdate();
 
-		if (!geometryChanged) {
+		if (!geometryChanged && !drawableDirty) {
 			return false;
 		}
 
@@ -513,15 +557,15 @@ public final class MacOSXDisplay implements DisplayImplementation {
 		 * and is visible as hitching when the window is moved quickly. The
 		 * ordinary non-live path still needs its own fence before update().
 		 *
-		 * The AppKit setFrameSize: hook updates the drawable while the render
-		 * thread has released the context. The render thread only restores the
-		 * viewport after it reacquires the context. The ordinary non-live path
-		 * keeps the stock render-thread update behavior.
+		 * AppKit only applies NSView geometry. The render thread reacquires the
+		 * context and performs every NSOpenGLContext.update() itself; crossing
+		 * that ownership boundary corrupts Apple's OpenGL-over-Metal resource
+		 * list during fullscreen transitions.
 		 */
 		if (!liveResizeFrame) {
 			GL11.glFinish();
-			drawable.context.update();
 		}
+		drawable.context.update();
 		lastWindowWidth = nativeWidth;
 		lastWindowHeight = nativeHeight;
 
@@ -548,6 +592,9 @@ public final class MacOSXDisplay implements DisplayImplementation {
 			liveResizeSequence++;
 			liveResizeRequested = true;
 			opusLiveResize = true;
+			liveResizeBootstrapFallback = !liveResizeRenderReady;
+			liveResizeEmergencyFallback = false;
+			liveResizeFinalizationPending = false;
 			liveResizeStepRequested = 0L;
 			liveResizeStepPrepared = 0L;
 			liveResizeStepApplied = 0L;
@@ -568,6 +615,9 @@ public final class MacOSXDisplay implements DisplayImplementation {
 			if (!liveResizeRequested) {
 				return false;
 			}
+			if (liveResizeBootstrapFallback || liveResizeEmergencyFallback) {
+				return false;
+			}
 
 			long step = ++liveResizeStepRequested;
 			appKitResizeStep = step;
@@ -576,11 +626,16 @@ public final class MacOSXDisplay implements DisplayImplementation {
 			while (liveResizeRequested && liveResizeStepPrepared < step) {
 				long remaining = deadline - System.currentTimeMillis();
 				if (remaining <= 0L) {
-					liveResizeRequested = false;
-					opusLiveResize = false;
+					/*
+					 * Do not abandon the AppKit transaction at its old dimensions.
+					 * This is a boot-time recovery path only: native code will keep
+					 * the completed frame visible and scaled until viewDidEndLiveResize,
+					 * while the render thread remains out of the drawable lifecycle.
+					 */
+					liveResizeEmergencyFallback = true;
 					liveResizeMonitor.notifyAll();
 					System.err.println(
-							"[OPUS/LWJGL] live-resize prepare timed out sequence="
+							"[OPUS/LWJGL] live-resize entering boot fallback sequence="
 									+ liveResizeSequence + " step=" + step);
 					return false;
 				}
@@ -592,6 +647,30 @@ public final class MacOSXDisplay implements DisplayImplementation {
 				}
 			}
 			return liveResizeRequested && liveResizeStepPrepared >= step;
+		}
+	}
+
+	/**
+	 * Called only by the AppKit hook after a prepare request declined. The
+	 * fallback is safe exclusively before the first render-thread resize
+	 * boundary exists; a later timeout remains fail-closed to protect the GL
+	 * drawable from a concurrent replacement.
+	 */
+	public boolean doUseBootstrapLiveResizeFallback() {
+		synchronized (liveResizeMonitor) {
+			return liveResizeBootstrapFallback;
+		}
+	}
+
+	/**
+	 * Called by the native view when a live-resize handshake cannot reach the
+	 * render thread during boot. Unlike the bootstrap fallback, this can occur
+	 * after a first normal frame; it deliberately avoids an AppKit-side context
+	 * update and lasts only until the current native resize ends.
+	 */
+	public boolean doUseEmergencyLiveResizeFallback() {
+		synchronized (liveResizeMonitor) {
+			return liveResizeEmergencyFallback;
 		}
 	}
 
@@ -623,6 +702,9 @@ public final class MacOSXDisplay implements DisplayImplementation {
 		synchronized (liveResizeMonitor) {
 			liveResizeRequested = false;
 			opusLiveResize = false;
+			liveResizeBootstrapFallback = false;
+			liveResizeEmergencyFallback = false;
+			liveResizeFinalizationPending = true;
 			liveResizeMonitor.notifyAll();
 			System.err.println(
 					"[OPUS/LWJGL] live-resize ended sequence=" + liveResizeSequence
@@ -634,7 +716,7 @@ public final class MacOSXDisplay implements DisplayImplementation {
 	private boolean synchronizeLiveResizeStep() {
 		long resizeStep;
 		synchronized (liveResizeMonitor) {
-			if (!liveResizeRequested) {
+			if (!liveResizeRequested || liveResizeEmergencyFallback) {
 				return false;
 			}
 
@@ -648,8 +730,8 @@ public final class MacOSXDisplay implements DisplayImplementation {
 		/*
 		 * Display calls this method immediately after swapBuffers(), so this
 		 * fence closes the preceding frame before AppKit changes the view.
-		 * AppKit must own the drawable update for the live path: the native
-		 * callback runs only after this render thread has released the context.
+		 * AppKit applies only view geometry after this thread releases the
+		 * context. This render thread reacquires and updates the drawable.
 		 */
 		GL11.glFinish();
 
@@ -681,9 +763,9 @@ public final class MacOSXDisplay implements DisplayImplementation {
 
 				/*
 				 * doCommitLiveResizeStep() is called by AppKit after
-				 * setFrameSize: has run and NSOpenGLContext.update() has
-				 * attached the new drawable. Keep the context released until
-				 * that point. If live resize ends while this step is in
+				 * setFrameSize: has applied the new view geometry. Keep the
+				 * context released until that point; the render thread updates
+				 * the drawable after it reacquires ownership. If live resize ends while this step is in
 				 * flight, still consume a step that was already committed.
 				 */
 				while (liveResizeRequested && liveResizeStepApplied < resizeStep) {
@@ -707,8 +789,8 @@ public final class MacOSXDisplay implements DisplayImplementation {
 		if (contextReleased) {
 			try {
 				/*
-				 * AppKit has finished its context update. Rebind the context
-				 * before any GL query or viewport mutation on this thread.
+					 * AppKit has finished applying view geometry. Rebind the context
+					 * before updating the drawable or issuing any GL command.
 				 */
 				drawable.context.makeCurrent();
 			} catch (LWJGLException error) {
@@ -1013,6 +1095,9 @@ public final class MacOSXDisplay implements DisplayImplementation {
 	}
 
 	public boolean wasResized() {
+		synchronized (liveResizeMonitor) {
+			liveResizeRenderReady = true;
+		}
 		/*
 		 * Display.update() calls this immediately after swapBuffers(). During a
 		 * native drag this is the render-thread safe point that fences the old

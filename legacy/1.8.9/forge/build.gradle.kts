@@ -87,12 +87,23 @@ tasks.jar {
 
 tasks.register("verifyCoremodArtifact") {
     group = "verification"
-    description = "Verifies that the telemetry coremod contains no legacy Opus UI path."
+    description = "Verifies that the coremod contains only the approved Retina input compatibility path."
     dependsOn(tasks.jar)
 
     doLast {
         val artifact = tasks.jar.get().archiveFile.get().asFile
         JarFile(artifact).use { archive ->
+            val requiredRetinaInputClasses = listOf(
+                "org/polydevs/opusmc/forge/RetinaDisplay.class",
+                "org/polydevs/opusmc/patches/RetinaGuiInputTransformer.class",
+            )
+            val missingRetinaInputClasses = requiredRetinaInputClasses.filter {
+                archive.getEntry(it) == null
+            }
+            check(missingRetinaInputClasses.isEmpty()) {
+                "Core Mod is missing Retina input classes: ${missingRetinaInputClasses.joinToString()}"
+            }
+
             val forbidden = listOf(
                 "org/polydevs/opusmc/core/ClientConfigUi.class",
                 "org/polydevs/opusmc/core/ClientUiHooks.class",
@@ -132,6 +143,7 @@ tasks.register("verifyCoremodArtifact") {
                 "org/polydevs/opusmc/client/gui/",
                 "org.polydevs.opusmc.client.gui.",
                 "net/minecraft/client/gui/",
+                "net.minecraft.client.gui.",
                 "net/minecraftforge/client/event/GuiScreenEvent",
                 "net/minecraftforge/fml/client/registry/ClientRegistry",
                 "net/minecraft/client/settings/KeyBinding",
@@ -153,6 +165,15 @@ tasks.register("verifyCoremodArtifact") {
                 "mouseClicked",
                 "handleMouseInput",
             )
+            val approvedRetinaInputSymbols = mapOf(
+                "org/polydevs/opusmc/forge/OpusForgeClassTransformer.class" to setOf(
+                    "net.minecraft.client.gui.",
+                ),
+                "org/polydevs/opusmc/patches/RetinaGuiInputTransformer.class" to setOf(
+                    "net.minecraft.client.gui.",
+                    "org/lwjgl/input/Mouse",
+                ),
+            )
             val classEntries = archive.entries()
             while (classEntries.hasMoreElements()) {
                 val entry = classEntries.nextElement()
@@ -162,8 +183,9 @@ tasks.register("verifyCoremodArtifact") {
                 val symbols = archive.getInputStream(entry).use { input ->
                     String(input.readBytes(), Charsets.ISO_8859_1)
                 }
+                val approvedSymbols = approvedRetinaInputSymbols[entry.name].orEmpty()
                 forbiddenUiSymbols
-                    .filter { symbol -> symbols.contains(symbol) }
+                    .filter { symbol -> symbols.contains(symbol) && symbol !in approvedSymbols }
                     .forEach { symbol -> leaked.add("${entry.name} references forbidden UI symbol $symbol") }
             }
             check(leaked.isEmpty()) {

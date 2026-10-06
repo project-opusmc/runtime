@@ -11,6 +11,7 @@ public final class InputContractHarness {
 
     public static void main(String[] args) {
         for (int[] row : MATRIX) verifyPointerMatrix(row[0], row[1], row[2], row[3]);
+        verifyRetinaLogicalMouse();
         verifyButtons();
         verifyModifiers();
         verifyKeys();
@@ -47,6 +48,24 @@ public final class InputContractHarness {
         System.out.println("PASS raw LWJGL framebuffer -> CSS mapping "
                 + framebufferWidth + "x" + framebufferHeight + " -> "
                 + logicalWidth + "x" + logicalHeight);
+    }
+
+    private static void verifyRetinaLogicalMouse() {
+        OpusDisplayMetrics metrics = new OpusDisplayMetrics(1L, 427, 240, 854, 480);
+        OpusInputMapper mapper = new OpusInputMapper(metrics);
+
+        OpusInputMapper.Pointer topLeft = mapper.fromLwjglLogical(0, 239);
+        require(topLeft.x == 0 && topLeft.y == 0, "Retina logical top-left mapping");
+
+        OpusInputMapper.Pointer center = mapper.fromLwjglLogical(213, 119);
+        require(center.x == 213 && center.y == 120, "Retina logical center mapping");
+
+        OpusInputMapper.Pointer bottomRight = mapper.fromLwjglLogical(426, 0);
+        require(bottomRight.x == 426 && bottomRight.y == 239, "Retina logical bottom-right mapping");
+
+        OpusInputMapper.Pointer clamped = mapper.fromLwjglLogical(999, -100);
+        require(clamped.x == 426 && clamped.y == 239, "Retina logical clamp");
+        System.out.println("PASS raw LWJGL logical -> CSS mapping at Retina DPR 2");
     }
 
     private static void verifyButtons() {

@@ -36,8 +36,11 @@ public final class W4InputHarness {
     private static final int ARROW = 0x8040D0;
     private static final int ESCAPE = 0xD04040;
     private static final int TAB = 0x40D040;
-    private static final int CONTROL_A = 0x40D0D0;
-    private static final int COMMAND_A = 0xD0D040;
+    private static final int EDIT_CUT = 0x40D0D0;
+    private static final int EDIT_PASTE = 0xD0D040;
+    private static final int EDIT_COMMAND_SELECT = 0xB984E8;
+    private static final int EDIT_UNDO = 0xE89184;
+    private static final int EDIT_REDO = 0x84E89C;
 
     public static void main(String[] args) throws Exception {
         AtomicBoolean staleInputObserved = new AtomicBoolean();
@@ -57,12 +60,16 @@ public final class W4InputHarness {
             client.release(initial);
             OpusInputMapper mapper = new OpusInputMapper(metrics);
 
-            OpusInputMapper.Pointer target = rawToCss(metrics, mapper, 180, 120);
+            OpusInputMapper.Pointer framebufferTarget = rawToCss(metrics, mapper, 180, 120);
+            OpusInputMapper.Pointer logicalTarget = logicalRawToCss(mapper, 180, 120);
+            OpusInputMapper.Pointer target = framebufferTarget;
             OpusInputMapper.Pointer input = rawToCss(metrics, mapper, 180, 242);
+            require(logicalTarget.x == target.x && logicalTarget.y == target.y,
+                    "logical and framebuffer coordinate oracles disagree");
 
             client.sendMouseMove(target.x, target.y);
             awaitState(client, HOVER, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
-            System.out.println("PASS raw LWJGL pointer mapping drives CEF hover at DPR 2");
+            System.out.println("PASS framebuffer-to-CSS pointer mapping drives CEF hover at DPR 2");
 
             client.sendMouseLeave(target.x, target.y);
             awaitState(client, LEAVE, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
@@ -75,6 +82,15 @@ public final class W4InputHarness {
             click(client, target, 2, 0);
             awaitState(client, MIDDLE, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
             System.out.println("PASS left/right/middle button semantics");
+
+            client.setSurfaceVisible(false);
+            click(client, target, 0, 0);
+            require(client.consumeFrame() == null, "parked CEF published click feedback");
+            client.setSurfaceVisible(true);
+            awaitState(client, MIDDLE, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
+            click(client, target, 0, 0);
+            awaitState(client, LEFT, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
+            System.out.println("PASS parked click is ignored and visible click reaches DOM");
 
             click(client, target, 0, OpusInputMapper.MOD_SHIFT);
             awaitState(client, SHIFT_LEFT, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
@@ -95,6 +111,25 @@ public final class W4InputHarness {
             awaitState(client, TEXT, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
             System.out.println("PASS Unicode BMP text input (A + ắ)");
 
+            key(client, 0x41, OpusInputMapper.MOD_CONTROL);
+            key(client, 0x43, OpusInputMapper.MOD_CONTROL);
+            key(client, 0x58, OpusInputMapper.MOD_CONTROL);
+            awaitState(client, EDIT_CUT, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
+            key(client, 0x56, OpusInputMapper.MOD_CONTROL);
+            awaitState(client, EDIT_PASTE, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
+            System.out.println("PASS Control+A/C/X/V performs real browser editing and clipboard operations");
+
+            key(client, 0x41, OpusInputMapper.MOD_COMMAND);
+            client.sendChar('Q');
+            awaitState(client, EDIT_COMMAND_SELECT, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
+            System.out.println("PASS Command+A selects the complete editable value");
+
+            key(client, 0x5A, OpusInputMapper.MOD_CONTROL);
+            awaitState(client, EDIT_UNDO, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
+            key(client, 0x59, OpusInputMapper.MOD_CONTROL);
+            awaitState(client, EDIT_REDO, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
+            System.out.println("PASS Control+Z/Y performs real undo and redo");
+
             key(client, 0x08, 0);
             awaitState(client, BACKSPACE, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
             key(client, 0x25, 0);
@@ -105,20 +140,21 @@ public final class W4InputHarness {
             awaitState(client, TAB, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
             System.out.println("PASS Backspace/Arrow/Escape/Tab native key semantics");
 
-            key(client, 0x41, OpusInputMapper.MOD_CONTROL);
-            awaitState(client, CONTROL_A, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
-            System.out.println("PASS Control+A modifier and ANSI key mapping");
-
-            key(client, 0x41, OpusInputMapper.MOD_COMMAND);
-            awaitState(client, COMMAND_A, LOGICAL_WIDTH, LOGICAL_HEIGHT, SCALE);
-            System.out.println("PASS Command+A modifier and ANSI key mapping");
-
             verifyStaleGenerationDrop(client, staleInputObserved);
         } finally {
             client.stop();
         }
 
         System.out.println("W4 CEF INPUT ORACLE: ALL PASSED");
+    }
+
+    private static OpusInputMapper.Pointer logicalRawToCss(
+            OpusInputMapper mapper, int logicalX, int logicalY) {
+        int rawBottomY = LOGICAL_HEIGHT - 1 - logicalY;
+        OpusInputMapper.Pointer mapped = mapper.fromLwjglLogical(logicalX, rawBottomY);
+        require(mapped.x == logicalX && mapped.y == logicalY,
+                "raw logical coordinate did not map back to requested CSS point");
+        return mapped;
     }
 
     private static OpusInputMapper.Pointer rawToCss(OpusDisplayMetrics metrics,
@@ -220,15 +256,16 @@ public final class W4InputHarness {
                 + "</style></head><body><div id='status'></div><button id='target'></button>"
                 + "<input id='text' autocomplete='off'/><script>"
                 + "const s=document.getElementById('status'),t=document.getElementById('target'),i=document.getElementById('text');"
-                + "const c={ready:'#112233',hover:'#a01010',leave:'#10a010',left:'#1010a0',right:'#a06010',middle:'#6010a0',shift:'#109090',up:'#d02080',down:'#20d080',focus:'#2070d0',text:'#20a0d0',back:'#d0a020',arrow:'#8040d0',esc:'#d04040',tab:'#40d040',ctrl:'#40d0d0',cmd:'#d0d040'};"
+                + "const c={ready:'#112233',hover:'#a01010',leave:'#10a010',left:'#1010a0',right:'#a06010',middle:'#6010a0',shift:'#109090',up:'#d02080',down:'#20d080',focus:'#2070d0',text:'#20a0d0',back:'#d0a020',arrow:'#8040d0',esc:'#d04040',tab:'#40d040',cut:'#40d0d0',paste:'#d0d040',cmd:'#b984e8',undo:'#e89184',redo:'#84e89c'};"
                 + "const state=n=>{s.style.background=c[n]};"
                 + "t.addEventListener('mouseenter',()=>state('hover'));t.addEventListener('mouseleave',()=>state('leave'));"
                 + "t.addEventListener('mousedown',e=>{if(e.shiftKey&&e.button===0)state('shift');else if(e.button===0)state('left');else if(e.button===2)state('right');else if(e.button===1)state('middle')});"
                 + "t.addEventListener('contextmenu',e=>e.preventDefault());"
                 + "t.addEventListener('wheel',e=>{e.preventDefault();state(e.deltaY<0?'up':'down')},{passive:false});"
                 + "i.addEventListener('focus',()=>state('focus'));"
-                + "i.addEventListener('input',()=>{const cp=Array.from(i.value).map(ch=>ch.codePointAt(0));console.log('W4_INPUT_VALUE:'+cp.map(v=>v.toString(16)).join(','));if(cp.length===2&&cp[0]===0x41&&cp[1]===0x1eaf)state('text')});"
-                + "document.addEventListener('keydown',e=>{if(e.metaKey&&(e.key==='a'||e.key==='A')){e.preventDefault();state('cmd')}else if(e.ctrlKey&&(e.key==='a'||e.key==='A')){e.preventDefault();state('ctrl')}else if(e.key==='Backspace')state('back');else if(e.key==='ArrowLeft')state('arrow');else if(e.key==='Escape')state('esc');else if(e.key==='Tab')state('tab')});"
+                + "let editStage='typing';const original=[0x41,0x1eaf];"
+                + "i.addEventListener('input',()=>{const cp=Array.from(i.value).map(ch=>ch.codePointAt(0));console.log('W4_INPUT_VALUE:'+cp.map(v=>v.toString(16)).join(','));if(editStage==='typing'&&cp.length===2&&cp[0]===original[0]&&cp[1]===original[1]){editStage='ready';state('text')}else if(editStage==='ready'&&cp.length===0){editStage='cut';state('cut')}else if(editStage==='cut'&&cp.length===2&&cp[0]===original[0]&&cp[1]===original[1]){editStage='pasted';state('paste')}else if(editStage==='pasted'&&i.value==='Q'){editStage='replaced';state('cmd')}else if(editStage==='replaced'&&cp.length===2&&cp[0]===original[0]&&cp[1]===original[1]){editStage='undone';state('undo')}else if(editStage==='undone'&&i.value==='Q'){editStage='redone';state('redo')}});"
+                + "document.addEventListener('keydown',e=>{if(e.key==='Backspace')state('back');else if(e.key==='ArrowLeft')state('arrow');else if(e.key==='Escape')state('esc');else if(e.key==='Tab')state('tab')});"
                 + "state('ready');</script></body></html>";
         return "data:text/html;base64," + Base64.getEncoder().encodeToString(
                 html.getBytes(StandardCharsets.UTF_8));

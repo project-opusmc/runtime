@@ -43,6 +43,7 @@ public final class UiNavigationManager {
     private volatile boolean canGoBack;
     private volatile boolean canCloseToGame;
     private volatile boolean confirmed = true;
+    private volatile ConnectionUiState connection;
     private volatile ScheduledFuture<?> pendingTimeout;
     private volatile Runnable reloadAction = new Runnable() {
         @Override
@@ -88,6 +89,16 @@ public final class UiNavigationManager {
             String nextPresentation,
             String nextPausePolicy,
             boolean nextCanCloseToGame) {
+        commit(nextNavigation, nextWorldContext, nextPresentation, nextPausePolicy, nextCanCloseToGame, null);
+    }
+
+    public void commit(
+            UiNavigationState nextNavigation,
+            String nextWorldContext,
+            String nextPresentation,
+            String nextPausePolicy,
+            boolean nextCanCloseToGame,
+            ConnectionUiState nextConnection) {
         if (nextNavigation == null || nextNavigation.current() == null) {
             return;
         }
@@ -108,7 +119,8 @@ public final class UiNavigationManager {
                 previous == null ? null : previous.moduleId(),
                 previous == null || previous.settingsSection() == null
                         ? null
-                        : previous.settingsSection().wireValue());
+                        : previous.settingsSection().wireValue(),
+                nextConnection);
     }
 
     public void commit(
@@ -134,10 +146,11 @@ public final class UiNavigationManager {
                 nextCanCloseToGame,
                 null,
                 null,
+                null,
                 null);
     }
 
-    private void commitValues(
+    private synchronized void commitValues(
             String name,
             String nextModuleId,
             String nextSettingsSection,
@@ -150,7 +163,8 @@ public final class UiNavigationManager {
             boolean nextCanCloseToGame,
             String nextReturnTo,
             String nextReturnModuleId,
-            String nextReturnSettingsSection) {
+            String nextReturnSettingsSection,
+            ConnectionUiState nextConnection) {
         String safe = name == null ? "" : name;
         String safeModuleId = nextModuleId == null ? "" : nextModuleId;
         String safeSettingsSection = nextSettingsSection == null ? "" : nextSettingsSection;
@@ -159,15 +173,10 @@ public final class UiNavigationManager {
         String safeReturnSettingsSection = nextReturnSettingsSection == null
                 ? ""
                 : nextReturnSettingsSection;
-        boolean sameRoute = Objects.equals(current, safe)
+        boolean sameState = Objects.equals(current, safe)
                 && Objects.equals(moduleId, safeModuleId)
-                && Objects.equals(settingsSection, safeSettingsSection);
-        long safeRevision = sameRoute
-                ? Math.max(revision, nextRevision)
-                : Math.max(revision + 1L, nextRevision);
-        if (sameRoute
-                && revision == safeRevision
-                && confirmed
+                && Objects.equals(settingsSection, safeSettingsSection)
+                && Objects.equals(connection, nextConnection)
                 && Objects.equals(entryPoint, safeValue(nextEntryPoint, "launch"))
                 && Objects.equals(worldContext, safeValue(nextWorldContext, "none"))
                 && Objects.equals(presentation, safeValue(nextPresentation, "opaque"))
@@ -176,12 +185,17 @@ public final class UiNavigationManager {
                 && canCloseToGame == nextCanCloseToGame
                 && Objects.equals(returnTo, safeReturnTo)
                 && Objects.equals(returnModuleId, safeReturnModuleId)
-                && Objects.equals(returnSettingsSection, safeReturnSettingsSection)) {
+                && Objects.equals(returnSettingsSection, safeReturnSettingsSection);
+        long safeRevision = sameState
+                ? Math.max(revision, nextRevision)
+                : Math.max(revision + 1L, nextRevision);
+        if (sameState && revision == safeRevision) {
             return;
         }
         current = safe;
         moduleId = safeModuleId;
         settingsSection = safeSettingsSection;
+        connection = nextConnection;
         revision = safeRevision;
         entryPoint = safeValue(nextEntryPoint, "launch");
         worldContext = safeValue(nextWorldContext, "none");
@@ -192,14 +206,17 @@ public final class UiNavigationManager {
         returnTo = safeReturnTo;
         returnModuleId = safeReturnModuleId;
         returnSettingsSection = safeReturnSettingsSection;
+        // A changed native phase or context is a new input contract even when
+        // the route id is unchanged. Old actions and ACKs must stay revoked.
         confirmed = false;
         cancelTimeout();
         broadcast("open");
         scheduleTimeout(revision);
     }
 
-    public void close() {
+    public synchronized void close() {
         current = "none";
+        connection = null;
         moduleId = "";
         settingsSection = "";
         returnTo = "";
@@ -217,7 +234,7 @@ public final class UiNavigationManager {
         broadcast("close");
     }
 
-    public void confirm(long acknowledgedRevision) {
+    public synchronized void confirm(long acknowledgedRevision) {
         if (acknowledgedRevision != revision) {
             return;
         }
@@ -243,7 +260,7 @@ public final class UiNavigationManager {
                 moduleId.isEmpty() ? "" : " (" + moduleId + ")");
     }
 
-    private String navigationJson() {
+    private synchronized String navigationJson() {
         StringBuilder out = new StringBuilder("{");
         out.append("\"revision\":").append(revision).append(',');
         out.append("\"current\":");
@@ -261,7 +278,8 @@ public final class UiNavigationManager {
         out.append("\"presentation\":\"").append(OpusJson.escape(presentation)).append("\",");
         out.append("\"pausePolicy\":\"").append(OpusJson.escape(pausePolicy)).append("\",");
         out.append("\"canGoBack\":").append(canGoBack).append(',');
-        out.append("\"canCloseToGame\":").append(canCloseToGame);
+        out.append("\"canCloseToGame\":").append(canCloseToGame).append(',');
+        out.append("\"connection\":").append(connection == null ? "null" : connection.json());
         out.append('}');
         return out.toString();
     }
@@ -302,6 +320,8 @@ public final class UiNavigationManager {
                 return "singleplayer";
             case MULTIPLAYER:
                 return "multiplayer";
+            case CONNECTION:
+                return "connection";
             case GAME_OPTIONS:
                 return "settings";
             case ACCOUNTS:

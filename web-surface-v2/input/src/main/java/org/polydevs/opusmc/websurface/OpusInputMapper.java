@@ -19,6 +19,17 @@ public final class OpusInputMapper {
                 metrics.framebufferBottomToLogicalY(framebufferBottomY));
     }
 
+    /**
+     * Maps macOS LWJGL 2 native mouse coordinates into CEF CSS coordinates.
+     * Native mouse X/Y remain in logical window points when Retina backing is
+     * enabled; only the Y origin differs (LWJGL bottom, CSS top).
+     */
+    public Pointer fromLwjglLogical(int logicalX, int logicalBottomY) {
+        int x = clamp(logicalX, 0, metrics.logicalWidth() - 1);
+        int bottomY = clamp(logicalBottomY, 0, metrics.logicalHeight() - 1);
+        return new Pointer(x, metrics.logicalHeight() - 1 - bottomY);
+    }
+
     public int wheelDeltaFromLwjgl(int lwjglDelta) {
         return lwjglDelta;
     }
@@ -91,6 +102,10 @@ public final class OpusInputMapper {
             case 10: return 0x39;
             default: return 0;
         }
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     public static final class Pointer {

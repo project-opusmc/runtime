@@ -162,9 +162,11 @@ val buildWebClient = tasks.register<Exec>("buildWebClient") {
     description = "Builds the React/CEF Web Surface Forge client shipped as the active product UI."
     workingDir(webClientProject)
     inputs.dir(webClientProject.dir("src"))
+    inputs.dir(webClientProject.dir("native/opus-cef-helper/src"))
     inputs.dir(layout.projectDirectory.dir("../ui-v2"))
     inputs.dir(layout.projectDirectory.dir("web-surface-v2"))
     inputs.file(webClientProject.file("build.gradle"))
+    inputs.file(webClientProject.file("native/opus-cef-helper/build.sh"))
     outputs.file(webClientJar)
     environment("JAVA_HOME", oneConfigJava8Home)
     environment("OPUS_FORGE_UI_JAVAC", oneConfigJava8Home.resolve("bin/javac"))
@@ -181,6 +183,7 @@ tasks.register<Sync>("prepareBootstrap") {
     dependsOn(
         ":bootstrap:verifyBootstrapArtifact",
         ":legacy:1.8.9:forge:verifyCoremodArtifact",
+        ":legacy:1.8.9:standalone:verifyStandaloneArtifact",
         ":legacy:1.8.9:lwjgl-macos-compat:verifyMacOsLwjglCompatibilityArtifact",
         buildWebClient,
     )
@@ -188,6 +191,7 @@ tasks.register<Sync>("prepareBootstrap") {
 
     from(project(":bootstrap").tasks.named("jar"))
     from(project(":legacy:1.8.9:forge").tasks.named("jar"))
+    from(project(":legacy:1.8.9:standalone").tasks.named("jar"))
     from(project(":legacy:1.8.9:lwjgl-macos-compat").tasks.named("jar"))
     from(webClientJar) {
         rename { "opus-native-ui-1.8.9-0.1.0.jar" }
@@ -211,6 +215,11 @@ val runtimeArtifacts = listOf(
         role = "runtime-legacy-1.8.9",
         sourceName = "opus-forge-coremod-${project.version}.jar",
         releaseName = "opus-runtime-legacy-1.8.9-${project.version}.jar",
+    ),
+    RuntimeArtifact(
+        role = "standalone-loader",
+        sourceName = "opus-standalone-loader-${project.version}.jar",
+        releaseName = "opus-standalone-loader-${project.version}.jar",
     ),
     RuntimeArtifact(
         role = "lwjgl-macos-compat",

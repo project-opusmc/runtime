@@ -25,10 +25,12 @@ public final class ForgeBootstrapMain {
         launchStatus.installShutdownHook();
         try {
             ForgeBootstrapArguments.validate(args);
-            String[] launchArguments = withFmlTweaker(GameArgumentProtocol.read(System.in));
+            boolean standalone = Boolean.getBoolean("opus.standalone");
+            String[] rawArguments = GameArgumentProtocol.read(System.in);
+            String[] launchArguments = standalone ? rawArguments : withFmlTweaker(rawArguments);
 
-            System.out.println("[OPUS/FORGE] bootstrap loaded");
-            System.out.println("[OPUS/FORGE] launch arguments=" + launchArguments.length);
+            System.out.println(standalone ? "[OPUS/STANDALONE] bootstrap loaded" : "[OPUS/FORGE] bootstrap loaded");
+            System.out.println("[OPUS/BOOT] launch arguments=" + launchArguments.length);
             launchStatus.markRunning();
             Launch.main(launchArguments);
             launchStatus.markExited();

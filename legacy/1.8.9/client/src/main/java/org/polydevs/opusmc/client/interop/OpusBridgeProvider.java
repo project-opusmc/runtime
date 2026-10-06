@@ -67,4 +67,10 @@ public interface OpusBridgeProvider {
      * The native editor must fail closed until this region is acknowledged.
      */
     void updateHudEditorCanvas(long navigationRevision, int x, int y, int width, int height);
+
+    /** Optional CEF controls that remain above a full-viewport native editor. */
+    default void updateHudEditorCanvas(long navigationRevision, int x, int y, int width, int height,
+            List<int[]> exclusions) {
+        updateHudEditorCanvas(navigationRevision, x, y, width, height);
+    }
 }

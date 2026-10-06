@@ -63,11 +63,39 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
+#include "include/cef_application_mac.h"
 #include "include/cef_client.h"
 #include "include/cef_render_handler.h"
 #include "include/cef_task.h"
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_library_loader.h"
+
+// CEF's macOS event path sends synthetic mouse/keyboard events through
+// NSApplication. The framework explicitly requires its host to implement
+// CefAppProtocol; using the stock NSApplication instance leaves
+// isHandlingSendEvent: absent and terminates the helper on the first input.
+@interface OpusApplication : NSApplication <CefAppProtocol> {
+ @private
+  BOOL handling_send_event_;
+}
+@end
+
+@implementation OpusApplication
+
+- (BOOL)isHandlingSendEvent {
+  return handling_send_event_;
+}
+
+- (void)setHandlingSendEvent:(BOOL)handling_send_event {
+  handling_send_event_ = handling_send_event;
+}
+
+- (void)sendEvent:(NSEvent*)event {
+  CefScopedSendingEvent scoped_sending_event;
+  [super sendEvent:event];
+}
+
+@end
 
 namespace {
 
@@ -93,12 +121,23 @@ int g_shm_fd = -1;                   // owned descriptor for the mapping
 uint64_t g_seq = 0;
 uint64_t g_generation = 1;
 CefRefPtr<CefBrowser> g_browser;
+bool g_surface_visible = true;       // CEF UI thread only
 std::atomic<int> g_client_fd{-1};    // set by socket thread, read by OnPaint
 std::mutex g_client_write_mutex;     // serializes all control-socket writes/closes
 std::atomic<uint64_t> g_slot_sequence[kSlots]; // 0 free, UINT64_MAX reserved
 std::atomic<bool> g_paint_blocked{false};
 std::atomic<bool> g_geometry_repaint_pending{false};
 std::atomic<bool> g_shutdown_requested{false};
+struct PendingView {
+  uint64_t generation = 0;
+  int width = 0;
+  int height = 0;
+  float scale = 1.0f;
+  std::string url;
+};
+std::mutex g_pending_view_mutex;
+PendingView g_pending_view;
+bool g_view_task_queued = false;
 bool g_browser_creation_pending = false; // CEF UI thread only
 std::string g_cache_path;
 bool g_cache_owned = false;
@@ -146,6 +185,34 @@ class FnTask : public CefTask {
   IMPLEMENT_REFCOUNTING(FnTask);
 };
 void PostUI(std::function<void()> fn) { CefPostTask(TID_UI, new FnTask(std::move(fn))); }
+
+void PostUIDelayed(std::function<void()> fn, int64_t delay_ms) {
+  CefPostDelayedTask(TID_UI, new FnTask(std::move(fn)), delay_ms);
+}
+
+bool IsDiscreteInput(const std::string& input) {
+  return input.rfind("move ", 0) != 0 && input.rfind("leave ", 0) != 0;
+}
+
+bool IsReleaseInput(const std::string& input) {
+  return input.rfind("up ", 0) == 0 || input.rfind("leave ", 0) == 0;
+}
+
+std::atomic<int> g_mouse_buttons_down{0};
+
+void ReleaseHeldMouseButtons() {
+  if (!g_browser) return;
+  int held = g_mouse_buttons_down.exchange(0);
+  if (held == 0) return;
+  CefRefPtr<CefBrowserHost> host = g_browser->GetHost();
+  CefMouseEvent m{};
+  for (int b = 0; b < 3; ++b) {
+    if ((held & (1 << b)) != 0) {
+      cef_mouse_button_type_t btn = b == 1 ? MBT_RIGHT : b == 2 ? MBT_MIDDLE : MBT_LEFT;
+      host->SendMouseClickEvent(m, btn, true, 1);
+    }
+  }
+}
 
 // Closes the control connection exactly once. The socket thread and the CEF UI
 // thread can both need to wake the other side during shutdown; exchanging the
@@ -247,15 +314,12 @@ class OpusClient : public CefClient,
   void OnPaint(CefRefPtr<CefBrowser>, PaintElementType type,
                const RectList& dirty, const void* buffer,
                int width, int height) override {
-    if (type != PET_VIEW || g_shm == nullptr || buffer == nullptr
+    if (!g_surface_visible || type != PET_VIEW || g_shm == nullptr || buffer == nullptr
         || width <= 0 || height <= 0) return;
 
     const int expected_width = std::max(1, static_cast<int>(std::lround(g_width * g_scale)));
     const int expected_height = std::max(1, static_cast<int>(std::lround(g_height * g_scale)));
     if (width != expected_width || height != expected_height) {
-      Log("stale raster %dx%d for generation %llu; expected %dx%d; dropping",
-          width, height, static_cast<unsigned long long>(g_generation),
-          expected_width, expected_height);
       if (!g_geometry_repaint_pending.exchange(true)) {
         PostUI([] {
           g_geometry_repaint_pending.store(false);
@@ -265,6 +329,9 @@ class OpusClient : public CefClient,
           }
         });
       }
+      // OnPaint may still contain the preceding viewport after WasResized().
+      // Tagging it with the new generation makes stale hit targets appear
+      // current, so request another paint instead of publishing that raster.
       return;
     }
 
@@ -374,7 +441,12 @@ class OpusClient : public CefClient,
     if (g_shutdown_requested.load()) {
       browser->GetHost()->CloseBrowser(true);
     } else {
-      browser->GetHost()->SetFocus(true);
+      if (g_surface_visible) {
+        browser->GetHost()->SetFocus(true);
+      } else {
+        browser->GetHost()->SetFocus(false);
+        browser->GetHost()->WasHidden(true);
+      }
       // VIEW commands can arrive while CEF is still creating the browser.
       // Replay the latest URL here so a fast route transition cannot leave the
       // helper on the startup route with no post-navigation paint.
@@ -416,6 +488,7 @@ class OpusApp : public CefApp, public CefBrowserProcessHandler {
     if (process_type.empty() && command_line) {
       command_line->AppendSwitch("use-mock-keychain");
       command_line->AppendSwitchWithValue("password-store", "basic");
+      command_line->AppendSwitchWithValue("autoplay-policy", "no-user-gesture-required");
     }
   }
 
@@ -428,7 +501,9 @@ class OpusApp : public CefApp, public CefBrowserProcessHandler {
     CefWindowInfo window_info;
     window_info.SetAsWindowless(0);
     CefBrowserSettings settings;
-    settings.windowless_frame_rate = 30;
+    // Match the game's 60 Hz target so a resized CEF frame can replace the
+    // stretched previous texture within one display refresh when rendering keeps up.
+    settings.windowless_frame_rate = 60;
     settings.background_color = CefColorSetARGB(0, 0, 0, 0);  // transparent
     g_browser_creation_pending = true;
     if (!CefBrowserHost::CreateBrowser(window_info, new OpusClient(), url_, settings,
@@ -521,6 +596,36 @@ MacKeyData MacKeyDataForWindowsVirtualKey(int windows_key_code) {
   return {0, 0, false};
 }
 
+bool HandleEditingShortcut(int windows_key_code, int modifiers, bool key_down) {
+  const bool shortcut = (modifiers & (2 | 8)) != 0;  // Control or Command.
+  const bool supported = windows_key_code == 0x41  // A
+      || windows_key_code == 0x43                  // C
+      || windows_key_code == 0x56                  // V
+      || windows_key_code == 0x58                  // X
+      || windows_key_code == 0x59                  // Y
+      || windows_key_code == 0x5A;                 // Z
+  if (!shortcut || !supported) return false;
+  if (!key_down) return true;
+
+  CefRefPtr<CefFrame> frame = g_browser->GetFocusedFrame();
+  if (!frame) frame = g_browser->GetMainFrame();
+  if (!frame) return true;
+
+  switch (windows_key_code) {
+    case 0x41: frame->SelectAll(); break;
+    case 0x43: frame->Copy(); break;
+    case 0x56: frame->Paste(); break;
+    case 0x58: frame->Cut(); break;
+    case 0x59: frame->Redo(); break;
+    case 0x5A:
+      if ((modifiers & 1) != 0) frame->Redo();
+      else frame->Undo();
+      break;
+    default: break;
+  }
+  return true;
+}
+
 void InjectInput(const std::string& rest) {
   if (!g_browser) return;
   CefRefPtr<CefBrowserHost> host = g_browser->GetHost();
@@ -541,11 +646,15 @@ void InjectInput(const std::string& rest) {
       && sscanf(rest.c_str(), "%*s %d %d %d %d", &x, &y, &a, &modifiers) == 4) {
     m.x = x; m.y = y; m.modifiers = CefModifiersFromOpus(modifiers);
     cef_mouse_button_type_t b = a == 1 ? MBT_RIGHT : a == 2 ? MBT_MIDDLE : MBT_LEFT;
+    int bit = a == 1 ? (1 << 1) : a == 2 ? (1 << 2) : (1 << 0);
+    g_mouse_buttons_down.fetch_or(bit);
     host->SendMouseClickEvent(m, b, false, 1);
   } else if (strcmp(kind, "up") == 0
       && sscanf(rest.c_str(), "%*s %d %d %d %d", &x, &y, &a, &modifiers) == 4) {
     m.x = x; m.y = y; m.modifiers = CefModifiersFromOpus(modifiers);
     cef_mouse_button_type_t b = a == 1 ? MBT_RIGHT : a == 2 ? MBT_MIDDLE : MBT_LEFT;
+    int bit = a == 1 ? (1 << 1) : a == 2 ? (1 << 2) : (1 << 0);
+    g_mouse_buttons_down.fetch_and(~bit);
     host->SendMouseClickEvent(m, b, true, 1);
   } else if (strcmp(kind, "wheel") == 0
       && sscanf(rest.c_str(), "%*s %d %d %lf %d", &x, &y, &d, &modifiers) == 4) {
@@ -561,6 +670,11 @@ void InjectInput(const std::string& rest) {
     host->SendKeyEvent(k);
   } else if (strcmp(kind, "key") == 0
       && sscanf(rest.c_str(), "%*s %d %d %d", &a, &x, &modifiers) == 3) {
+    // Windowless Chromium does not automatically route platform edit-menu
+    // commands for synthetic LWJGL events. Invoke the focused frame's native
+    // editing contract so both Control and Command shortcuts behave like a
+    // normal web browser on macOS.
+    if (HandleEditingShortcut(a, modifiers, x == 1)) return;
     const MacKeyData mac_key = MacKeyDataForWindowsVirtualKey(a);
     if (!mac_key.valid) return;
     host->SetFocus(true);
@@ -586,6 +700,7 @@ void InjectInput(const std::string& rest) {
 std::string g_url;  // UI thread
 
 void DoNavigate(const std::string& url) {
+  ReleaseHeldMouseButtons();
   if (!g_browser) { g_url = url; return; }
   // The Java side resends VIEW immediately after the helper connects. If it
   // repeats the URL that CreateBrowser is already loading, executing a hash
@@ -612,6 +727,42 @@ void DoNavigate(const std::string& url) {
   g_url = url;
 }
 
+// A drag can send dozens of VIEW records before Chromium processes one UI
+// task. Apply the newest geometry, not a queue of obsolete WasResized calls.
+void QueueView(uint64_t generation, int width, int height, float scale,
+               const std::string& url) {
+  bool post = false;
+  {
+    std::lock_guard<std::mutex> lock(g_pending_view_mutex);
+    g_pending_view = {generation, width, height, scale, url};
+    if (!g_view_task_queued) {
+      g_view_task_queued = true;
+      post = true;
+    }
+  }
+  if (!post) return;
+  PostUI([] {
+    PendingView view;
+    {
+      std::lock_guard<std::mutex> lock(g_pending_view_mutex);
+      view = g_pending_view;
+      g_view_task_queued = false;
+    }
+    if (view.generation < g_generation) return;
+    const bool scale_changed = view.scale != g_scale;
+    g_generation = view.generation;
+    g_width = view.width;
+    g_height = view.height;
+    g_scale = view.scale;
+    DoNavigate(view.url);
+    if (g_browser) {
+      if (scale_changed) g_browser->GetHost()->NotifyScreenInfoChanged();
+      g_browser->GetHost()->WasResized();
+      if (g_surface_visible) g_browser->GetHost()->Invalidate(PET_VIEW);
+    }
+  });
+}
+
 // Returns false if the connection should close.
 bool HandleLine(const std::string& line, bool& authed) {
   if (line.empty()) return true;
@@ -620,12 +771,30 @@ bool HandleLine(const std::string& line, bool& authed) {
       authed = true; SendToClient("READY");
       // Force a fresh paint so the client gets a frame immediately, even if the
       // first (pre-connection) paint was emitted before it connected.
-      PostUI([] { if (g_browser) g_browser->GetHost()->Invalidate(PET_VIEW); });
+      PostUI([] { if (g_browser && g_surface_visible) g_browser->GetHost()->Invalidate(PET_VIEW); });
       return true;
     }
     Log("auth failed"); return false;
   }
-  if (line.rfind("VIEW ", 0) == 0) {
+  if (line == "SURFACE HIDE" || line == "SURFACE SHOW") {
+    const bool visible = line == "SURFACE SHOW";
+    PostUI([visible] {
+      if (g_surface_visible == visible) return;
+      g_surface_visible = visible;
+      if (!g_browser) return;
+      CefRefPtr<CefBrowserHost> host = g_browser->GetHost();
+      if (!visible) {
+        host->SetFocus(false);
+        host->WasHidden(true);
+        g_paint_blocked.store(false);
+      } else {
+        host->WasHidden(false);
+        host->SetFocus(true);
+        host->WasResized();
+        host->Invalidate(PET_VIEW);
+      }
+    });
+  } else if (line.rfind("VIEW ", 0) == 0) {
     unsigned long long generation = 0;
     int w = 0, h = 0, consumed = 0;
     double s = 0;
@@ -634,21 +803,7 @@ bool HandleLine(const std::string& line, bool& authed) {
         && generation > 0 && w > 0 && h > 0 && s >= 0.5 && s <= 4.0
         && consumed > 0 && static_cast<size_t>(consumed) < line.size()) {
       std::string u = line.substr(static_cast<size_t>(consumed));
-      PostUI([generation, w, h, s, u] {
-        bool scale_changed = static_cast<float>(s) != g_scale;
-        g_generation = static_cast<uint64_t>(generation);
-        g_width = w;
-        g_height = h;
-        g_scale = static_cast<float>(s);
-        // Keep the latest route even when the browser has not been created
-        // yet. DoNavigate stores it and OnAfterCreated replays it above.
-        DoNavigate(u);
-        if (g_browser) {
-          if (scale_changed) g_browser->GetHost()->NotifyScreenInfoChanged();
-          g_browser->GetHost()->WasResized();
-          g_browser->GetHost()->Invalidate(PET_VIEW);
-        }
-      });
+      QueueView(static_cast<uint64_t>(generation), w, h, static_cast<float>(s), u);
     }
   } else if (line.rfind("SHM_RESIZE ", 0) == 0) {
     unsigned long long request = 0;
@@ -665,7 +820,7 @@ bool HandleLine(const std::string& line, bool& authed) {
                        + std::to_string(g_slot_bytes));
           if (g_browser) {
             g_browser->GetHost()->WasResized();
-            g_browser->GetHost()->Invalidate(PET_VIEW);
+            if (g_surface_visible) g_browser->GetHost()->Invalidate(PET_VIEW);
           }
         } else {
           SendToClient("SHM_ERROR " + std::to_string(request) + " remap_failed");
@@ -683,7 +838,7 @@ bool HandleLine(const std::string& line, bool& authed) {
       uint64_t expected = static_cast<uint64_t>(sequence);
       if (g_slot_sequence[slot].compare_exchange_strong(expected, 0)
           && g_paint_blocked.exchange(false)) {
-        PostUI([] { if (g_browser) g_browser->GetHost()->Invalidate(PET_VIEW); });
+        PostUI([] { if (g_browser && g_surface_visible) g_browser->GetHost()->Invalidate(PET_VIEW); });
       }
     }
   } else if (line.rfind("RELOAD ", 0) == 0) {
@@ -702,8 +857,27 @@ bool HandleLine(const std::string& line, bool& authed) {
         && static_cast<size_t>(consumed) < line.size()) {
       std::string rest = line.substr(static_cast<size_t>(consumed));
       PostUI([input_generation, rest] {
-        if (static_cast<uint64_t>(input_generation) == g_generation) {
+        const uint64_t in_gen = static_cast<uint64_t>(input_generation);
+        // Release and leave events must NEVER be dropped to prevent stuck buttons in Blink.
+        if (IsReleaseInput(rest)) {
           InjectInput(rest);
+          return;
+        }
+        if (g_surface_visible && in_gen >= g_generation) {
+          if (in_gen > g_generation) {
+            g_generation = in_gen;
+          }
+          InjectInput(rest);
+          // Chromium normally schedules OSR paint after input-driven DOM
+          // changes. On macOS a rare missed callback can leave React state
+          // committed but the shared raster stale. A bounded delayed
+          // invalidate after discrete input gives React time to commit and
+          // recovers that case without forcing repaints for pointer motion.
+          if (IsDiscreteInput(rest)) {
+            PostUIDelayed([] {
+              if (g_browser && g_surface_visible) g_browser->GetHost()->Invalidate(PET_VIEW);
+            }, 50);
+          }
         } else {
           Log("stale input generation %llu; current %llu; dropping",
               input_generation,
@@ -908,7 +1082,10 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
   int result = 0;
   @autoreleasepool {
-    [NSApplication sharedApplication];
+    // Instantiate the CEF-compatible application subclass before CEF enters
+    // its message loop. Calling NSApplication here would permanently create
+    // the base class and make CEF input crash at runtime.
+    [OpusApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 
     CefRefPtr<OpusApp> app(new OpusApp(url));
