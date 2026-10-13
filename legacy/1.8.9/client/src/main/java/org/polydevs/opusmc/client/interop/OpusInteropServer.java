@@ -311,7 +311,8 @@ public final class OpusInteropServer {
                             "forge", "11.15.1.2318",
                             "optifine", "HD U M5",
                             "session", currentSessionName(),
-                            "accountKind", currentSessionKind()),
+                            "accountKind", currentSessionKind(),
+                            "canOpenLan", String.valueOf(bridgeProvider != null && bridgeProvider.canOpenLan())),
                     null);
             return;
         }
@@ -327,7 +328,9 @@ public final class OpusInteropServer {
                         OpusJson.object("error", "Missing account id"), null);
                 return;
             }
-            String result = selectAccount(id.trim());
+            String result;
+            try { result = selectAccount(id.trim()); }
+            catch (IllegalStateException failure) { respond(out, 409, "application/json", OpusJson.object("error", "Could not change account. Disconnect first, or reconnect the account in Opus Launcher."), null); return; }
             if (result == null) {
                 respond(out, 404, "application/json",
                         OpusJson.object("error", "Account does not exist"), null);
@@ -372,6 +375,9 @@ public final class OpusInteropServer {
                     || "close".equals(action)
                     || "minecraft-settings".equals(action)
                     || "create-world".equals(action)
+                    || "achievements".equals(action) || "statistics".equals(action) || "open-lan".equals(action)
+                    || "hud-edit".equals(action) || "hud-preview".equals(action) || "hud-grid".equals(action)
+                    || "hud-snap".equals(action) || "hud-undo".equals(action)
                     || "quit".equals(action))) {
                 respond(out, 400, "application/json",
                         OpusJson.object("error", "Unknown UI action"), null);
@@ -465,9 +471,56 @@ public final class OpusInteropServer {
                 return;
             }
         }
+        if ("/api/v1/client/preferences".equals(request.path)) {
+            File catalog = accountCatalogFile();
+            Path path = catalog == null ? new File(System.getProperty("user.dir"), "ui-preferences-v1.json").toPath() : catalog.toPath().resolveSibling("ui-preferences-v1.json");
+            if ("GET".equals(request.method)) {
+                respond(out, 200, "application/json", GSON.toJson(ClientPreferencesStore.read(path)), null); return;
+            }
+            if ("POST".equals(request.method)) {
+                try { ClientPreferencesStore.write(path, new JsonParser().parse(request.body).getAsJsonObject()); respond(out, 204, "application/json", new byte[0], null); }
+                catch (IllegalArgumentException bad) { respond(out, 400, "application/json", OpusJson.object("error", "Invalid UI preferences"), null); }
+                return;
+            }
+        }
+        if ("/api/v1/client/options/choices".equals(request.path) && bridgeProvider != null) {
+            if ("GET".equals(request.method)) {
+                String kind = request.query.get("kind");
+                if (!"language".equals(kind) && !"packs".equals(kind) && !"shaders".equals(kind)) { respond(out, 400, "application/json", OpusJson.object("error", "Unknown collection"), null); return; }
+                JsonArray choices = new JsonArray();
+                for (String[] row : bridgeProvider.gameSettingChoices(kind)) {
+                    JsonObject choice = new JsonObject();
+                    choice.addProperty("id", row[0]); choice.addProperty("label", row[1]); choice.addProperty("detail", row[2]);
+                    choice.addProperty("selected", Boolean.parseBoolean(row[3])); choice.addProperty("order", Integer.parseInt(row[4])); choice.addProperty("compatible", Boolean.parseBoolean(row[5]));
+                    choices.add(choice);
+                }
+                JsonObject result = new JsonObject(); result.add("choices", choices);
+                respond(out, 200, "application/json", GSON.toJson(result), null); return;
+            }
+            if ("POST".equals(request.method)) {
+                try {
+                    JsonObject payload = new JsonParser().parse(request.body).getAsJsonObject();
+                    String kind = jsonString(payload, "kind");
+                    if (!"language".equals(kind) && !"packs".equals(kind) && !"shaders".equals(kind)) throw new IllegalArgumentException();
+                    List<String> ids = new ArrayList<String>();
+                    for (JsonElement id : payload.getAsJsonArray("ids")) {
+                        if (!id.isJsonPrimitive() || !id.getAsJsonPrimitive().isString() || id.getAsString().length() > 1024 || ids.contains(id.getAsString())) throw new IllegalArgumentException();
+                        ids.add(id.getAsString());
+                    }
+                    bridgeProvider.setGameSettingChoices(kind, ids);
+                    respond(out, 204, "application/json", new byte[0], null);
+                } catch (IllegalArgumentException bad) { respond(out, 400, "application/json", OpusJson.object("error", "Invalid collection selection"), null); }
+                catch (IllegalStateException failure) { respond(out, 409, "application/json", OpusJson.object("error", "Minecraft could not apply that selection"), null); }
+                return;
+            }
+        }
         if ("/api/v1/client/options".equals(request.path)) {
             if ("GET".equals(request.method)) {
-                respond(out, 200, "application/json", optionsJson(), null);
+                try {
+                    respond(out, 200, "application/json", optionsJson(), null);
+                } catch (IllegalStateException unavailable) {
+                    respond(out, 503, "application/json", OpusJson.object("error", "Minecraft settings could not be read"), null);
+                }
                 return;
             }
         }
@@ -479,7 +532,7 @@ public final class OpusInteropServer {
                 try {
                     bridgeProvider.adjustGameOption(key, Integer.parseInt(delta));
                     respond(out, 204, "application/json", new byte[0], null);
-                } catch (NumberFormatException ignored) {
+                } catch (IllegalArgumentException ignored) {
                     respond(out, 400, "application/json",
                             OpusJson.object("error", "Bad delta"), null);
                 }
@@ -494,7 +547,7 @@ public final class OpusInteropServer {
                 try {
                     bridgeProvider.setGameOptionFloat(key, Float.parseFloat(value));
                     respond(out, 204, "application/json", new byte[0], null);
-                } catch (NumberFormatException ignored) {
+                } catch (IllegalArgumentException ignored) {
                     respond(out, 400, "application/json",
                             OpusJson.object("error", "Bad value"), null);
                 }
@@ -535,6 +588,21 @@ public final class OpusInteropServer {
                 return;
             }
         }
+        if ("/api/v1/client/hud/editor".equals(request.path) && "GET".equals(request.method) && bridgeProvider != null) {
+            respond(out, 200, "application/json", bridgeProvider.hudEditorStateJson(), null); return;
+        }
+        if ("/api/v1/client/hud/editor".equals(request.path) && "POST".equals(request.method) && bridgeProvider != null) {
+            Long revision=OpusJson.extractLong(request.body,"revision"), x=OpusJson.extractLong(request.body,"x"), y=OpusJson.extractLong(request.body,"y");
+            String operation=OpusJson.extractString(request.body,"operation"), id=OpusJson.extractString(request.body,"id");
+            if (revision==null || operation==null || id==null || (x!=null && (x<Integer.MIN_VALUE || x>Integer.MAX_VALUE))
+                    || (y!=null && (y<Integer.MIN_VALUE || y>Integer.MAX_VALUE))) {
+                respond(out,400,"application/json",OpusJson.object("error","Invalid HUD edit"),null);return;
+            }
+            boolean accepted=bridgeProvider.updateHudEditor(revision,operation,id,x==null?0:x.intValue(),y==null?0:y.intValue());
+            if (accepted) respond(out,204,"application/json",new byte[0],null);
+            else respond(out,409,"application/json",OpusJson.object("error","HUD edit is no longer available"),null);
+            return;
+        }
         if ("/api/v1/client/hud".equals(request.path)) {
             if ("GET".equals(request.method)) {
                 respond(out, 200, "application/json", hudJson(), null);
@@ -553,7 +621,7 @@ public final class OpusInteropServer {
                     bridgeProvider.moveHudModule(
                             id, Integer.parseInt(x), Integer.parseInt(y));
                     respond(out, 204, "application/json", new byte[0], null);
-                } catch (NumberFormatException ignored) {
+                } catch (IllegalArgumentException ignored) {
                     respond(out, 400, "application/json",
                             OpusJson.object("error", "Bad position"), null);
                 }
@@ -652,7 +720,7 @@ public final class OpusInteropServer {
         return out.toString();
     }
 
-    private static String accountsJson() throws IOException {
+    private String accountsJson() throws IOException {
         synchronized (ACCOUNT_CATALOG_LOCK) {
             JsonObject catalog = readAccountCatalog();
             JsonArray source = catalog.has("accounts") && catalog.get("accounts").isJsonArray()
@@ -694,7 +762,7 @@ public final class OpusInteropServer {
         }
     }
 
-    private static String selectAccount(String id) throws IOException {
+    private String selectAccount(String id) throws IOException {
         synchronized (ACCOUNT_CATALOG_LOCK) {
             File file = accountCatalogFile();
             if (file == null || !file.isFile()) {
@@ -704,16 +772,17 @@ public final class OpusInteropServer {
             JsonArray source = catalog.has("accounts") && catalog.get("accounts").isJsonArray()
                     ? catalog.getAsJsonArray("accounts")
                     : new JsonArray();
-            boolean found = false;
+            JsonObject chosen = null;
             for (JsonElement element : source) {
                 if (element.isJsonObject() && id.equals(jsonString(element.getAsJsonObject(), "id"))) {
-                    found = true;
+                    chosen = element.getAsJsonObject();
                     break;
                 }
             }
-            if (!found) {
-                return null;
-            }
+            if (chosen == null) { return null; }
+            String username = jsonString(chosen, "username"), kind = jsonString(chosen, "kind");
+            if (bridgeProvider == null || !bridgeProvider.switchAccount(id, username, kind)) throw new IllegalStateException("Disconnect before changing account");
+            catalog = readAccountCatalog();
             catalog.addProperty("selectedAccountId", id);
             writeAccountCatalog(file.toPath(), catalog);
             return accountsJson();
@@ -784,7 +853,9 @@ public final class OpusInteropServer {
         }
     }
 
-    private static String currentSessionName() {
+    private String currentSessionName() {
+        String[] identity = bridgeProvider == null ? null : bridgeProvider.currentAccount();
+        if (identity != null && identity.length > 0) return identity[0];
         try {
             net.minecraft.client.Minecraft minecraft = net.minecraft.client.Minecraft.getMinecraft();
             return minecraft.getSession() == null ? "" : minecraft.getSession().getUsername();
@@ -794,7 +865,9 @@ public final class OpusInteropServer {
     }
 
     /** Reports the actual launch identity without exposing the session token. */
-    private static String currentSessionKind() {
+    private String currentSessionKind() {
+        String[] identity = bridgeProvider == null ? null : bridgeProvider.currentAccount();
+        if (identity != null && identity.length > 1) return identity[1];
         try {
             net.minecraft.client.Minecraft minecraft = net.minecraft.client.Minecraft.getMinecraft();
             net.minecraft.util.Session session = minecraft.getSession();
@@ -991,6 +1064,7 @@ public final class OpusInteropServer {
             String min = row.length > 4 ? row[4] : "0";
             String max = row.length > 5 ? row[5] : "1";
             String step = row.length > 6 ? row[6] : "1";
+            String formatted = row.length > 7 ? row[7] : "";
             out.append("{\"key\":\"").append(OpusJson.escape(key))
                     .append("\",\"label\":\"").append(OpusJson.escape(label))
                     .append("\",\"type\":\"").append(OpusJson.escape(type))
@@ -998,7 +1072,7 @@ public final class OpusInteropServer {
                     .append("\",\"min\":\"").append(OpusJson.escape(min))
                     .append("\",\"max\":\"").append(OpusJson.escape(max))
                     .append("\",\"step\":\"").append(OpusJson.escape(step))
-                    .append("\"}");
+                    .append("\",\"formatted\":\"").append(OpusJson.escape(formatted)).append("\",\"available\":").append(row.length <= 8 || Boolean.parseBoolean(row[8])).append("}");
         }
         out.append("]}");
         return out.toString();
@@ -1061,6 +1135,8 @@ public final class OpusInteropServer {
             if (!status.motd.isEmpty()) {
                 out.append(",\"motd\":\"").append(OpusJson.escape(status.motd)).append('\"');
             }
+            out.append(",\"motdRuns\":").append(status.motdRuns);
+            if (!status.favicon.isEmpty()) out.append(",\"favicon\":\"").append(OpusJson.escape(status.favicon)).append('"');
             if (status.onlinePlayers >= 0) {
                 out.append(",\"onlinePlayers\":").append(status.onlinePlayers);
             }
@@ -1226,7 +1302,7 @@ public final class OpusInteropServer {
                 return null;
             }
             return new long[] {start, Math.min(end, length - 1L)};
-        } catch (NumberFormatException ignored) {
+        } catch (IllegalArgumentException ignored) {
             return null;
         }
     }
@@ -1306,7 +1382,7 @@ public final class OpusInteropServer {
                     }
                     request.body = new String(body, 0, offset, StandardCharsets.UTF_8);
                 }
-            } catch (NumberFormatException ignored) {
+            } catch (IllegalArgumentException ignored) {
                 // Ignore malformed content-length.
             }
         }

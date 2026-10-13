@@ -154,16 +154,21 @@ final class KeystrokesModule implements ClientModule {
         }
 
         @Override
-        public boolean resizeBy(UiBounds renderedBounds, int deltaX) {
-            if (deltaX == 0) {
+        public int scale() {
+            return settings().scale();
+        }
+
+        @Override public int defaultY() { return KeystrokesSettings.defaults().offsetY(); }
+
+        @Override
+        public boolean resizeToScale(int scale) {
+            KeystrokesSettings current = settings();
+            int clamped = Math.max(PerformanceOverlaySettings.MIN_SCALE,
+                    Math.min(PerformanceOverlaySettings.MAX_SCALE, scale));
+            if (clamped == current.scale()) {
                 return false;
             }
-            KeystrokesSettings current = settings();
-            int adjustment = Math.round(deltaX * 100.0F / Math.max(1, renderedBounds.width));
-            if (adjustment == 0) {
-                adjustment = deltaX > 0 ? 1 : -1;
-            }
-            preview(current.withScale(current.scale() + adjustment));
+            preview(current.withScale(clamped));
             return true;
         }
 

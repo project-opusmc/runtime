@@ -43,12 +43,16 @@ public final class HostNavigationAckHarness {
                 + "{\"id\":\"offline:upper\",\"username\":\"Zvwgvx\",\"uuid\":\"22222222222222222222222222222222\",\"kind\":\"offline\",\"badge\":\"unofficial\"}]}\n").getBytes(StandardCharsets.UTF_8));
         System.setProperty("opus.accounts.file", accountCatalog.toString());
 
+        String previousUtilitySettings = System.getProperty("opus.utility.settings.file");
+        Path utilitySettings = Files.createTempFile("opus-cef-fps-settings-", ".json");
+        Files.write(utilitySettings, "{\"schemaVersion\":1,\"utilities\":{\"fps\":{\"enabled\":true}}}\n".getBytes(StandardCharsets.UTF_8));
+        System.setProperty("opus.utility.settings.file", utilitySettings.toString());
         OpusInteropServer server = new OpusInteropServer(log);
         UiNavigationManager navigation = new UiNavigationManager(log, server);
         OpusWebViewClient client = null;
         try {
             server.setNavigationManager(navigation);
-            StubBridgeProvider provider = new StubBridgeProvider();
+            StubBridgeProvider provider = new StubBridgeProvider(log, navigation);
             server.setBridgeProvider(provider);
             require(server.start(), "interop server did not start");
 
@@ -71,21 +75,21 @@ public final class HostNavigationAckHarness {
             provider.clearAction();
             long accountRevision = navigation.revision();
             int accountCursor = mediaProbe.accountCount();
-            click(client, 60, 24, 0);
+            clickControl(client, mediaProbe, "account-trigger");
             mediaProbe.awaitAccountMenu(true, accountCursor);
-            captureLocalAccountFrame(client, "account-menu", true);
+            captureLocalAccountFrame(client, mediaProbe, "account-menu", true);
             require(provider.lastAction == null && navigation.revision() == accountRevision,
                     "opening an account popover must not invoke route navigation");
             client.sendKey(27, true);
             client.sendKey(27, false);
             mediaProbe.awaitAccountMenu(false, accountCursor + 1);
-            captureLocalAccountFrame(client, "account-menu-dismissed", false);
+            captureLocalAccountFrame(client, mediaProbe, "account-menu-dismissed", false);
             require(provider.lastAction == null && navigation.revision() == accountRevision,
                     "popover Escape must not navigate back or park Home");
-            click(client, 60, 24, 0);
+            clickControl(client, mediaProbe, "account-trigger");
             mediaProbe.awaitAccountMenu(true, accountCursor + 2);
-            captureLocalAccountFrame(client, "account-menu-reopened", true);
-            click(client, 188, 208, 0);
+            captureLocalAccountFrame(client, mediaProbe, "account-menu-reopened", true);
+            focusControl(client, mediaProbe, "account-manage"); pressKey(client, 13);
             awaitAction(provider, "navigate", "accounts");
             require(provider.lastRevision == accountRevision,
                     "Manage Accounts must preserve the visible Home revision");
@@ -98,7 +102,7 @@ public final class HostNavigationAckHarness {
             awaitFrame(client, 900, 600, 1.0F);
             int selectionCursor = mediaProbe.accountCount();
             int readyCursor = mediaProbe.accountReadyCount();
-            click(client, 60, 34, 0);
+            clickControl(client, mediaProbe, "account-trigger");
             mediaProbe.awaitAccountMenu(true, selectionCursor);
             // An open popover can still be reading its catalog. Its pending
             // rows are intentionally disabled; wait for the real DOM commit
@@ -106,21 +110,19 @@ public final class HostNavigationAckHarness {
             mediaProbe.awaitSelectableAccount(readyCursor);
             // The focused dialog's tab order is Close, Settings, Add, then
             // the unselected saved account (the selected row is disabled).
-            for (int tab = 0; tab < 4; tab++) {
-                client.sendKey(9, true);
-                client.sendKey(9, false);
-            }
+            focusControl(client, mediaProbe, "account-select");
             client.sendKey(13, true);
             client.sendKey(13, false);
             awaitCatalogSelection(accountCatalog, "offline:upper");
             require(provider.lastAction == null && navigation.revision() == accountRevision,
-                    "next-launch account selection must not navigate or switch the game session");
+                    "account switch must not navigate or relaunch the client");
             client.sendKey(27, true);
             client.sendKey(27, false);
             mediaProbe.awaitAccountMenu(false, selectionCursor + 1);
             client.resize(427, 240, 2.0F);
             awaitFrame(client, 427, 240, 2.0F);
-            pass("CEF keyboard selection persists the exact next-launch id through the real account bridge");
+            require("Zvwgvx".equals(provider.activeName), "Account switch did not reach the live session fixture");
+            pass("CEF keyboard selection persists the exact id and changes the session fixture without navigation");
 
             String previewPath = System.getenv("OPUS_PREVIEW_PNG");
             if (previewPath != null && !previewPath.trim().isEmpty()) {
@@ -134,24 +136,24 @@ public final class HostNavigationAckHarness {
             // buttons below bounded media, settings in the following row.
             // The native bridge assertions remain unchanged.
             provider.clearAction();
-            click(client, 110, 134, 0);
+            clickControl(client, mediaProbe, "home-singleplayer");
             awaitAction(provider, "navigate", "singleplayer");
             pass("Home Singleplayer click reaches Java navigation bridge at live Retina geometry");
 
             provider.clearAction();
-            click(client, 317, 134, 0);
+            clickControl(client, mediaProbe, "home-multiplayer");
             awaitAction(provider, "navigate", "multiplayer");
             pass("Home Multiplayer click reaches Java navigation bridge at live Retina geometry");
 
             provider.clearAction();
-            click(client, 110, 176, 0);
-            awaitAction(provider, "minecraft-settings", null);
+            clickControl(client, mediaProbe, "home-options");
+            awaitAction(provider, "navigate", "settings");
             pass("Home Minecraft Settings click reaches Java bridge at live Retina geometry");
 
             provider.clearAction();
-            click(client, 317, 176, 0);
-            awaitAction(provider, "navigate", "settings");
-            pass("Home Client Settings click reaches Java navigation bridge at live Retina geometry");
+            clickControl(client, mediaProbe, "home-modules");
+            awaitAction(provider, "navigate", "mods_catalog");
+            pass("Home Modules click reaches Java navigation bridge at live Retina geometry");
 
             // The initial poll has stopped after revision 1. A second commit
             // at the same URL must therefore arrive over the event socket.
@@ -180,7 +182,7 @@ public final class HostNavigationAckHarness {
             mediaProbe.awaitRouteCommit(navigation.revision(), "settings");
             captureSystemState(client, "client-settings", 900, 600, 1.0F);
 
-            exerciseClientSettingsControls(client, provider, navigation.revision());
+            exerciseClientSettingsControls(client, provider, mediaProbe, navigation.revision());
             pass("CEF Client Settings controls persist module toggles and string settings through Java");
 
             provider.clearAction();
@@ -190,6 +192,8 @@ public final class HostNavigationAckHarness {
                     "nested Client Settings Escape did not preserve the committed render revision");
             pass("CEF nested Client Settings Escape follows authoritative canGoBack");
 
+            provider.fps.setEnabled(true);
+            require(provider.fps.applySetting("scale", "100"), "HUD fixture could not reset the earlier Settings scale edit");
             UiNavigationState hudRoot = new UiNavigationState(UiRoute.hudEditor(), UiNavigationState.EntryPoint.HOTKEY);
             navigation.commit(hudRoot, "singleplayer", "world", "editor", true);
             client.navigate(mediaProbeUrl(server, "hud_editor"));
@@ -241,6 +245,23 @@ public final class HostNavigationAckHarness {
             }
             pass("game-screen HUD Mods physical-primary contract works while the sprint Control key is held");
 
+            clickControl(client,mediaProbe,"hud-widgets");
+            clickControl(client,mediaProbe,"hud-select-fps");
+            focusControl(client,mediaProbe,"hud-x");
+            pressKey(client,38); Thread.sleep(25L); pressKey(client,13);
+            awaitHudValue(provider,"x",13);
+            focusControl(client,mediaProbe,"hud-scale");pressKey(client,38);
+            awaitHudValue(provider,"scale",101);
+            awaitHudDom(mediaProbe,13,101);
+            clickControl(client,mediaProbe,"hud-undo");
+            awaitHudValue(provider,"x",13);
+            awaitHudValue(provider,"scale",100);
+            awaitHudDom(mediaProbe,13,100);
+            provider.fpsStore.reload();
+            require(provider.fps.settings().offsetX()==13&&provider.fps.settings().scale()==100,"CEF inspector edits and Undo did not persist in native settings");
+            captureSystemState(client,"hud-inspector",900,600,1.0F);
+            pass("CEF HUD property fields, proportional scale and Undo operate the real native HUD/persistence owner");
+
             UiNavigationState pauseRoot = new UiNavigationState(
                     UiRoute.pauseMenu(), UiNavigationState.EntryPoint.PAUSE);
             navigation.commit(pauseRoot, "singleplayer", "opaque", "paused", true);
@@ -288,11 +309,25 @@ public final class HostNavigationAckHarness {
             assertPauseTransparency(client);
             pass("first parked game_menu open ACKs with a transparent current CEF frame");
 
+            assertPauseControlVisible(mediaProbe, "pause-heading");
+            assertPauseControlVisible(mediaProbe, "pause-resume");
+            assertPauseControlVisible(mediaProbe, "pause-hud");
+            assertPauseControlVisible(mediaProbe, "pause-disconnect");
+            focusControl(client, mediaProbe, "pause-hud");
+            assertPauseControlVisible(mediaProbe, "pause-hud");
+            focusControl(client, mediaProbe, "pause-disconnect");
+            assertPauseControlVisible(mediaProbe, "pause-disconnect");
+            captureSystemState(client, "pause-bottom");
+            pass("compact Pause starts below its topbar and keyboard scrolling reveals its last controls");
+
             provider.leaveDelayMillis = 3200L;
             provider.afterLeave = new Runnable() {
                 @Override public void run() { navigation.open("title"); }
             };
-            click(client, 214, 190, 0);
+            com.google.gson.JsonArray disconnectRect=mediaProbe.control("pause-disconnect").getAsJsonArray("rect");
+            int disconnectX=(int)(disconnectRect.get(0).getAsDouble()+disconnectRect.get(2).getAsDouble()/2);
+            int disconnectY=(int)(disconnectRect.get(1).getAsDouble()+disconnectRect.get(3).getAsDouble()/2);
+            clickControl(client, mediaProbe, "pause-disconnect");
             long leaveDeadline = System.currentTimeMillis() + TIMEOUT_MS;
             while (provider.leaveCalls.get() == 0 && System.currentTimeMillis() < leaveDeadline) {
                 Thread.sleep(10L);
@@ -308,7 +343,9 @@ public final class HostNavigationAckHarness {
                 if (output.getParentFile() != null) output.getParentFile().mkdirs();
                 ImageIO.write(pending, "png", output);
             }
-            click(client, 214, 190, 0);
+            // Intentionally click the disabled in-flight button, rather than
+            // waiting for an enabled control on the next (title) route.
+            click(client, disconnectX, disconnectY, 0);
             Thread.sleep(300L);
             require(provider.leaveCalls.get() == 1,
                     "Repeated Disconnect clicks submitted overlapping world-unload requests");
@@ -366,9 +403,8 @@ public final class HostNavigationAckHarness {
             mediaProbe.awaitRouteCommit(navigation.revision(), "connection");
             captureSystemState(client, "connecting");
             provider.clearAction();
-            // The current compact .conn layout places Cancel at y169..201;
-            // y185 also lies inside the multiline Disconnected Back button.
-            click(client, 214, 185, 0);
+            // Use the measured production control, including compact layouts.
+            clickControl(client, mediaProbe, "connection-action");
             awaitAction(provider, "back", null);
             require(provider.lastRevision == navigation.revision(),
                     "Cancel did not submit the committed render revision");
@@ -393,11 +429,23 @@ public final class HostNavigationAckHarness {
             provider.clearAction();
             client.sendKey(0x1B, true, 0);
             client.sendKey(0x1B, false, 0);
-            click(client, 214, 185, 0);
+            click(client, 360, 202, 0);
             Thread.sleep(300L);
             require(provider.lastAction == null, "CEF terrain loading fabricated Back/Cancel");
             pass("CEF terrain state commits without browser recreation or hash change");
             pass("CEF terrain loading exposes no clickable or Escape cancellation");
+
+            navigation.commit(terrainFlow, "none", "opaque", "not_applicable", false,
+                    new ConnectionUiState("loading", "Loading world", "", "Opus test world", "", false, "world"));
+            awaitAck(navigation, "same-route singleplayer startup");
+            mediaProbe.awaitRouteCommit(navigation.revision(), "connection");
+            captureSystemState(client, "loading-world");
+            provider.clearAction();
+            client.sendKey(0x1B, true, 0);
+            client.sendKey(0x1B, false, 0);
+            Thread.sleep(300L);
+            require(provider.lastAction == null, "CEF singleplayer startup invented Escape cancellation");
+            pass("CEF singleplayer startup commits at the same helper lease without multiplayer stages or Escape cancellation");
 
             navigation.commit(connectionFlow, "none", "opaque", "not_applicable", false,
                     new ConnectionUiState("disconnected", "Disconnected by server",
@@ -407,7 +455,7 @@ public final class HostNavigationAckHarness {
             mediaProbe.awaitRouteCommit(navigation.revision(), "connection");
             captureSystemState(client, "disconnected");
             provider.clearAction();
-            click(client, 214, 185, 0);
+            clickControl(client, mediaProbe, "connection-action");
             awaitAction(provider, "back", null);
             require(provider.lastRevision == navigation.revision(),
                     "Disconnect Back retained the old connecting render revision");
@@ -418,6 +466,16 @@ public final class HostNavigationAckHarness {
             awaitFrame(client, 1280, 720, 1.0F);
             captureSystemState(client, "disconnected-wide", 1280, 720, 1.0F);
             pass("connection surface also publishes a current wide desktop CEF frame");
+
+            long nativeSizeStart = System.nanoTime();
+            client.resize(1470, 923, 2.0F);
+            navigation.open("title");
+            awaitAck(navigation, "native-size Home without a SPA reload");
+            mediaProbe.awaitRouteCommit(navigation.revision(), "title");
+            captureSystemState(client, "home-native-size", 1470, 923, 2.0F);
+            long nativeSizeMillis = (System.nanoTime() - nativeSizeStart) / 1000000L;
+            require(nativeSizeMillis < 8000L, "Native-size CEF frame exceeded the frame recovery boundary");
+            pass("current Home frame at actual 1470x923 @2.0 Retina geometry without reload: " + nativeSizeMillis + " ms");
         } finally {
             if (client != null) client.stop();
             navigation.shutdown();
@@ -425,6 +483,9 @@ public final class HostNavigationAckHarness {
             if (previousAccountCatalog == null) System.clearProperty("opus.accounts.file");
             else System.setProperty("opus.accounts.file", previousAccountCatalog);
             Files.deleteIfExists(accountCatalog);
+            if (previousUtilitySettings == null) System.clearProperty("opus.utility.settings.file");
+            else System.setProperty("opus.utility.settings.file", previousUtilitySettings);
+            Files.deleteIfExists(utilitySettings);
         }
         System.out.println("HOST NAVIGATION ACK: ALL PASSED");
     }
@@ -557,7 +618,7 @@ public final class HostNavigationAckHarness {
         return captureSystemState(client, phase, 427, 240, 2.0F);
     }
 
-    private static void captureLocalAccountFrame(OpusWebViewClient client, String phase, boolean open)
+    private static void captureLocalAccountFrame(OpusWebViewClient client, MediaProbe probe, String phase, boolean open)
             throws Exception {
         // A local disclosure is not a host route commit. Observe Chromium's
         // ordinary paint without issuing VIEW or advancing frame ownership.
@@ -577,8 +638,10 @@ public final class HostNavigationAckHarness {
                         latest = snapshot;
                         // Sample the panel's empty left padding, not its right
                         // scrollbar (which is #52525b on this compact layout).
-                        boolean panelPainted = (snapshot.getRGB(20 * 2, 80 * 2) & 0xFFFFFF) == 0x121214
-                                && (snapshot.getRGB(20 * 2, 160 * 2) & 0xFFFFFF) == 0x121214;
+                        double[] bounds=probe.accountBounds;
+                        require(bounds!=null && bounds[3]>=50, "Account panel has no visible header geometry");
+                        int x=(int)(bounds[0]+12)*2, y=(int)(bounds[1]+20)*2;
+                        boolean panelPainted=(snapshot.getRGB(x,y)&0xFFFFFF)==0x1B1B1B;
                         if (panelPainted == open) {
                             String directory = System.getenv("OPUS_SYSTEM_PNG_DIR");
                             if (directory != null && !directory.trim().isEmpty()) {
@@ -638,67 +701,97 @@ public final class HostNavigationAckHarness {
     }
 
     private static void exerciseClientSettingsControls(
-            OpusWebViewClient client, StubBridgeProvider provider, long expectedRevision)
+            OpusWebViewClient client, StubBridgeProvider provider, MediaProbe probe, long revision)
             throws Exception {
         provider.clearModuleCalls();
-
-        // The dialog focus order is Close, Search, both runtime module
-        // selectors, Edit HUD, then the selected module's controls.
-        for (int tab = 0; tab < 6; tab++) pressTab(client, false);
-        int readsBefore = provider.moduleReads.get();
-        pressKey(client, 0x20);
-        awaitModuleRoundTrip(provider, provider.moduleToggleCalls, "fps=false", readsBefore,
-                "Performance overlay switch");
-
-        int tabsToFpsScale = changeSettingWithArrow(
-                client, provider, "fps:scale=101", 0x26, 1, true, "FPS Scale");
-        int tabsFromFpsScaleToAnchor = changeSettingWithArrow(
-                client, provider, "fps:anchor=top-right", 0x28, 2, false, "FPS Anchor");
-
-        // Return from the focused Anchor radio to the second selector. Keep
-        // this derived from the controls actually traversed so adding another
-        // real setting before Anchor does not silently select the wrong module.
-        int backToArmorSelector = 2 + tabsToFpsScale + tabsFromFpsScaleToAnchor;
-        for (int tab = 0; tab < backToArmorSelector; tab++) pressTab(client, true);
-        pressKey(client, 0x0D);
-
-        // Edit HUD sits between the module selectors and detail controls.
-        pressTab(client, false);
-        pressTab(client, false);
-        readsBefore = provider.moduleReads.get();
-        pressKey(client, 0x20);
-        awaitModuleRoundTrip(provider, provider.moduleToggleCalls, "armor-status=true", readsBefore,
-                "Armor Status switch");
-
-        int tabsToArmorScale = changeSettingWithArrow(
-                client, provider, "armor-status:scale=101", 0x26, 1, true,
-                "Armor Status Scale");
-        int tabsFromArmorScaleToAnchor = changeSettingWithArrow(
-                client, provider, "armor-status:anchor=bottom-left", 0x28, 2, false,
-                "Armor Status Anchor");
-        int tabsFromArmorAnchorToDurability = changeBooleanSetting(
-                client, provider, "armor-status:showDurability=0", 3,
-                "Armor Status Durability");
-
-        int backToHud = 1 + tabsToArmorScale + tabsFromArmorScaleToAnchor
-                + tabsFromArmorAnchorToDurability;
-        for (int tab = 0; tab < backToHud; tab++) pressTab(client, true);
-        provider.clearAction();
-        pressKey(client, 0x0D);
+        focusControl(client, probe, "module-fps"); pressKey(client, 13);
+        focusControl(client, probe, "toggle-fps");
+        int reads = provider.moduleReads.get(); pressKey(client, 32);
+        awaitModuleRoundTrip(provider, provider.moduleToggleCalls, "fps=false", reads, "FPS switch");
+        focusControl(client, probe, "fps-scale");
+        reads = provider.moduleReads.get(); pressKey(client, 38);
+        awaitModuleRoundTrip(provider, provider.moduleSettingCalls, "fps:scale=101", reads, "FPS scale");
+        focusControl(client, probe, "fps-order");
+        reads = provider.moduleReads.get(); pressKey(client, 32);
+        awaitModuleRoundTrip(provider, provider.moduleSettingCalls, "fps:reverseOrder=0", reads, "FPS order");
+        provider.fpsStore.reload();
+        require(provider.fps.settings().scale() == 101 && !provider.fps.settings().appearance().reverseOrder(),
+                "CEF changes did not survive native settings reload");
+        focusControl(client, probe, "module-armor"); pressKey(client, 13);
+        focusControl(client, probe, "toggle-armor");
+        reads = provider.moduleReads.get(); pressKey(client, 32);
+        awaitModuleRoundTrip(provider, provider.moduleToggleCalls, "armor-status=true", reads, "Armor switch");
+        String armorAnchor = provider.armorAnchor;
+        focusControl(client, probe, "armor-scale");
+        reads = provider.moduleReads.get(); pressKey(client, 38); Thread.sleep(25L); pressKey(client, 13);
+        awaitModuleRoundTrip(provider, provider.moduleSettingCalls, "armor-status:scale=101", reads, "Armor scale");
+        focusControl(client, probe, "armor-durability");
+        reads = provider.moduleReads.get(); pressKey(client, 32);
+        awaitModuleRoundTrip(provider, provider.moduleSettingCalls, "armor-status:showDurability=0", reads, "Armor durability");
+        require(armorAnchor.equals(provider.armorAnchor), "Appearance edits changed the saved HUD placement");
+        focusControl(client, probe, "client-hud");
+        provider.clearAction(); pressKey(client, 13);
         awaitAction(provider, "navigate", "hud_editor");
-        require(provider.lastRevision == expectedRevision,
-                "Edit HUD layout did not submit a committed render revision");
-        Thread.sleep(100L);
+        require(provider.lastRevision == revision, "Edit HUD used a stale render revision");
+        focusControl(client, probe, "client-close");
+        provider.clearAction(); pressKey(client, 13); awaitAction(provider, "back", null);
+        require(provider.lastRevision == revision, "Close Client settings used a stale render revision");
+    }
 
-        // From Edit HUD, reverse through both selectors and Search to the
-        // header's explicitly labelled Close client settings button.
-        for (int tab = 0; tab < 4; tab++) pressTab(client, true);
-        provider.clearAction();
-        pressKey(client, 0x0D);
-        awaitAction(provider, "back", null);
-        require(provider.lastRevision == expectedRevision,
-                "Close client settings did not submit a committed render revision");
-        Thread.sleep(100L);
+    private static void awaitHudValue(StubBridgeProvider provider,String key,int expected) throws Exception {
+        long deadline=System.currentTimeMillis()+TIMEOUT_MS;
+        while(System.currentTimeMillis()<deadline){
+            com.google.gson.JsonObject data=new com.google.gson.JsonParser().parse(provider.hudEditorStateJson()).getAsJsonObject();
+            if(data.has("selected")&&!data.get("selected").isJsonNull()&&data.getAsJsonObject("selected").get(key).getAsInt()==expected)return;
+            Thread.sleep(10L);
+        }
+        throw new AssertionError("CEF HUD edit did not reach the native owner: "+key+"="+expected);
+    }
+
+    private static void awaitHudDom(MediaProbe probe,int x,int scale) throws Exception {
+        long deadline=System.currentTimeMillis()+TIMEOUT_MS;
+        while(System.currentTimeMillis()<deadline){
+            com.google.gson.JsonObject data=probe.geometry;
+            if(data!=null&&data.has("hud")&&!data.get("hud").isJsonNull()){
+                com.google.gson.JsonObject hud=data.getAsJsonObject("hud");
+                com.google.gson.JsonObject control=data.getAsJsonObject("items").getAsJsonObject("hud-scale");
+                if(hud.get("x").getAsInt()==x&&hud.get("scale").getAsInt()==scale&&control!=null&&control.get("enabled").getAsBoolean())return;
+            }
+            Thread.sleep(10L);
+        }
+        throw new AssertionError("CEF inspector did not commit the native HUD geometry: x="+x+" scale="+scale);
+    }
+
+    private static void clickControl(OpusWebViewClient client, MediaProbe probe, String id) throws Exception {
+        com.google.gson.JsonObject item = probe.control(id);
+        com.google.gson.JsonArray rect = item.getAsJsonArray("rect");
+        double x = rect.get(0).getAsDouble() + rect.get(2).getAsDouble()/2;
+        double y = rect.get(1).getAsDouble() + rect.get(3).getAsDouble()/2;
+        com.google.gson.JsonArray viewport = probe.geometry.getAsJsonArray("viewport");
+        require(x >= 0 && y >= 0 && x < viewport.get(0).getAsInt() && y < viewport.get(1).getAsInt(),
+                "Visible control is outside the CEF viewport: " + id + " rect=" + rect);
+        click(client, (int)x, (int)y, 0);
+    }
+
+    private static void focusControl(OpusWebViewClient client, MediaProbe probe, String id) throws Exception {
+        probe.control(id);
+        for (int attempt=0; attempt<80; attempt++) {
+            if (id.equals(probe.geometry.get("focused").getAsString())) return;
+            pressTab(client, false); Thread.sleep(40L);
+        }
+        throw new AssertionError("Control is unreachable by keyboard: " + id);
+    }
+
+    private static void assertPauseControlVisible(MediaProbe probe, String id) throws Exception {
+        com.google.gson.JsonArray rect = probe.control(id).getAsJsonArray("rect");
+        com.google.gson.JsonArray header = probe.control("pause-topbar").getAsJsonArray("rect");
+        com.google.gson.JsonArray viewport = probe.geometry.getAsJsonArray("viewport");
+        double headerBottom = header.get(1).getAsDouble() + header.get(3).getAsDouble();
+        require(rect.get(1).getAsDouble() >= headerBottom
+                        && rect.get(1).getAsDouble() + rect.get(3).getAsDouble() <= viewport.get(1).getAsDouble()
+                        && rect.get(0).getAsDouble() >= 0
+                        && rect.get(0).getAsDouble() + rect.get(2).getAsDouble() <= viewport.get(0).getAsDouble(),
+                "Pause control is clipped or hidden behind the topbar: " + id + " rect=" + rect);
     }
 
     private static int changeSettingWithArrow(
@@ -930,14 +1023,44 @@ public final class HostNavigationAckHarness {
         }
     }
 
-    private static final class MediaProbe {
+    static final class MediaProbe {
+        private volatile com.google.gson.JsonObject geometry;
+        private volatile double[] accountBounds;
         private final List<String> observations = new CopyOnWriteArrayList<String>();
         private final List<String> routeCommits = new CopyOnWriteArrayList<String>();
         private final List<String> accountStates = new CopyOnWriteArrayList<String>();
         private final List<String> accountReadyStates = new CopyOnWriteArrayList<String>();
 
+        boolean focused(String id) {
+            com.google.gson.JsonObject current = geometry;
+            return current != null && current.has("focused")
+                    && id.equals(current.get("focused").getAsString());
+        }
+
         void record(String line) {
             if (line == null) return;
+            int geometryMarker = line.indexOf("OPUS_CONTROL_GEOMETRY ");
+            if (geometryMarker >= 0) {
+                String json = line.substring(geometryMarker + "OPUS_CONTROL_GEOMETRY ".length());
+                int source = json.indexOf(" (http");
+                com.google.gson.JsonObject row = new com.google.gson.JsonParser().parse(source < 0 ? json : json.substring(0, source)).getAsJsonObject();
+                if(row.has("reset") || geometry==null) geometry=row;
+                else {
+                    com.google.gson.JsonObject current=geometry;
+                    current.add("focused",row.get("focused"));
+                    for(java.util.Map.Entry<String,com.google.gson.JsonElement> entry:row.getAsJsonObject("items").entrySet())current.getAsJsonObject("items").add(entry.getKey(),entry.getValue());
+                }
+            }
+            int domMarker=line.indexOf("OPUS_ACCOUNT_DOM ");
+            if(domMarker>=0){
+                String json=line.substring(domMarker+"OPUS_ACCOUNT_DOM ".length());
+                int source=json.indexOf(" (http");
+                com.google.gson.JsonObject data=new com.google.gson.JsonParser().parse(source<0?json:json.substring(0,source)).getAsJsonObject();
+                if(data.has("bounds")&&!data.get("bounds").isJsonNull()){
+                    com.google.gson.JsonArray bounds=data.getAsJsonArray("bounds");
+                    accountBounds=new double[]{bounds.get(0).getAsDouble(),bounds.get(1).getAsDouble(),bounds.get(2).getAsDouble(),bounds.get(3).getAsDouble()};
+                }
+            }
             int accountMarker = line.indexOf("OPUS_ACCOUNT_MENU");
             if (accountMarker >= 0) accountStates.add(line.substring(accountMarker));
             int readyMarker = line.indexOf("OPUS_ACCOUNT_READY");
@@ -953,6 +1076,19 @@ public final class HostNavigationAckHarness {
                 routeCommits.add(line.substring(routeMarker,
                         source < 0 ? line.length() : source));
             }
+        }
+
+        com.google.gson.JsonObject control(String id) throws Exception {
+            long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                com.google.gson.JsonObject current = geometry;
+                if (current != null && current.getAsJsonObject("items").has(id)) {
+                    com.google.gson.JsonObject item = current.getAsJsonObject("items").getAsJsonObject(id);
+                    if (item.get("enabled").getAsBoolean()) return item;
+                }
+                Thread.sleep(10L);
+            }
+            throw new AssertionError("CEF did not publish an enabled control: " + id);
         }
 
         int count() { return observations.size(); }
@@ -1059,11 +1195,37 @@ public final class HostNavigationAckHarness {
         volatile String lastAction;
         volatile String lastRouteId;
         volatile long lastRevision = -1L;
-        volatile boolean fpsEnabled = true;
         volatile boolean armorEnabled;
-        volatile String fpsScale = "100";
-        volatile String fpsOpacity = "100";
-        volatile String fpsAnchor = "top-left";
+        volatile String activeName="zvwgvx";
+        @Override public String[] currentAccount(){return new String[]{activeName,"unofficial"};}
+        @Override public boolean switchAccount(String id,String username,String kind){activeName=username;return "offline".equals(kind);}
+        final UtilitySettingsStore fpsStore;
+        final FpsModule fps;
+        final org.polydevs.opusmc.client.hud.HudManager hud;
+        final UiNavigationManager navigation;
+        final org.polydevs.opusmc.client.ui.UiRenderer drawing=(org.polydevs.opusmc.client.ui.UiRenderer) Proxy.newProxyInstance(
+                org.polydevs.opusmc.client.ui.UiRenderer.class.getClassLoader(),new Class<?>[]{org.polydevs.opusmc.client.ui.UiRenderer.class},
+                (proxy,method,args)->{
+                    if("measureText".equals(method.getName()))return ((String)args[0]).length()*6;
+                    if("lineHeight".equals(method.getName()))return 9;
+                    return null;
+                });
+        StubBridgeProvider(Logger log,UiNavigationManager navigation) {
+            fpsStore = UtilitySettingsStore.fromSystemProperty(log);
+            fpsStore.reload();
+            fps = new FpsModule(fpsStore);
+            this.navigation=navigation;
+            hud=new org.polydevs.opusmc.client.hud.HudManager(Arrays.asList(fps.widget()));
+        }
+        @Override public synchronized String hudEditorStateJson(){
+            hud.renderEditor(null,drawing,new org.polydevs.opusmc.client.ui.UiBounds(0,0,900,600),new org.polydevs.opusmc.client.ui.UiInput(-1,-1,0));
+            return hud.editorStateJson();
+        }
+        @Override public synchronized boolean updateHudEditor(long revision,String operation,String id,int x,int y){
+            boolean result=revision==navigation.revision()&&navigation.isConfirmed()&&navigation.stateJson().contains("\"id\":\"hud_editor\"")&&hud.editorCommand(operation,id,x,y);
+            System.out.println("CEF DIAG HUD command="+operation+" x="+x+" y="+y+" accepted="+result);
+            return result;
+        }
         volatile String armorScale = "100";
         volatile String armorOpacity = "100";
         volatile String armorAnchor = "top-right";
@@ -1087,6 +1249,9 @@ public final class HostNavigationAckHarness {
         }
         @Override public boolean performUiAction(String action, String routeId, String moduleId,
                 String settingsSection, long expectedRevision) {
+            if("hud-undo".equals(action))hud.undo();
+            if("hud-edit".equals(action))hud.setEditing(true);
+            if("hud-preview".equals(action))hud.setEditing(false);
             lastRouteId = routeId;
             lastRevision = expectedRevision;
             lastAction = action;
@@ -1114,25 +1279,16 @@ public final class HostNavigationAckHarness {
         @Override public List<String[]> modules() {
             moduleReads.incrementAndGet();
             return Arrays.asList(
-                    new String[] {"fps", "Performance overlay", String.valueOf(fpsEnabled)},
+                    new String[] {"fps", fps.displayName(), String.valueOf(fps.isEnabled())},
                     new String[] {"armor-status", "Armor Status", String.valueOf(armorEnabled)});
         }
         @Override public void setModuleEnabled(String moduleId, boolean enabled) {
-            if ("fps".equals(moduleId)) fpsEnabled = enabled;
+            if ("fps".equals(moduleId) && !fps.setEnabled(enabled)) throw new IllegalStateException("FPS save failed");
             if ("armor-status".equals(moduleId)) armorEnabled = enabled;
             moduleToggleCalls.add(moduleId + "=" + enabled);
         }
         @Override public List<String[]> moduleSettings(String moduleId) {
-            if ("fps".equals(moduleId)) {
-                return Arrays.asList(
-                        new String[] {"enabled", "Enabled", "boolean", fpsEnabled ? "1" : "0", "0", "1", "1", ""},
-                        new String[] {"scale", "Scale", "integer", fpsScale, "50", "150", "1", ""},
-                        new String[] {"opacity", "Opacity", "integer", fpsOpacity, "25", "100", "1", ""},
-                        new String[] {"anchor", "Anchor", "enum", fpsAnchor, "0", "0", "1",
-                                "top-left,top-right,bottom-left,bottom-right"},
-                        new String[] {"offsetX", "Offset X", "integer", "12", "0", "4096", "1", ""},
-                        new String[] {"offsetY", "Offset Y", "integer", "12", "0", "4096", "1", ""});
-            }
+            if ("fps".equals(moduleId)) return fps.moduleSettings();
             if ("armor-status".equals(moduleId)) {
                 return Arrays.asList(
                         new String[] {"enabled", "Enabled", "boolean", armorEnabled ? "1" : "0", "0", "1", "1", ""},
@@ -1148,9 +1304,7 @@ public final class HostNavigationAckHarness {
         }
         @Override public void setModuleSetting(String moduleId, String key, String value) {
             if ("fps".equals(moduleId)) {
-                if ("scale".equals(key)) fpsScale = value;
-                else if ("opacity".equals(key)) fpsOpacity = value;
-                else if ("anchor".equals(key)) fpsAnchor = value;
+                if (!fps.applySetting(key, value)) throw new IllegalArgumentException("Invalid FPS setting");
             } else if ("armor-status".equals(moduleId)) {
                 if ("scale".equals(key)) armorScale = value;
                 else if ("opacity".equals(key)) armorOpacity = value;

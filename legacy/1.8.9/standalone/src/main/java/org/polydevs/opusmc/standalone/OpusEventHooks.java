@@ -153,6 +153,32 @@ public final class OpusEventHooks {
 
     public static final Object GUI_CANCELLED = new Object();
 
+    private static volatile Method loadingPresentation;
+    private static volatile boolean loadingWarning;
+
+    /** A current CEF owner may present a world transition; other GUIs remain native. */
+    public static boolean onLoadingScreen(Object screen) {
+        if (screen == null || !"org.polydevs.opusmc.client.OpusClientScreen".equals(screen.getClass().getName())) {
+            return false;
+        }
+        try {
+            Method method = loadingPresentation;
+            if (method == null || method.getDeclaringClass() != screen.getClass()) {
+                method = screen.getClass().getDeclaredMethod("renderRetainedLoadingSurface");
+                method.setAccessible(true);
+                loadingPresentation = method;
+            }
+            return Boolean.TRUE.equals(method.invoke(screen));
+        } catch (ReflectiveOperationException | RuntimeException unavailable) {
+            if (!loadingWarning) {
+                loadingWarning = true;
+                System.err.println("[OPUS/STANDALONE] Loading presentation unavailable; retaining Minecraft loader: "
+                        + unavailable.getClass().getSimpleName());
+            }
+            return false;
+        }
+    }
+
     public static Object onGuiOpen(Object gui) {
         ensureClientModInitialized();
         try {

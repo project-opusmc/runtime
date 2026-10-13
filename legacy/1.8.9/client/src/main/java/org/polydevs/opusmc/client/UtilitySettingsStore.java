@@ -153,18 +153,18 @@ final class UtilitySettingsStore {
         }
         JsonObject previousDocument = copyDocument();
         try {
-            document.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
-            JsonObject utilities = childObject(document, UTILITIES_PROPERTY, true);
-            JsonObject keys = childObject(utilities, KEYSTROKES_ID, true);
-            keys.addProperty("enabled", keystrokes.enabled());
-            keys.addProperty("anchor", keystrokes.anchor().storageValue());
-            keys.addProperty("offset", keystrokes.offsetX() + " · " + keystrokes.offsetY());
-            keys.addProperty("scale", keystrokes.scale());
-            keys.addProperty("opacity", keystrokes.opacity());
-            keys.addProperty("showMouseButtons", keystrokes.showMouseButtons());
-            keys.addProperty("showJump", keystrokes.showJump());
-            writeAtomically(gson.toJson(document));
-            persistedKeystrokes = keystrokes;
+            JsonObject nextDocument = latestDocumentForWrite();
+            boolean writeAll = readInt(nextDocument, "schemaVersion", 0) != SETTINGS_SCHEMA_VERSION;
+            nextDocument.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
+            JsonObject utilities = childObject(nextDocument, UTILITIES_PROPERTY, true);
+            JsonObject keys = childObject(utilities, KEYSTROKES_ID, false);
+            if (keys == null) {
+                keys = childObject(utilities, KEYSTROKES_ID, true);
+                writeAll = true;
+            }
+            mergeKeystrokes(keys, writeAll);
+            writeAtomically(gson.toJson(nextDocument));
+            adoptDocument(nextDocument);
             return true;
         } catch (Exception exception) {
             document = previousDocument;
@@ -208,6 +208,16 @@ final class UtilitySettingsStore {
     }
 
     synchronized boolean persistPerformanceOverlay() {
+        return persistPerformanceOverlay(false);
+    }
+
+    synchronized boolean resetPerformanceOverlayAppearance() {
+        PerformanceOverlaySettings current = performanceOverlay;
+        previewPerformanceOverlay(current.withScale(100).withAppearance(FpsAppearance.defaults()));
+        return persistPerformanceOverlay(true);
+    }
+
+    private boolean persistPerformanceOverlay(boolean resetAppearance) {
         if (settingsPath == null) {
             lastSaveError = "The launcher did not provide a settings file.";
             cancelPerformanceOverlayPreview();
@@ -216,16 +226,18 @@ final class UtilitySettingsStore {
 
         JsonObject previousDocument = copyDocument();
         try {
-            document.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
-            JsonObject utilities = childObject(document, UTILITIES_PROPERTY, true);
-            JsonObject fps = childObject(utilities, FPS_ID, true);
-            fps.addProperty("enabled", performanceOverlay.enabled());
-            fps.addProperty("anchor", performanceOverlay.anchor().storageValue());
-            fps.addProperty("offset", performanceOverlay.offsetX() + " · " + performanceOverlay.offsetY());
-            fps.addProperty("scale", performanceOverlay.scale());
-            fps.addProperty("opacity", performanceOverlay.opacity());
-            writeAtomically(gson.toJson(document));
-            persistedPerformanceOverlay = performanceOverlay;
+            JsonObject nextDocument = latestDocumentForWrite();
+            boolean writeAll = readInt(nextDocument, "schemaVersion", 0) != SETTINGS_SCHEMA_VERSION;
+            nextDocument.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
+            JsonObject utilities = childObject(nextDocument, UTILITIES_PROPERTY, true);
+            JsonObject fps = childObject(utilities, FPS_ID, false);
+            if (fps == null) {
+                fps = childObject(utilities, FPS_ID, true);
+                writeAll = true;
+            }
+            mergePerformanceOverlay(fps, writeAll, resetAppearance);
+            writeAtomically(gson.toJson(nextDocument));
+            adoptDocument(nextDocument);
             return true;
         } catch (Exception exception) {
             document = previousDocument;
@@ -244,17 +256,18 @@ final class UtilitySettingsStore {
         }
         JsonObject previousDocument = copyDocument();
         try {
-            document.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
-            JsonObject utilities = childObject(document, UTILITIES_PROPERTY, true);
-            JsonObject armor = childObject(utilities, ARMOR_STATUS_ID, true);
-            armor.addProperty("enabled", armorStatus.enabled());
-            armor.addProperty("anchor", armorStatus.anchor().storageValue());
-            armor.addProperty("offset", armorStatus.offsetX() + " · " + armorStatus.offsetY());
-            armor.addProperty("scale", armorStatus.scale());
-            armor.addProperty("opacity", armorStatus.opacity());
-            armor.addProperty("showDurability", armorStatus.showDurability());
-            writeAtomically(gson.toJson(document));
-            persistedArmorStatus = armorStatus;
+            JsonObject nextDocument = latestDocumentForWrite();
+            boolean writeAll = readInt(nextDocument, "schemaVersion", 0) != SETTINGS_SCHEMA_VERSION;
+            nextDocument.addProperty("schemaVersion", SETTINGS_SCHEMA_VERSION);
+            JsonObject utilities = childObject(nextDocument, UTILITIES_PROPERTY, true);
+            JsonObject armor = childObject(utilities, ARMOR_STATUS_ID, false);
+            if (armor == null) {
+                armor = childObject(utilities, ARMOR_STATUS_ID, true);
+                writeAll = true;
+            }
+            mergeArmorStatus(armor, writeAll);
+            writeAtomically(gson.toJson(nextDocument));
+            adoptDocument(nextDocument);
             return true;
         } catch (Exception exception) {
             document = previousDocument;
@@ -276,7 +289,23 @@ final class UtilitySettingsStore {
                 defaults.offsetY());
         int scale = readInt(object, "scale", defaults.scale());
         int opacity = readInt(object, "opacity", defaults.opacity());
-        return new PerformanceOverlaySettings(enabled, anchor, offset[0], offset[1], scale, opacity);
+        FpsAppearance appearanceDefaults = defaults.appearance();
+        FpsAppearance appearance = new FpsAppearance(
+                readBoolean(object, "reverseOrder", appearanceDefaults.reverseOrder()),
+                readBoolean(object, "textShadow", appearanceDefaults.textShadow()),
+                readBoolean(object, "showBrackets", appearanceDefaults.showBrackets()),
+                readColor(object, "bracketColor", appearanceDefaults.bracketColor()),
+                readBoolean(object, "showBackground", appearanceDefaults.showBackground()),
+                readBoolean(object, "staticBackgroundWidth", appearanceDefaults.staticBackgroundWidth()),
+                readInt(object, "backgroundWidth", appearanceDefaults.backgroundWidth()),
+                readInt(object, "backgroundHeight", appearanceDefaults.backgroundHeight()),
+                readBoolean(object, "border", appearanceDefaults.border()),
+                readInt(object, "borderThickness", appearanceDefaults.borderThickness()),
+                readColor(object, "borderColor", appearanceDefaults.borderColor()),
+                readColor(object, "backgroundColor", appearanceDefaults.backgroundColor()),
+                readColor(object, "textColor", appearanceDefaults.textColor()));
+        return new PerformanceOverlaySettings(
+                enabled, anchor, offset[0], offset[1], scale, opacity, appearance);
     }
 
     private ArmorStatusSettings readArmorStatus(JsonObject object) {
@@ -304,6 +333,167 @@ final class UtilitySettingsStore {
                 PerformanceOverlaySettings.Anchor.fromStorage(readString(object, "anchor", defaults.anchor().storageValue())),
                 offset[0], offset[1], readInt(object, "scale", defaults.scale()), readInt(object, "opacity", defaults.opacity()),
                 readBoolean(object, "showMouseButtons", defaults.showMouseButtons()), readBoolean(object, "showJump", defaults.showJump()));
+    }
+
+    private void mergePerformanceOverlay(JsonObject fps, boolean writeAll, boolean resetAppearance) {
+        PerformanceOverlaySettings current = performanceOverlay;
+        PerformanceOverlaySettings baseline = persistedPerformanceOverlay;
+        PerformanceOverlaySettings latest = readPerformanceOverlay(fps);
+        if (writeAll || current.enabled() != baseline.enabled()) {
+            fps.addProperty("enabled", current.enabled());
+        }
+        if (writeAll || current.anchor() != baseline.anchor()) {
+            fps.addProperty("anchor", current.anchor().storageValue());
+        }
+        boolean offsetXChanged = current.offsetX() != baseline.offsetX();
+        boolean offsetYChanged = current.offsetY() != baseline.offsetY();
+        if (writeAll || offsetXChanged || offsetYChanged) {
+            int offsetX = writeAll || offsetXChanged ? current.offsetX() : latest.offsetX();
+            int offsetY = writeAll || offsetYChanged ? current.offsetY() : latest.offsetY();
+            fps.addProperty("offset", offsetX + " · " + offsetY);
+        }
+        if (writeAll || resetAppearance || current.scale() != baseline.scale()) {
+            fps.addProperty("scale", current.scale());
+        }
+        if (writeAll || current.opacity() != baseline.opacity()) {
+            fps.addProperty("opacity", current.opacity());
+        }
+
+        FpsAppearance appearance = current.appearance();
+        FpsAppearance persisted = baseline.appearance();
+        if (writeAll || resetAppearance || appearance.reverseOrder() != persisted.reverseOrder()) {
+            fps.addProperty("reverseOrder", appearance.reverseOrder());
+        }
+        if (writeAll || resetAppearance || appearance.textShadow() != persisted.textShadow()) {
+            fps.addProperty("textShadow", appearance.textShadow());
+        }
+        if (writeAll || resetAppearance || appearance.showBrackets() != persisted.showBrackets()) {
+            fps.addProperty("showBrackets", appearance.showBrackets());
+        }
+        if (writeAll || resetAppearance || !appearance.bracketColor().equals(persisted.bracketColor())) {
+            fps.addProperty("bracketColor", appearance.bracketColor());
+        }
+        if (writeAll || resetAppearance || appearance.showBackground() != persisted.showBackground()) {
+            fps.addProperty("showBackground", appearance.showBackground());
+        }
+        if (writeAll || resetAppearance || appearance.staticBackgroundWidth() != persisted.staticBackgroundWidth()) {
+            fps.addProperty("staticBackgroundWidth", appearance.staticBackgroundWidth());
+        }
+        if (writeAll || resetAppearance || appearance.backgroundWidth() != persisted.backgroundWidth()) {
+            fps.addProperty("backgroundWidth", appearance.backgroundWidth());
+        }
+        if (writeAll || resetAppearance || appearance.backgroundHeight() != persisted.backgroundHeight()) {
+            fps.addProperty("backgroundHeight", appearance.backgroundHeight());
+        }
+        if (writeAll || resetAppearance || appearance.border() != persisted.border()) {
+            fps.addProperty("border", appearance.border());
+        }
+        if (writeAll || resetAppearance || appearance.borderThickness() != persisted.borderThickness()) {
+            fps.addProperty("borderThickness", appearance.borderThickness());
+        }
+        if (writeAll || resetAppearance || !appearance.borderColor().equals(persisted.borderColor())) {
+            fps.addProperty("borderColor", appearance.borderColor());
+        }
+        if (writeAll || resetAppearance || !appearance.backgroundColor().equals(persisted.backgroundColor())) {
+            fps.addProperty("backgroundColor", appearance.backgroundColor());
+        }
+        if (writeAll || resetAppearance || !appearance.textColor().equals(persisted.textColor())) {
+            fps.addProperty("textColor", appearance.textColor());
+        }
+    }
+
+    private void mergeArmorStatus(JsonObject armor, boolean writeAll) {
+        ArmorStatusSettings current = armorStatus;
+        ArmorStatusSettings baseline = persistedArmorStatus;
+        ArmorStatusSettings latest = readArmorStatus(armor);
+        if (writeAll || current.enabled() != baseline.enabled()) {
+            armor.addProperty("enabled", current.enabled());
+        }
+        if (writeAll || current.anchor() != baseline.anchor()) {
+            armor.addProperty("anchor", current.anchor().storageValue());
+        }
+        boolean offsetXChanged = current.offsetX() != baseline.offsetX();
+        boolean offsetYChanged = current.offsetY() != baseline.offsetY();
+        if (writeAll || offsetXChanged || offsetYChanged) {
+            int offsetX = writeAll || offsetXChanged ? current.offsetX() : latest.offsetX();
+            int offsetY = writeAll || offsetYChanged ? current.offsetY() : latest.offsetY();
+            armor.addProperty("offset", offsetX + " · " + offsetY);
+        }
+        if (writeAll || current.scale() != baseline.scale()) {
+            armor.addProperty("scale", current.scale());
+        }
+        if (writeAll || current.opacity() != baseline.opacity()) {
+            armor.addProperty("opacity", current.opacity());
+        }
+        if (writeAll || current.showDurability() != baseline.showDurability()) {
+            armor.addProperty("showDurability", current.showDurability());
+        }
+    }
+
+    private void mergeKeystrokes(JsonObject keys, boolean writeAll) {
+        KeystrokesSettings current = keystrokes;
+        KeystrokesSettings baseline = persistedKeystrokes;
+        KeystrokesSettings latest = readKeystrokes(keys);
+        if (writeAll || current.enabled() != baseline.enabled()) {
+            keys.addProperty("enabled", current.enabled());
+        }
+        if (writeAll || current.anchor() != baseline.anchor()) {
+            keys.addProperty("anchor", current.anchor().storageValue());
+        }
+        boolean offsetXChanged = current.offsetX() != baseline.offsetX();
+        boolean offsetYChanged = current.offsetY() != baseline.offsetY();
+        if (writeAll || offsetXChanged || offsetYChanged) {
+            int offsetX = writeAll || offsetXChanged ? current.offsetX() : latest.offsetX();
+            int offsetY = writeAll || offsetYChanged ? current.offsetY() : latest.offsetY();
+            keys.addProperty("offset", offsetX + " · " + offsetY);
+        }
+        if (writeAll || current.scale() != baseline.scale()) {
+            keys.addProperty("scale", current.scale());
+        }
+        if (writeAll || current.opacity() != baseline.opacity()) {
+            keys.addProperty("opacity", current.opacity());
+        }
+        if (writeAll || current.showMouseButtons() != baseline.showMouseButtons()) {
+            keys.addProperty("showMouseButtons", current.showMouseButtons());
+        }
+        if (writeAll || current.showJump() != baseline.showJump()) {
+            keys.addProperty("showJump", current.showJump());
+        }
+    }
+
+    private JsonObject latestDocumentForWrite() throws IOException {
+        if (!Files.isRegularFile(settingsPath)) {
+            return copyDocument();
+        }
+        try (Reader reader = Files.newBufferedReader(settingsPath, StandardCharsets.UTF_8)) {
+            JsonElement parsed = new JsonParser().parse(reader);
+            if (!parsed.isJsonObject()) {
+                throw new IOException("utility settings root is not a JSON object");
+            }
+            JsonObject latest = parsed.getAsJsonObject();
+            int schemaVersion = readInt(latest, "schemaVersion", 0);
+            if (schemaVersion > SETTINGS_SCHEMA_VERSION) {
+                throw new IOException("utility settings schema is newer than this client");
+            }
+            return latest;
+        } catch (RuntimeException exception) {
+            throw new IOException("utility settings file is invalid", exception);
+        }
+    }
+
+    private void adoptDocument(JsonObject nextDocument) {
+        document = nextDocument;
+        JsonObject utilities = childObject(document, UTILITIES_PROPERTY, false);
+        JsonObject fps = utilities == null ? null : childObject(utilities, FPS_ID, false);
+        JsonObject armor = utilities == null ? null : childObject(utilities, ARMOR_STATUS_ID, false);
+        JsonObject keys = utilities == null ? null : childObject(utilities, KEYSTROKES_ID, false);
+        performanceOverlay = fps == null ? PerformanceOverlaySettings.defaults() : readPerformanceOverlay(fps);
+        armorStatus = armor == null ? ArmorStatusSettings.defaults() : readArmorStatus(armor);
+        keystrokes = keys == null ? KeystrokesSettings.defaults() : readKeystrokes(keys);
+        persistedPerformanceOverlay = performanceOverlay;
+        persistedArmorStatus = armorStatus;
+        persistedKeystrokes = keystrokes;
+        lastSaveError = null;
     }
 
     private static JsonObject childObject(JsonObject parent, String name, boolean create) {
@@ -346,6 +536,14 @@ final class UtilitySettingsStore {
             JsonElement value = object.get(name);
             return value != null && value.isJsonPrimitive() ? value.getAsInt() : fallback;
         } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private static String readColor(JsonObject object, String name, String fallback) {
+        try {
+            return FpsAppearance.canonicalColor(readString(object, name, fallback));
+        } catch (IllegalArgumentException ignored) {
             return fallback;
         }
     }

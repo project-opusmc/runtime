@@ -44,7 +44,7 @@ public final class PerformanceOverlaySettings {
     }
 
     public static final int MIN_SCALE = 50;
-    public static final int MAX_SCALE = 150;
+    public static final int MAX_SCALE = 400;
     public static final int MIN_OPACITY = 25;
     public static final int MAX_OPACITY = 100;
 
@@ -54,6 +54,7 @@ public final class PerformanceOverlaySettings {
     private final int offsetY;
     private final int scale;
     private final int opacity;
+    private final FpsAppearance appearance;
 
     public PerformanceOverlaySettings(
             boolean enabled,
@@ -62,12 +63,24 @@ public final class PerformanceOverlaySettings {
             int offsetY,
             int scale,
             int opacity) {
+        this(enabled, anchor, offsetX, offsetY, scale, opacity, FpsAppearance.defaults());
+    }
+
+    public PerformanceOverlaySettings(
+            boolean enabled,
+            Anchor anchor,
+            int offsetX,
+            int offsetY,
+            int scale,
+            int opacity,
+            FpsAppearance appearance) {
         this.enabled = enabled;
         this.anchor = anchor;
         this.offsetX = Math.max(0, offsetX);
         this.offsetY = Math.max(0, offsetY);
         this.scale = clamp(scale, MIN_SCALE, MAX_SCALE);
         this.opacity = clamp(opacity, MIN_OPACITY, MAX_OPACITY);
+        this.appearance = appearance == null ? FpsAppearance.defaults() : appearance;
     }
 
     static PerformanceOverlaySettings defaults() {
@@ -100,24 +113,33 @@ public final class PerformanceOverlaySettings {
         return opacity;
     }
 
+    public FpsAppearance appearance() {
+        return appearance;
+    }
+
     public PerformanceOverlaySettings withEnabled(boolean value) {
-        return new PerformanceOverlaySettings(value, anchor, offsetX, offsetY, scale, opacity);
+        return new PerformanceOverlaySettings(value, anchor, offsetX, offsetY, scale, opacity, appearance);
     }
 
     public PerformanceOverlaySettings withAnchor(Anchor value) {
-        return new PerformanceOverlaySettings(enabled, value, offsetX, offsetY, scale, opacity);
+        return new PerformanceOverlaySettings(enabled, value, offsetX, offsetY, scale, opacity, appearance);
     }
 
     public PerformanceOverlaySettings withScale(int value) {
-        return new PerformanceOverlaySettings(enabled, anchor, offsetX, offsetY, value, opacity);
+        return new PerformanceOverlaySettings(enabled, anchor, offsetX, offsetY, value, opacity, appearance);
     }
 
     public PerformanceOverlaySettings withOffset(int nextOffsetX, int nextOffsetY) {
-        return new PerformanceOverlaySettings(enabled, anchor, nextOffsetX, nextOffsetY, scale, opacity);
+        return new PerformanceOverlaySettings(
+                enabled, anchor, nextOffsetX, nextOffsetY, scale, opacity, appearance);
     }
 
     public PerformanceOverlaySettings withOpacity(int value) {
-        return new PerformanceOverlaySettings(enabled, anchor, offsetX, offsetY, scale, value);
+        return new PerformanceOverlaySettings(enabled, anchor, offsetX, offsetY, scale, value, appearance);
+    }
+
+    public PerformanceOverlaySettings withAppearance(FpsAppearance value) {
+        return new PerformanceOverlaySettings(enabled, anchor, offsetX, offsetY, scale, opacity, value);
     }
 
     private static int clamp(int value, int minimum, int maximum) {

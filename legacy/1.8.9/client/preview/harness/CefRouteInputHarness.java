@@ -43,6 +43,7 @@ public final class CefRouteInputHarness {
                         if ("connectServer".equals(name)) actions.add("connect:" + values[0]);
                         if ("addServer".equals(name)) actions.add("add:" + values[0] + ":" + values[1]);
                         if (List.class.isAssignableFrom(method.getReturnType())) return Collections.emptyList();
+                        if (method.getReturnType()==boolean.class) return false;
                         return null;
                     }
                 });
@@ -61,8 +62,8 @@ public final class CefRouteInputHarness {
                 // The production focus/lost-release cleanup cancels outside
                 // the surface. Verify that CEF does not activate the old
                 // button, and that the following fresh click still works.
-                client.sendMouseMove(238, 438);
-                client.sendMouseButton(238, 438, 0, true);
+                client.sendMouseMove(206, 246);
+                client.sendMouseButton(206, 246, 0, true);
                 client.sendMouseLeave(WIDTH + 1, HEIGHT + 1);
                 client.sendMouseButton(WIDTH + 1, HEIGHT + 1, 0, false);
                 long quietUntil = System.currentTimeMillis() + 250L;
@@ -71,14 +72,14 @@ public final class CefRouteInputHarness {
                     require(actions.isEmpty(), "Canceled pointer press activated Home: " + actions);
                     Thread.sleep(10L);
                 }
-                click(client, 238, 438);
+                click(client, 206, 246);
                 awaitAction(actions, "action:navigate:singleplayer");
                 transition(client, navigation, server, "singleplayer");
-                click(client, 70, 28);
+                click(client, 41, 102);
                 awaitAction(actions, "action:back:null");
                 transition(client, navigation, server, "title");
                 actions.clear();
-                click(client, 662, 438);
+                click(client, 206, 318);
                 awaitAction(actions, "action:navigate:multiplayer");
                 transition(client, navigation, server, "multiplayer");
 
@@ -86,16 +87,14 @@ public final class CefRouteInputHarness {
                 // must accept actual CEF char/key events after returning from
                 // Singleplayer, including selection and focus restoration.
                 // Interior centers observed in the settled 900x600 DOM.
-                // The old y556/y541 points lay below the current controls.
-                click(client, 484, 531);
+                click(client, 66, 536);
                 Thread.sleep(200L);
                 String address = "cycle" + cycle + ".example.invalid";
                 type(client, address);
-                click(client, 760, 516);
+                click(client, 593, 380);
                 awaitAction(actions, "connect:" + address);
-                key(client, 27, 0);
                 Thread.sleep(100L);
-                click(client, 634, 531);
+                click(client, 145, 498);
                 Thread.sleep(200L);
                 String label = "CaseSensitive" + cycle;
                 key(client, 0x41, 2); // Ctrl+A is DOM selection, never clipboard access.
@@ -103,9 +102,9 @@ public final class CefRouteInputHarness {
                 key(client, 9, 0);
                 key(client, 0x41, 8); // Cmd+A also leaves the OS clipboard untouched.
                 type(client, address);
-                client.sendMouseMove(540, 516);
-                client.sendMouseMove(580, 516); // no held button must not select/drag text
-                click(client, 760, 516);
+                client.sendMouseMove(430, 363);
+                client.sendMouseMove(470, 363); // no held button must not select/drag text
+                click(client, 591, 428);
                 awaitAction(actions, "add:" + label + ":" + address);
                 System.out.println("PASS CEF cycle " + cycle + ": canceled press stays inert; fresh Singleplayer -> Home -> Multiplayer; Direct connect/Add server; exact typed values and Ctrl/Cmd selection");
                 navigation.close();

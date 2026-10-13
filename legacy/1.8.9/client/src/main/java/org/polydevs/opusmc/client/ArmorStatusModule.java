@@ -87,11 +87,15 @@ final class ArmorStatusModule implements ClientModule {
             return true;
         }
 
+        @Override public int scale() { return settings().scale(); }
+
         @Override
-        public boolean resizeBy(UiBounds bounds, int deltaX) {
-            if (deltaX == 0) return false;
-            int change = Math.round(deltaX * 100.0F / Math.max(1, bounds.width));
-            preview(settings().withScale(settings().scale() + (change == 0 ? (deltaX > 0 ? 1 : -1) : change)));
+        public boolean resizeToScale(int scale) {
+            ArmorStatusSettings current = settings();
+            int clamped = Math.max(PerformanceOverlaySettings.MIN_SCALE,
+                    Math.min(PerformanceOverlaySettings.MAX_SCALE, scale));
+            if (clamped == current.scale()) return false;
+            preview(current.withScale(clamped));
             return true;
         }
 

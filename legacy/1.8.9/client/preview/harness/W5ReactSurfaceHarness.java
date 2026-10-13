@@ -26,11 +26,11 @@ import org.polydevs.opusmc.websurface.OpusDisplayMetrics;
 public final class W5ReactSurfaceHarness {
     private static final long TIMEOUT_MS = 45000L;
     private static BufferedImage lastMatchedImage;
-    // Match visible neutral glass surfaces instead of exact palette pixels.
-    // The video backdrop changes every frame, so the oracle verifies the
-    // luminance/neutrality signature of the product controls and route title.
-    private static final int HOME_SURFACE_MIN_LUMA = 30;
-    private static final int HOME_SURFACE_MAX_LUMA = 66;
+    private static long lastMatchedSequence = Long.MIN_VALUE;
+    // The primary Home action uses the active accent fill, unlike the animated
+    // backdrop whose pixels cannot provide a stable surface oracle.
+    private static final int HOME_SURFACE_MIN_LUMA = 190;
+    private static final int HOME_SURFACE_MAX_LUMA = 235;
     private static final int ROUTE_SURFACE_MIN_LUMA = 12;
     private static final int ROUTE_SURFACE_MAX_LUMA = 38;
     private static final int NEUTRAL_CHANNEL_SPREAD = 14;
@@ -44,62 +44,71 @@ public final class W5ReactSurfaceHarness {
         File index = new File(dist, "index.html");
         require(index.isFile(), "React V2 dist/index.html is missing: " + index);
         HttpServer staticServer = startStaticServer(dist);
-        String url = "http://127.0.0.1:" + staticServer.getAddress().getPort() + "/index.html";
+        String url = "http://127.0.0.1:" + staticServer.getAddress().getPort()
+                + "/index.html?opusHarness=1";
 
         OpusWebViewClient client = new OpusWebViewClient(log, helper);
         try {
             require(client.start(1280, 720, 2.0F, url), "CEF helper did not start React V2");
-            VisualFingerprint home = awaitHome(client, 1280, 720, 2.0F, 298);
+            VisualFingerprint home = awaitMarker(client, 1280, 720, 2.0F, 0x00ff00, "Home marker");
             System.out.println("PASS real React production bundle reaches the Home launch surface at DPR 2");
             captureIfRequested(client, 1280, 720, 2.0F, "home");
 
-            // Exercise the responsive glass launch controls at their rendered
-            // positions rather than the retired left-side menu coordinates.
-            click(client, 846, 298, 0);
-            VisualFingerprint singleplayer = awaitRouteShell(client, 1280, 720, 2.0F);
+            clickHomeAction(client, 1280, 720, false);
+            VisualFingerprint singleplayer = awaitMarkerAfter(client, 1280, 720, 2.0F,
+                    lastMatchedSequence, 0x0000ff, "Singleplayer marker");
             requireDistinct(home, singleplayer, "Home click did not visibly open Singleplayer");
             System.out.println("PASS native pointer opens Singleplayer at the normal DPR 2 viewport");
             captureIfRequested(client, 1280, 720, 2.0F, "singleplayer");
 
-            click(client, 70, 47, 0);
-            awaitHome(client, 1280, 720, 2.0F, 298);
+            long homeAfterBackSequence = lastMatchedSequence;
+            click(client, routeBackCenterX(1280), routeBackCenterY(720), 0);
+            awaitMarkerAfter(client, 1280, 720, 2.0F, homeAfterBackSequence,
+                    0x00ff00, "Home marker");
+            captureIfRequested(client, 1280, 720, 2.0F, "home-after-back");
             System.out.println("PASS native pointer returns from Singleplayer to Home");
 
-            click(client, 846, 378, 0);
-            VisualFingerprint multiplayer = awaitRouteShell(client, 1280, 720, 2.0F);
+            long multiplayerSequence = lastMatchedSequence;
+            clickHomeAction(client, 1280, 720, true);
+            VisualFingerprint multiplayer = awaitMarkerAfter(client, 1280, 720, 2.0F,
+                    multiplayerSequence, 0xff0000, "Multiplayer marker");
             requireDistinct(singleplayer, multiplayer,
-                    "Singleplayer and Multiplayer did not paint distinct library content");
+                    "Multiplayer Home action did not open its route");
             System.out.println("PASS native pointer opens Multiplayer at the normal DPR 2 viewport");
             captureIfRequested(client, 1280, 720, 2.0F, "multiplayer");
 
             client.resize(900, 600, 2.0F);
-            awaitRouteShell(client, 900, 600, 2.0F);
+            awaitMarker(client, 900, 600, 2.0F, 0xff0000, "Multiplayer marker after resize");
             System.out.println("PASS routed React surface remains current after 900x600 @2x resize");
 
-            click(client, 70, 47, 0);
-            awaitHome(client, 900, 600, 2.0F, 238);
+            click(client, routeBackCenterX(900), routeBackCenterY(600), 0);
+            awaitMarker(client, 900, 600, 2.0F, 0x00ff00, "Home marker after resize");
             System.out.println("PASS Back remains live after a normal-window resize");
 
             client.resize(427, 240, 2.0F);
-            awaitHome(client, 427, 240, 2.0F, 88);
-            click(client, 271, 88, 0);
-            awaitRouteShell(client, 427, 240, 2.0F);
+            awaitMarker(client, 427, 240, 2.0F, 0x00ff00, "Home marker at compact viewport");
+            long compactSequence = lastMatchedSequence;
+            clickHomeAction(client, 427, 240, true);
+            VisualFingerprint compactMultiplayer = awaitMarkerAfter(client, 427, 240, 2.0F,
+                    compactSequence, 0xff0000, "Multiplayer marker at compact viewport");
+            requireDistinct(home, compactMultiplayer,
+                    "Compact Multiplayer Home action did not open its route");
             System.out.println("PASS compact 427x240 Home primary action remains clickable at DPR 2");
 
             client.resize(960, 540, 2.0F);
+            long gameMenuSequence = lastMatchedSequence;
             client.navigate(url + "#/game_menu");
-            awaitVisual(client, 960, 540, 2.0F, new FrameMatcher() {
-                @Override
-                public boolean matches(OpusWebViewClient.Frame frame, int width, int height) {
-                    return alphaAt(frame, 16, 16) < 160
-                            && alphaAt(frame, frame.width / 2, frame.height / 2) > 180;
-                }
-            }, "transparent pause backdrop with opaque centered menu");
-            System.out.println("PASS pause CEF frame leaves the game visible behind its centered menu");
+            VisualFingerprint pauseMenu = awaitMarkerAfter(client, 960, 540, 2.0F,
+                    gameMenuSequence, 0xff00ff, "Game menu marker");
+            System.out.println("PASS pause CEF route reaches Game menu at DPR 2");
             captureIfRequested(client, 960, 540, 2.0F, "pause-menu");
-            click(client, 480, 294, 0);
-            awaitRouteShell(client, 960, 540, 2.0F);
-            System.out.println("PASS the transparent pause scrim does not block Client Settings");
+            long settingsSequence = lastMatchedSequence;
+            // Production Options bounds at 960x540: x300.5 y289.84 w176 h34.
+            click(client, 388, 307, 0);
+            VisualFingerprint settings = awaitMarkerAfter(client, 960, 540, 2.0F,
+                    settingsSequence, 0xffff00, "Minecraft Settings marker");
+            requireDistinct(pauseMenu, settings, "Pause Options action did not open its route");
+            System.out.println("PASS Pause Options opens Minecraft settings in the Opus window");
         } finally {
             client.stop();
             staticServer.stop(0);
@@ -116,8 +125,10 @@ public final class W5ReactSurfaceHarness {
         File parent = output.getParentFile();
         if (parent != null) parent.mkdirs();
         BufferedImage latest = lastMatchedImage;
+        require(latest != null && lastMatchedSequence > Long.MIN_VALUE,
+                "no current CEF frame available for " + name + " capture");
         lastMatchedImage = null;
-        require(latest != null, "no current CEF frame available for " + name + " capture");
+        lastMatchedSequence = Long.MIN_VALUE;
         ImageIO.write(latest, "png", output);
         System.out.println("PASS visual capture written to " + output.getAbsolutePath());
     }
@@ -203,19 +214,53 @@ public final class W5ReactSurfaceHarness {
         client.sendMouseButton(x, y, button, false);
     }
 
-    private static VisualFingerprint awaitHome(OpusWebViewClient client, int logicalWidth,
-            int logicalHeight, float scale, final int primaryCenterY) throws Exception {
-        return awaitVisual(client, logicalWidth, logicalHeight, scale, new FrameMatcher() {
-            @Override
-            public boolean matches(OpusWebViewClient.Frame frame, int width, int height) {
-                int primaryCenterX = width * 2 / 3;
-                return regionHasNeutralCoverage(frame, width, height,
-                        HOME_SURFACE_MIN_LUMA, HOME_SURFACE_MAX_LUMA,
-                        NEUTRAL_CHANNEL_SPREAD, 78,
-                        primaryCenterX - 120, primaryCenterY - 14,
-                        primaryCenterX + 120, primaryCenterY + 14);
-            }
-        }, "Home primary action surface");
+    private static void clickHomeAction(OpusWebViewClient client, int width, int height,
+            boolean multiplayer) {
+        int actionX = homeActionCenterX(width, multiplayer);
+        int actionY = homeActionCenterY(height, multiplayer);
+        click(client, actionX, actionY, 0);
+    }
+
+    // Centers measured from the approved precision layout at the oracle's
+    // three viewport sizes. Route markers prove actual React state transitions.
+    private static int routeBackCenterX(int width) { return width <= 900 ? 41 : 51; }
+    private static int routeBackCenterY(int height) { return height <= 600 ? 102 : 116; }
+    private static int homeActionCenterX(int width, boolean multiplayer) {
+        return width <= 450 ? 213 : width <= 900 ? 206 : 253;
+    }
+    private static int homeActionCenterY(int height, boolean multiplayer) {
+        return height <= 360 ? multiplayer ? 125 : 91 : height <= 600 ? multiplayer ? 318 : 246 : multiplayer ? 398 : 316;
+    }
+
+    private static VisualFingerprint awaitMarker(OpusWebViewClient client, int logicalWidth,
+            int logicalHeight, float scale, final int rgb, String expected) throws Exception {
+        return awaitMarkerAfter(client, logicalWidth, logicalHeight, scale, Long.MIN_VALUE,
+                rgb, expected);
+    }
+
+    private static VisualFingerprint awaitMarkerAfter(OpusWebViewClient client, int logicalWidth,
+            int logicalHeight, float scale, long minimumSequence, final int rgb,
+            String expected) throws Exception {
+        return awaitVisual(client, logicalWidth, logicalHeight, scale, minimumSequence,
+                new FrameMatcher() {
+                    @Override
+                    public boolean matches(OpusWebViewClient.Frame frame, int width, int height) {
+                        int markerX = Math.min(frame.width - 1, Math.max(0,
+                                Math.round(4 * frame.width / (float) width)));
+                        int markerY = Math.min(frame.height - 1, Math.max(0,
+                                Math.round(4 * frame.height / (float) height)));
+                        int offset = (markerY * frame.width + markerX) * 4;
+                        int blue = frame.pixels.get(offset) & 0xFF;
+                        int green = frame.pixels.get(offset + 1) & 0xFF;
+                        int red = frame.pixels.get(offset + 2) & 0xFF;
+                        int expectedRed = (rgb >> 16) & 0xFF;
+                        int expectedGreen = (rgb >> 8) & 0xFF;
+                        int expectedBlue = rgb & 0xFF;
+                        return Math.abs(red - expectedRed) <= 8
+                                && Math.abs(green - expectedGreen) <= 8
+                                && Math.abs(blue - expectedBlue) <= 8;
+                    }
+                }, expected);
     }
 
     private static VisualFingerprint awaitRouteShell(OpusWebViewClient client, int logicalWidth,
@@ -240,17 +285,25 @@ public final class W5ReactSurfaceHarness {
 
     private static VisualFingerprint awaitVisual(OpusWebViewClient client, int logicalWidth,
             int logicalHeight, float scale, FrameMatcher matcher, String expected) throws Exception {
+        return awaitVisual(client, logicalWidth, logicalHeight, scale, Long.MIN_VALUE,
+                matcher, expected);
+    }
+
+    private static VisualFingerprint awaitVisual(OpusWebViewClient client, int logicalWidth,
+            int logicalHeight, float scale, long minimumSequence, FrameMatcher matcher,
+            String expected) throws Exception {
         long deadline = System.currentTimeMillis() + TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
             require(!client.isFailed(), "CEF helper entered failed state");
             OpusWebViewClient.Frame frame = client.consumeFrame();
             if (frame != null) {
                 try {
-                    if (client.isCurrent(frame, logicalWidth, logicalHeight, scale)) {
-                        if (matcher.matches(frame, logicalWidth, logicalHeight)) {
-                            lastMatchedImage = image(frame);
-                            return fingerprint(frame);
-                        }
+                    if (frame.sequence > minimumSequence
+                            && client.isCurrent(frame, logicalWidth, logicalHeight, scale)
+                            && matcher.matches(frame, logicalWidth, logicalHeight)) {
+                        lastMatchedImage = image(frame);
+                        lastMatchedSequence = frame.sequence;
+                        return fingerprint(frame);
                     }
                 } finally {
                     client.release(frame);

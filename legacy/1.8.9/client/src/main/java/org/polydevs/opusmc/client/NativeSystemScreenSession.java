@@ -10,6 +10,7 @@ import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiDisconnected;
 import net.minecraft.client.gui.GuiDownloadTerrain;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiScreenWorking;
 import net.minecraft.client.multiplayer.GuiConnecting;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.resources.I18n;
@@ -23,6 +24,7 @@ final class NativeSystemScreenSession {
     private final GuiScreen delegate;
     private final Method primaryAction;
     private final GuiScreen returnParent;
+    private final boolean worldStartup;
     private ConnectionUiState state;
     private boolean actionConsumed;
     private boolean closed;
@@ -33,20 +35,31 @@ final class NativeSystemScreenSession {
     }
 
     NativeSystemScreenSession(GuiScreen delegate, ConnectionUiState state, GuiScreen returnParent) {
+        this(delegate, state, returnParent, false);
+    }
+
+    private NativeSystemScreenSession(GuiScreen delegate, ConnectionUiState state,
+            GuiScreen returnParent, boolean worldStartup) {
         this.delegate = delegate;
         this.state = state;
         this.returnParent = returnParent;
+        this.worldStartup = worldStartup;
         this.primaryAction = state.canCancel ? findPrimaryAction() : null;
     }
 
     static boolean supports(GuiScreen screen) {
         return screen instanceof GuiConnecting || screen instanceof GuiDisconnected
-                || screen instanceof GuiDownloadTerrain;
+                || screen instanceof GuiDownloadTerrain || screen instanceof GuiScreenWorking;
     }
 
     static NativeSystemScreenSession create(GuiScreen screen, ServerData server) {
-        String name = server == null ? "" : server.serverName;
-        String address = server == null ? "" : server.serverIP;
+        return create(screen, server, null);
+    }
+
+    static NativeSystemScreenSession create(GuiScreen screen, ServerData server, ConnectionUiState previous) {
+        boolean localWorld = previous != null && "world".equals(previous.stage);
+        String name = localWorld ? previous.serverName : server == null ? "" : server.serverName;
+        String address = localWorld ? "" : server == null ? "" : server.serverIP;
         ConnectionUiState state;
         if (screen instanceof GuiDisconnected) {
             String title = ObfuscationReflectionHelper.getPrivateValue(
@@ -54,17 +67,31 @@ final class NativeSystemScreenSession {
             IChatComponent message = ObfuscationReflectionHelper.getPrivateValue(
                     GuiDisconnected.class, (GuiDisconnected) screen, "message", "field_146304_f");
             state = new ConnectionUiState("disconnected", clean(title),
-                    message == null ? "" : clean(message.getUnformattedText()), name, address, true);
+                    message == null ? "" : clean(message.getUnformattedText()), name, address, true,
+                    localWorld ? "world" : "network");
         } else if (screen instanceof GuiConnecting) {
             state = new ConnectionUiState("connecting", I18n.format("connect.connecting"),
                     "", name, address, true);
         } else if (screen instanceof GuiDownloadTerrain) {
             state = new ConnectionUiState("loading", I18n.format("multiplayer.downloadingTerrain"),
-                    "", name, address, false);
+                    "", name, address, false, localWorld ? "world" : "terrain");
+        } else if (screen instanceof GuiScreenWorking) {
+            state = workingState((GuiScreenWorking)screen, name, address);
         } else {
             throw new IllegalArgumentException("Not a supported Minecraft system screen");
         }
         return new NativeSystemScreenSession(screen, state, nativeReturnParent(screen));
+    }
+
+    /** The real world-load request owns this presentation until native terrain takes over. */
+    static NativeSystemScreenSession loadingWorld(String name) {
+        return new NativeSystemScreenSession(new GuiScreen() {},
+                new ConnectionUiState("loading", I18n.format("menu.loadingLevel"), "",
+                        name, "", false, "world"), null, true);
+    }
+
+    boolean retainsWorldStartup(boolean worldLoaded) {
+        return worldStartup && !closed && !worldLoaded;
     }
 
     static GuiScreen nativeReturnParent(GuiScreen screen) {
@@ -80,6 +107,14 @@ final class NativeSystemScreenSession {
     }
 
     ConnectionUiState state() { return state; }
+
+    private static ConnectionUiState workingState(GuiScreenWorking screen, String name, String address) {
+        String title=ObfuscationReflectionHelper.getPrivateValue(GuiScreenWorking.class,screen,"field_146591_a");
+        String detail=ObfuscationReflectionHelper.getPrivateValue(GuiScreenWorking.class,screen,"field_146589_f");
+        Integer progress=ObfuscationReflectionHelper.getPrivateValue(GuiScreenWorking.class,screen,"progress","field_146590_g");
+        return new ConnectionUiState("loading",clean(title),clean(detail)+" · "+Math.max(0,Math.min(100,progress))+"%",
+                name,address,false,"resources");
+    }
 
     static GuiConnecting connectorForWorker(Thread worker) {
         if (worker == null) return null;
@@ -136,13 +171,22 @@ final class NativeSystemScreenSession {
     void tick() {
         if (closed) return;
         delegate.updateScreen();
+        if (!closed && delegate instanceof GuiScreenWorking) {
+            GuiScreenWorking working=(GuiScreenWorking)delegate;
+            state=workingState(working,state.serverName,state.serverAddress);
+            Boolean done=ObfuscationReflectionHelper.getPrivateValue(
+                    GuiScreenWorking.class,working,"doneWorking","field_146592_h");
+            // Vanilla's completed branch only restores its own screen/Realms
+            // lifecycle; it returns before background, text or GL drawing.
+            if (Boolean.TRUE.equals(done)) working.drawScreen(0,0,0.0F);
+        }
         if (!closed && !authorizing && delegate instanceof GuiConnecting) {
             Object manager = ObfuscationReflectionHelper.getPrivateValue(
                     GuiConnecting.class, (GuiConnecting) delegate, "networkManager", "field_146371_g");
             if (manager != null) {
                 authorizing = true;
                 state = new ConnectionUiState("connecting", I18n.format("connect.authorizing"),
-                        "", state.serverName, state.serverAddress, true);
+                        "", state.serverName, state.serverAddress, true, "session");
             }
         }
     }

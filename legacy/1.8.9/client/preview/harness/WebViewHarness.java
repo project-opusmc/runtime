@@ -28,7 +28,8 @@ public final class WebViewHarness {
 
     public static void main(String[] args) throws Exception {
         AtomicBoolean keychainAccessObserved = new AtomicBoolean();
-        Logger log = logger(keychainAccessObserved);
+        HostNavigationAckHarness.MediaProbe controls = new HostNavigationAckHarness.MediaProbe();
+        Logger log = logger(keychainAccessObserved, controls);
         String helper = OpusWebViewClient.resolveHelperPath(log);
         if (helper == null) {
             System.out.println("WEBVIEW HARNESS: SKIPPED (CEF helper unavailable)");
@@ -48,7 +49,8 @@ public final class WebViewHarness {
 
             navigation.open("title");
             first = new OpusWebViewClient(log, helper);
-            require(first.start(640, 480, 1.0F, server.urlForRoute("title")),
+            require(first.start(640, 480, 1.0F,
+                            server.urlForRoute("title").replace("#", "&opusMediaProbe=1#")),
                     "first CEF helper did not start");
 
             OpusWebViewClient.Frame title = awaitFrame(first, 640, 480, 1.0F);
@@ -65,10 +67,13 @@ public final class WebViewHarness {
 
             // Native CEF mouse input must drive the real browser hover state;
             // no DOM-synthesis shim or second input owner is allowed.
-            // Current 640x480 Home is a two-column layout. The measured
-            // Singleplayer bounds are (16,296,298,56), center (165,324).
-            // Exercise a real control, not the old layout's empty hero area.
-            first.sendMouseMove(165, 324);
+            // Observe the current control geometry rather than old layout pixels.
+            com.google.gson.JsonArray bounds = controls.control("home-singleplayer").getAsJsonArray("rect");
+            int controlX = (int) (bounds.get(0).getAsDouble() + bounds.get(2).getAsDouble() / 2);
+            int controlY = (int) (bounds.get(1).getAsDouble() + bounds.get(3).getAsDouble() / 2);
+            require(controlX >= 0 && controlX < 640 && controlY >= 0 && controlY < 480,
+                    "Singleplayer control is outside the CEF viewport");
+            first.sendMouseMove(controlX, controlY);
             OpusWebViewClient.Frame hoveredTitle = awaitDistinctFrame(
                     first, 640, 480, 1.0F, titleHash);
             try {
@@ -79,11 +84,16 @@ public final class WebViewHarness {
             }
             pass("CEF native mouse move drives browser hover state");
 
-            first.sendKey(0x09, true);
-            first.sendKey(0x09, false);
-            first.sendKey(0x09, true);
-            first.sendKey(0x09, false);
-            Thread.sleep(50L);
+            // Reach the named control through real native Tab events, even when
+            // the layout or initial browser focus changes.
+            for (int focusStep = 0; focusStep < 80; focusStep++) {
+                if (controls.focused("home-singleplayer")) break;
+                first.sendKey(0x09, true);
+                first.sendKey(0x09, false);
+                Thread.sleep(40L);
+            }
+            require(controls.focused("home-singleplayer"),
+                    "Singleplayer is unreachable through native keyboard focus");
             first.sendKey(0x20, true);
             first.sendKey(0x20, false);
             awaitUiAction(bridgeProvider);
@@ -94,10 +104,10 @@ public final class WebViewHarness {
             bridgeProvider.clearAction();
             pass("CEF keyboard Space activates the canonical title command");
 
-            first.sendMouseMove(165, 324);
+            first.sendMouseMove(controlX, controlY);
             Thread.sleep(50L);
-            first.sendMouseButton(165, 324, 0, true);
-            first.sendMouseButton(165, 324, 0, false);
+            first.sendMouseButton(controlX, controlY, 0, true);
+            first.sendMouseButton(controlX, controlY, 0, false);
             awaitUiAction(bridgeProvider);
             require("navigate".equals(bridgeProvider.action)
                             && "singleplayer".equals(bridgeProvider.routeId),
@@ -344,7 +354,8 @@ public final class WebViewHarness {
         System.out.println("PASS " + message);
     }
 
-    private static Logger logger(final AtomicBoolean keychainAccessObserved) {
+    private static Logger logger(final AtomicBoolean keychainAccessObserved,
+            final HostNavigationAckHarness.MediaProbe controls) {
         return (Logger) Proxy.newProxyInstance(
                 Logger.class.getClassLoader(),
                 new Class<?>[] {Logger.class},
@@ -363,6 +374,7 @@ public final class WebViewHarness {
                             && call != null && call.length > 0) {
                             String message = String.valueOf(call[0]);
                             String rendered = format(message, call);
+                            controls.record(rendered);
                             String lower = rendered.toLowerCase(java.util.Locale.ROOT);
                             if (lower.contains("keychain")
                                     || lower.contains("os_crypt")

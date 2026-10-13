@@ -16,8 +16,14 @@ public interface HudWidget {
     /** Applies an in-memory movement preview; persistence happens on mouse-up. */
     boolean moveBy(UiBounds viewport, UiBounds renderedBounds, int deltaX, int deltaY);
 
-    /** Applies an in-memory size preview; persistence happens on mouse-up. */
-    boolean resizeBy(UiBounds renderedBounds, int deltaX);
+    /** Current persisted/preview uniform scale in percent. */
+    int scale();
+
+    default int defaultX() { return 12; }
+    default int defaultY() { return 12; }
+
+    /** Applies a uniform in-memory scale preview; persistence happens on mouse-up. */
+    boolean resizeToScale(int scale);
 
     boolean disable();
 

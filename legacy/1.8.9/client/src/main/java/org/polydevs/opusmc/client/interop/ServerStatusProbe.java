@@ -167,6 +167,8 @@ final class ServerStatusProbe {
                 return Snapshot.online(
                         address,
                         payload.motd,
+                        payload.motdRuns,
+                        payload.favicon,
                         payload.onlinePlayers,
                         payload.maxPlayers,
                         payload.version,
@@ -209,13 +211,16 @@ final class ServerStatusProbe {
             throw new IOException("Invalid server status JSON");
         }
         JsonObject object = parsed.getAsJsonObject();
-        String motd = displayText(object.get("description"));
+        com.google.gson.JsonArray motdRuns = ServerDescription.runs(object.get("description"));
+        String motd = ServerDescription.plain(motdRuns);
         JsonObject players = object.has("players") && object.get("players").isJsonObject()
                 ? object.getAsJsonObject("players") : null;
         JsonObject version = object.has("version") && object.get("version").isJsonObject()
                 ? object.getAsJsonObject("version") : null;
         return new StatusPayload(
                 motd,
+                motdRuns.toString(),
+                favicon(object),
                 number(players, "online"),
                 number(players, "max"),
                 string(version, "name"));
@@ -312,55 +317,21 @@ final class ServerStatusProbe {
     }
 
     private static String displayText(JsonElement element) {
-        StringBuilder text = new StringBuilder();
-        appendText(element, text);
-        StringBuilder clean = new StringBuilder(text.length());
-        for (int index = 0; index < text.length(); index++) {
-            char character = text.charAt(index);
-            if (character == '\u00a7' && index + 1 < text.length()) {
-                index++;
-                continue;
-            }
-            if (character == '\r') {
-                continue;
-            }
-            if (Character.isISOControl(character) && character != '\n' && character != '\t') {
-                continue;
-            }
-            clean.append(character);
-            if (clean.length() >= MAX_DISPLAY_CHARACTERS) {
-                break;
-            }
-        }
-        return clean.toString().replaceAll("[ \\t]+", " ")
-                .replaceAll(" *\\n *", "\\n").trim();
+        return ServerDescription.plain(ServerDescription.runs(element));
     }
 
-    private static void appendText(JsonElement element, StringBuilder out) {
-        if (element == null || element.isJsonNull()) {
-            return;
-        }
-        if (element.isJsonPrimitive()) {
-            try {
-                out.append(element.getAsString());
-            } catch (RuntimeException ignored) {
-                // Ignore a malformed display primitive and keep the status usable.
-            }
-            return;
-        }
-        if (element.isJsonArray()) {
-            for (JsonElement item : element.getAsJsonArray()) {
-                appendText(item, out);
-            }
-            return;
-        }
-        JsonObject object = element.getAsJsonObject();
-        if (object.has("text")) {
-            appendText(object.get("text"), out);
-        }
-        if (object.has("extra")) {
-            appendText(object.get("extra"), out);
-        }
+    private static String favicon(JsonObject object) {
+        try {
+            if (!object.has("favicon") || !object.get("favicon").isJsonPrimitive()) return "";
+            String data = object.get("favicon").getAsString();
+            String prefix = "data:image/png;base64,";
+            if (!data.startsWith(prefix) || data.length()>100000) return "";
+            byte[] png = java.util.Base64.getDecoder().decode(data.substring(prefix.length()));
+            if (png.length<24 || png[0]!=(byte)137 || png[1]!='P' || png[2]!='N' || png[3]!='G') return "";
+            java.nio.ByteBuffer header = java.nio.ByteBuffer.wrap(png);
+            if (header.getInt(16)!=64 || header.getInt(20)!=64) return "";
+            return data;
+        } catch (RuntimeException invalid) { return ""; }
     }
 
     private static int number(JsonObject object, String key) {
@@ -389,6 +360,8 @@ final class ServerStatusProbe {
         final String address;
         final String state;
         final String motd;
+        final String motdRuns;
+        final String favicon;
         final int onlinePlayers;
         final int maxPlayers;
         final String version;
@@ -399,6 +372,8 @@ final class ServerStatusProbe {
                 String address,
                 String state,
                 String motd,
+                String motdRuns,
+                String favicon,
                 int onlinePlayers,
                 int maxPlayers,
                 String version,
@@ -407,6 +382,8 @@ final class ServerStatusProbe {
             this.address = address;
             this.state = state;
             this.motd = motd;
+            this.motdRuns = motdRuns;
+            this.favicon = favicon;
             this.onlinePlayers = onlinePlayers;
             this.maxPlayers = maxPlayers;
             this.version = version;
@@ -415,23 +392,25 @@ final class ServerStatusProbe {
         }
 
         static Snapshot checking(String address, long now) {
-            return new Snapshot(address, "checking", "", -1, -1, "", -1L, now);
+            return new Snapshot(address, "checking", "", "[]", "", -1, -1, "", -1L, now);
         }
 
         static Snapshot online(
                 String address,
                 String motd,
+                String motdRuns,
+                String favicon,
                 int onlinePlayers,
                 int maxPlayers,
                 String version,
                 long pingMs,
                 long now) {
-            return new Snapshot(address, "online", motd, onlinePlayers, maxPlayers,
+            return new Snapshot(address, "online", motd, motdRuns, favicon, onlinePlayers, maxPlayers,
                     version, pingMs, now);
         }
 
         static Snapshot offline(String address, long now) {
-            return new Snapshot(address, "offline", "", -1, -1, "", -1L, now);
+            return new Snapshot(address, "offline", "", "[]", "", -1, -1, "", -1L, now);
         }
 
         boolean isChecking() {
@@ -441,12 +420,16 @@ final class ServerStatusProbe {
 
     private static final class StatusPayload {
         final String motd;
+        final String motdRuns;
+        final String favicon;
         final int onlinePlayers;
         final int maxPlayers;
         final String version;
 
-        StatusPayload(String motd, int onlinePlayers, int maxPlayers, String version) {
+        StatusPayload(String motd, String motdRuns, String favicon, int onlinePlayers, int maxPlayers, String version) {
             this.motd = motd;
+            this.motdRuns = motdRuns;
+            this.favicon = favicon;
             this.onlinePlayers = onlinePlayers;
             this.maxPlayers = maxPlayers;
             this.version = version;

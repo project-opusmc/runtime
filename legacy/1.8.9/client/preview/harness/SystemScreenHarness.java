@@ -19,6 +19,7 @@ import net.minecraft.client.gui.GuiDownloadTerrain;
 import net.minecraft.client.gui.GuiCreateWorld;
 import net.minecraft.client.gui.GuiOptions;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiScreenWorking;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.GuiConnecting;
 import net.minecraft.client.network.NetHandlerPlayClient;
@@ -41,9 +42,12 @@ public final class SystemScreenHarness {
         verifyDeferredConnectorOrigin();
         verifyFrameTaskCancellation();
         verifySystemPresentationGrace();
+        RetainedUiSurfaceHarness.main(new String[0]);
         verifyConnectingResizeGrace();
         verifyNativeOptionsRoundTrip();
         verifyCreateWorldReturnFlow();
+        verifyNativeResourceProgress();
+        verifyWorldStartupPresentation();
         Class<?> stateType;
         Class<?> sessionType;
         try {
@@ -194,6 +198,68 @@ public final class SystemScreenHarness {
             server.stop();
         }
         System.out.println("SYSTEM SCREENS: ALL PASSED");
+    }
+
+    private static void verifyWorldStartupPresentation() throws Exception {
+        Method setLocale = I18n.class.getDeclaredMethod("setLocale", net.minecraft.client.resources.Locale.class);
+        setLocale.setAccessible(true);
+        setLocale.invoke(null, new net.minecraft.client.resources.Locale());
+        Method loadingWorld = NativeSystemScreenSession.class.getDeclaredMethod("loadingWorld", String.class);
+        loadingWorld.setAccessible(true);
+        NativeSystemScreenSession startup = (NativeSystemScreenSession) loadingWorld.invoke(null, "Test world");
+        org.polydevs.opusmc.client.interop.ConnectionUiState state = startup.state();
+        require("loading".equals(state.phase) && "world".equals(state.stage)
+                && "Test world".equals(state.serverName) && state.serverAddress.isEmpty() && !state.canCancel,
+                "Singleplayer startup fabricated multiplayer/account progress or cancellation");
+        require(!startup.primaryAction(), "World preparation exposed an unsupported cancellation");
+
+        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        Minecraft minecraft = (Minecraft) unsafe.allocateInstance(Minecraft.class);
+        Field singleton = Minecraft.class.getDeclaredField("theMinecraft");
+        singleton.setAccessible(true);
+        Object previous = singleton.get(null);
+        singleton.set(null, minecraft);
+        ClientOverlayController controller = new ClientOverlayController(LogManager.getLogger("WorldStartup"));
+        try {
+            OpusClientScreen host = new OpusClientScreen(controller, UiRoute.singleplayer());
+            minecraft.currentScreen = host;
+            host.presentSystemScreen(startup);
+            net.minecraftforge.client.event.GuiOpenEvent earlyClose = new CancelableGuiOpenEvent();
+            controller.onGuiOpening(earlyClose);
+            require(earlyClose.isCanceled(), "World startup cleared the current CEF owner before local login/terrain");
+
+            Method inherit = NativeSystemScreenSession.class.getDeclaredMethod("create", GuiScreen.class, ServerData.class,
+                    org.polydevs.opusmc.client.interop.ConnectionUiState.class);
+            inherit.setAccessible(true);
+            NativeSystemScreenSession terrain = (NativeSystemScreenSession) inherit.invoke(null,
+                    new GuiDownloadTerrain(new CountingPlayHandler()), new ServerData("Previous server", "old.example.net", false), state);
+            require("world".equals(terrain.state().stage) && "Test world".equals(terrain.state().serverName)
+                    && terrain.state().serverAddress.isEmpty(), "Local terrain inherited a stale multiplayer destination");
+            host.presentSystemScreen(terrain);
+            net.minecraftforge.client.event.GuiOpenEvent terrainDone = new CancelableGuiOpenEvent();
+            controller.onGuiOpening(terrainDone);
+            require(!terrainDone.isCanceled(), "Completed native terrain could not return to gameplay");
+
+            host.presentSystemScreen((NativeSystemScreenSession) loadingWorld.invoke(null, "Another world"));
+            minecraft.theWorld = (net.minecraft.client.multiplayer.WorldClient) unsafe.allocateInstance(net.minecraft.client.multiplayer.WorldClient.class);
+            net.minecraftforge.client.event.GuiOpenEvent loaded = new CancelableGuiOpenEvent();
+            controller.onGuiOpening(loaded);
+            require(!loaded.isCanceled(), "A loaded world could not close its startup presentation");
+        } finally {
+            ((UiNavigationManager) fieldValue(ClientOverlayController.class, controller, "uiNavigation")).shutdown();
+            singleton.set(null, previous);
+        }
+        pass("singleplayer retains its CEF startup owner through local login; terrain completion and gameplay stay native");
+    }
+
+    // Forge adds this override when it loads @Cancelable event subclasses;
+    // standalone declares it directly. This harness uses an untransformed
+    // Forge classpath, so preserve that real event contract explicitly.
+    private static final class CancelableGuiOpenEvent extends net.minecraftforge.client.event.GuiOpenEvent {
+        CancelableGuiOpenEvent() { super(null); }
+        @Override public boolean isCancelable() { return true; }
     }
 
     private static void verifySystemActionRevision() throws Exception {
@@ -484,44 +550,19 @@ public final class SystemScreenHarness {
     }
 
     private static void verifySystemPresentationGrace() throws Exception {
-        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-        unsafeField.setAccessible(true);
-        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
-        OpusClientScreen host = (OpusClientScreen) unsafe.allocateInstance(OpusClientScreen.class);
-        Field webState = OpusClientScreen.class.getDeclaredField("webState");
-        webState.setAccessible(true);
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        Object starting = Enum.valueOf((Class) webState.getType(), "STARTING");
-        webState.set(host, starting);
-        setField(OpusClientScreen.class, host, "webSurface",
-                new org.polydevs.opusmc.client.embed.OpusWebTextureSurface());
-        setField(OpusClientScreen.class, host, "systemScreen", new NativeSystemScreenSession(
-                new TrackingScreen(), new org.polydevs.opusmc.client.interop.ConnectionUiState(
-                        "connecting", "Connecting", "", "Test", "localhost", true)));
-        setField(OpusClientScreen.class, host, "pendingFrameSinceNanos", System.nanoTime());
-        require(Boolean.FALSE.equals(invoke(host, "usesNativeSystemFallback", new Class<?>[0])),
-                "Real Connecting host flashed native UI before receiving its first CEF frame");
-        Method fallback;
-        try {
-            fallback = UiLifecycleShellPolicy.class.getDeclaredMethod("drawNativeSystem",
-                    boolean.class, boolean.class, boolean.class, long.class);
-        } catch (NoSuchMethodException missing) {
-            throw new AssertionError("Connecting has no grace period before native fallback", missing);
-        }
-        fallback.setAccessible(true);
-        require(Boolean.FALSE.equals(fallback.invoke(null, true, false, false, 0L)),
-                "Connecting flashed native UI before its first CEF frame");
-        require(Boolean.FALSE.equals(fallback.invoke(null, true, false, false, 999L)),
-                "Connecting flashed native UI during a normal CEF transition");
-        require(Boolean.FALSE.equals(fallback.invoke(null, true, false, true, 1500L)),
-                "Ready CEF connection was replaced by native UI");
-        require(Boolean.TRUE.equals(fallback.invoke(null, true, false, false, 1000L)),
-                "A stalled connection hid its working native Cancel fallback");
-        require(Boolean.TRUE.equals(fallback.invoke(null, true, true, false, 0L)),
-                "A failed CEF connection hid its working native fallback");
-        require(Boolean.FALSE.equals(fallback.invoke(null, false, true, false, 2000L)),
-                "A non-system screen invented a native fallback");
-        pass("Connecting retains CEF transition grace while preserving genuine failure fallback");
+        require(!UiLifecycleShellPolicy.showText(0L,false) && !UiLifecycleShellPolicy.showText(179L,false),
+                "Warm route changes flash a lifecycle loading label");
+        require(!UiLifecycleShellPolicy.showText(180L,false) && !UiLifecycleShellPolicy.showText(5000L,false),
+                "A normal CEF frame wait exposes internal embedded-interface loading text");
+        require(UiLifecycleShellPolicy.showText(0L,true),
+                "A real CEF failure hides its recovery instructions");
+        require(!UiLifecycleShellPolicy.frameTimedOut(7999L) && UiLifecycleShellPolicy.frameTimedOut(8000L),
+                "A stalled frame has no bounded retry boundary");
+        require(UiLifecycleShellPolicy.drawTexture(false,true,true,true),
+                "A live pending route discards its previous good CEF frame");
+        require(!UiLifecycleShellPolicy.drawTexture(false,true,true,false),
+                "A failed lease continues to display its stale CEF frame");
+        pass("Warm route transitions retain the live CEF frame; a genuine transport failure exposes recovery");
     }
 
     private static void verifyFrameTaskCancellation() throws Exception {
@@ -619,24 +660,12 @@ public final class SystemScreenHarness {
             }
             resize.setAccessible(true);
             resize.invoke(host, 1600, 900, 2.0F, false);
-            require(Boolean.FALSE.equals(invoke(host, "usesNativeSystemFallback", new Class<?>[0])),
-                    "Resizing an older Connecting screen immediately flashed native UI");
             long freshStart = (Long) fieldValue(OpusClientScreen.class, host, "pendingFrameSinceNanos");
             require(freshStart > staleStart, "Resize retained the previous frame's elapsed grace");
             resize.invoke(host, 1600, 900, 2.0F, false);
             require((Long) fieldValue(OpusClientScreen.class, host, "pendingFrameSinceNanos") == freshStart,
-                    "Unchanged geometry renewed grace forever and hid native Cancel");
-            setField(OpusClientScreen.class, host, "pendingFrameSinceNanos",
-                    System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(1100L));
-            require(Boolean.TRUE.equals(invoke(host, "usesNativeSystemFallback", new Class<?>[0])),
-                    "A genuinely stalled resized surface hid native Cancel");
-            @SuppressWarnings({"unchecked", "rawtypes"})
-            Object failed = Enum.valueOf((Class) webState.getType(), "FAILED");
-            webState.set(host, failed);
-            setField(OpusClientScreen.class, host, "pendingFrameSinceNanos", System.nanoTime());
-            require(Boolean.TRUE.equals(invoke(host, "usesNativeSystemFallback", new Class<?>[0])),
-                    "A genuinely failed resized surface delayed native Cancel");
-            pass("Connecting resize starts one new frame grace without hiding stalled or failed Cancel");
+                    "Unchanged geometry indefinitely renewed the CEF frame wait");
+            pass("Connecting resize starts one new CEF frame wait; unchanged geometry does not reset it");
         } finally {
             controller.shutdown();
         }
@@ -737,6 +766,39 @@ public final class SystemScreenHarness {
     }
 
     private static void pass(String message) { System.out.println("PASS " + message); }
+
+    private static void verifyNativeResourceProgress() {
+        TrackingWorkingScreen working=new TrackingWorkingScreen();
+        working.resetProgressAndMessage("Downloading resource pack");
+        working.displayLoadingString("Resource pack");
+        working.setLoadingProgress(37);
+        require(NativeSystemScreenSession.supports(working), "Resource-pack progress still falls through to vanilla UI");
+        NativeSystemScreenSession session=NativeSystemScreenSession.create(working,null);
+        require("resources".equals(session.state().stage) && "loading".equals(session.state().phase)
+                && !session.state().canCancel, "Native resource progress invented a connection/cancellation owner");
+        require("Downloading resource pack".equals(session.state().title)
+                && session.state().detail.contains("37%"), "CEF resource progress lost the native task/progress");
+        working.setLoadingProgress(66);
+        session.tick();
+        require(session.state().detail.contains("66%") && working.completions==0,
+                "Resource progress did not refresh or drew the vanilla progress screen");
+        working.setDoneWorking();
+        session.tick();
+        require(working.completions==1, "Resource completion no longer delegates to Minecraft's close path");
+        session.close(); session.tick();
+        require(working.completions==1, "Closed resource task retained its completion callback");
+        pass("native resource progress uses Opus presentation and retains Minecraft completion without drawing vanilla");
+    }
+
+    private static final class TrackingWorkingScreen extends GuiScreenWorking {
+        int completions;
+        @Override public void drawScreen(int x,int y,float partialTicks) {
+            Boolean done=net.minecraftforge.fml.common.ObfuscationReflectionHelper.getPrivateValue(
+                    GuiScreenWorking.class,this,"doneWorking","field_146592_h");
+            require(Boolean.TRUE.equals(done), "Vanilla progress drawing was called before native completion");
+            completions++;
+        }
+    }
 
     private static final class TrackingScreen extends GuiScreen {
         int initializations;

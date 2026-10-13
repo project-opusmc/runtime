@@ -88,7 +88,14 @@ public final class MinecraftUiRenderer implements UiRenderer {
 
     @Override
     public void text(String value, int x, int y, int argb) {
-        font().drawString(value, x, y, argb);
+        int color = normalizeFontColor(argb);
+        if (color != 0) font().drawString(value, x, y, color);
+    }
+
+    @Override
+    public void text(String value, int x, int y, int argb, boolean shadow) {
+        int color = normalizeFontColor(argb);
+        if (color != 0) font().drawString(value, (float) x, (float) y, color, shadow);
     }
 
     @Override
@@ -166,6 +173,19 @@ public final class MinecraftUiRenderer implements UiRenderer {
     @Override
     public void scale(float x, float y) {
         GlStateManager.scale(x, y, 1.0F);
+    }
+
+    // Vanilla promotes alpha 0..3 to 255. Preserve transparent HUD colors and
+    // clamp the three unsupported nonzero levels to its lowest usable alpha.
+    static int normalizeFontColor(int argb) {
+        int alpha = argb >>> 24;
+        if (alpha == 0) return 0;
+        return alpha < 4 ? 0x04000000 | (argb & 0x00FFFFFF) : argb;
+    }
+
+    @Override
+    public void translate(float x, float y) {
+        GlStateManager.translate(x, y, 0.0F);
     }
 
     private FontRenderer font() {

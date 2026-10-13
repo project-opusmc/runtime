@@ -29,8 +29,13 @@ public class RenderGameOverlayEvent extends Event {
     public net.minecraft.client.gui.ScaledResolution resolution;
 
     public RenderGameOverlayEvent(float partialTicks, net.minecraft.client.gui.ScaledResolution resolution) {
+        this(partialTicks, resolution, ElementType.ALL);
+    }
+
+    protected RenderGameOverlayEvent(float partialTicks,
+            net.minecraft.client.gui.ScaledResolution resolution, ElementType type) {
         this.partialTicks = partialTicks;
-        this.type = ElementType.ALL;
+        this.type = type;
         this.resolution = resolution;
     }
 
@@ -45,8 +50,9 @@ public class RenderGameOverlayEvent extends Event {
         public final ArrayList<String> right;
 
         public Text(RenderGameOverlayEvent parent, ArrayList<String> left, ArrayList<String> right) {
-            super(parent.partialTicks, ElementType.TEXT);
-            this.resolution = parent.resolution;
+            // The standalone hook already resolved the actual Notch viewport.
+            // Rebuilding it here calls a compile-only MCP Minecraft method.
+            super(parent.partialTicks, parent.resolution, ElementType.TEXT);
             this.left = left;
             this.right = right;
         }

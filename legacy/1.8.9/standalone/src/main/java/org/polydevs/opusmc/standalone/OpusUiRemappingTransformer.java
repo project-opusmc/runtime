@@ -6,6 +6,7 @@ import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.Map;
 import net.minecraft.launchwrapper.IClassTransformer;
+import net.minecraft.launchwrapper.Launch;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.commons.RemappingClassAdapter;
@@ -17,6 +18,7 @@ public class OpusUiRemappingTransformer implements IClassTransformer {
     private Map<String, String> guiScreenMethodMappings;
     private Map<String, String> guiScreenFieldMappings;
     private Map<String, String> guiMethodMappings;
+    private final Map<String, String> superclassNames = new HashMap<String, String>();
 
     public OpusUiRemappingTransformer() {
         try {
@@ -86,10 +88,11 @@ public class OpusUiRemappingTransformer implements IClassTransformer {
         if (name.startsWith("org.polydevs.opusmc.client.") || name.startsWith("org.polydevs.opusmc.websurface.") || name.startsWith("net.minecraftforge.")) {
             try {
                 ClassReader cr = new ClassReader(basicClass);
+                superclassNames.put(cr.getClassName(), cr.getSuperName());
                 ClassWriter cw = new ClassWriter(0);
                 RemappingClassAdapter adapter = new RemappingClassAdapter(
                         cw,
-                        remapperForClass(name, cr));
+                        remapperForClass());
                 cr.accept(adapter, ClassReader.EXPAND_FRAMES);
                 return cw.toByteArray();
             } catch (Exception e) {
@@ -100,16 +103,15 @@ public class OpusUiRemappingTransformer implements IClassTransformer {
         return basicClass;
     }
 
-    private Remapper remapperForClass(String className, ClassReader reader) {
+    private Remapper remapperForClass() {
         boolean hasGuiSuperclassMappings = (guiScreenMethodMappings != null && !guiScreenMethodMappings.isEmpty())
                 || (guiScreenFieldMappings != null && !guiScreenFieldMappings.isEmpty())
                 || (guiMethodMappings != null && !guiMethodMappings.isEmpty());
-        if (!hasGuiSuperclassMappings || !isGuiScreenSubclass(reader.getSuperName())) {
+        if (!hasGuiSuperclassMappings) {
             return remapper;
         }
         return new GuiSubclassRemapper(
                 remapper,
-                className.replace('.', '/'),
                 guiScreenMethodMappings,
                 guiScreenFieldMappings,
                 guiMethodMappings);
@@ -124,21 +126,49 @@ public class OpusUiRemappingTransformer implements IClassTransformer {
                 || "avo".equals(superName);
     }
 
-    private static final class GuiSubclassRemapper extends Remapper {
+    private boolean isGuiOwner(String owner) {
+        for (int depth = 0; owner != null && depth < 32; depth++) {
+            if (isGuiScreenSubclass(owner)) return true;
+            if (!owner.startsWith("org/polydevs/opusmc/client/")
+                    && !owner.startsWith("org/polydevs/opusmc/websurface/")) return false;
+            if (!superclassNames.containsKey(owner)) {
+                // A helper may be transformed before the screen it references.
+                // Read metadata without loading/initializing that game class.
+                try (InputStream input = guiMetadata(owner)) {
+                    if (input == null) return false;
+                    superclassNames.put(owner, new ClassReader(input).getSuperName());
+                } catch (java.io.IOException unavailable) {
+                    return false;
+                }
+            }
+            owner = superclassNames.get(owner);
+        }
+        return false;
+    }
+
+    private InputStream guiMetadata(String owner) {
+        String resource = owner + ".class";
+        // The transformer is parent-loaded, while client classes can be added
+        // to LaunchClassLoader only. Native threads may have an unrelated TCCL.
+        InputStream input = Launch.classLoader == null ? null : Launch.classLoader.getResourceAsStream(resource);
+        ClassLoader context = Thread.currentThread().getContextClassLoader();
+        if (input == null && context != null) input = context.getResourceAsStream(resource);
+        if (input == null) input = getClass().getResourceAsStream("/" + resource);
+        return input;
+    }
+
+    private final class GuiSubclassRemapper extends Remapper {
         private final SimpleRemapper delegate;
-        private final String subclassOwner;
         private final Map<String, String> inheritedMethods;
         private final Map<String, String> inheritedFields;
         private final Map<String, String> inheritedGuiMethods;
 
         GuiSubclassRemapper(
                 SimpleRemapper delegate,
-                String subclassOwner,
                 Map<String, String> inheritedMethods,
                 Map<String, String> inheritedFields,
                 Map<String, String> inheritedGuiMethods) {
             this.delegate = delegate;
-            this.subclassOwner = subclassOwner;
             this.inheritedMethods = inheritedMethods;
             this.inheritedFields = inheritedFields;
             this.inheritedGuiMethods = inheritedGuiMethods;
@@ -155,11 +185,9 @@ public class OpusUiRemappingTransformer implements IClassTransformer {
             if (!name.equals(mapped)) {
                 return mapped;
             }
-            if (subclassOwner.equals(owner)) {
-                String inherited = inheritedFields.get(name);
-                if (inherited != null) {
-                    return inherited;
-                }
+            String inherited = inheritedFields.get(name);
+            if (inherited != null && isGuiOwner(owner)) {
+                return inherited;
             }
             return name;
         }
@@ -170,14 +198,12 @@ public class OpusUiRemappingTransformer implements IClassTransformer {
             if (!name.equals(mapped)) {
                 return mapped;
             }
-            if (subclassOwner.equals(owner)) {
-                String inherited = inheritedMethods.get(name + descriptor);
-                if (inherited == null) {
-                    inherited = inheritedGuiMethods.get(name + descriptor);
-                }
-                if (inherited != null) {
-                    return inherited;
-                }
+            String inherited = inheritedMethods.get(name + descriptor);
+            if (inherited == null) {
+                inherited = inheritedGuiMethods.get(name + descriptor);
+            }
+            if (inherited != null && isGuiOwner(owner)) {
+                return inherited;
             }
             return name;
         }

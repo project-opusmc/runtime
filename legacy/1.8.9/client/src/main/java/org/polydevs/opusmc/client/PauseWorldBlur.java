@@ -38,4 +38,8 @@ final class PauseWorldBlur {
             attempted = false;
         }
     }
+
+    boolean isActive() {
+        return ownedShader != null && host.currentShader() == ownedShader;
+    }
 }

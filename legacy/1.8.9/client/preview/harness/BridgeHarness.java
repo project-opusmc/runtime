@@ -45,7 +45,8 @@ public final class BridgeHarness {
         verifyPreviewContract();
         verifyJavaNavigationHistory();
 
-        Path accountCatalog = Files.createTempFile("opus-accounts-", ".json");
+        Path accountDirectory = Files.createTempDirectory("opus-accounts-");
+        Path accountCatalog = accountDirectory.resolve("accounts-v1.json");
         Files.write(accountCatalog, ("{\"schemaVersion\":1,\"selectedAccountId\":\"offline:first\","
                 + "\"accounts\":[{\"id\":\"offline:first\",\"username\":\"First\",\"uuid\":\"11111111111111111111111111111111\",\"kind\":\"offline\",\"badge\":\"unofficial\"},"
                 + "{\"id\":\"offline:second\",\"username\":\"Second\",\"uuid\":\"22222222222222222222222222222222\",\"kind\":\"offline\",\"badge\":\"unofficial\"}]}\n").getBytes(StandardCharsets.UTF_8));
@@ -75,9 +76,13 @@ public final class BridgeHarness {
         UiNavigationManager navigation = new UiNavigationManager(log, server);
         final String[] lastUiAction = new String[4];
         final int[] uiActionCount = {0};
+        final boolean[] failGameOptions = {false};
         final long[] lastUiRevision = {-1L};
         final String[] lastModuleToggle = new String[2];
         final int[] lastHudMove = new int[3];
+        final String[] liveIdentity = {"First", "unofficial"};
+        final boolean[] rejectAccount = {false};
+        final String[] lastCollection = {"", ""};
         server.setNavigationManager(navigation);
         server.setBridgeProvider(new OpusBridgeProvider() {
             @Override
@@ -95,6 +100,16 @@ public final class BridgeHarness {
                 lastUiRevision[0] = expectedRevision;
                 return true;
             }
+
+            @Override public String[] currentAccount() { return liveIdentity.clone(); }
+            @Override public boolean switchAccount(String id, String username, String kind) {
+                if (rejectAccount[0]) return false;
+                liveIdentity[0] = username; return true;
+            }
+            @Override public List<String[]> gameSettingChoices(String kind) {
+                return Collections.singletonList(new String[] {"en_US", "English (US)", "en_US", "true", "0", "true"});
+            }
+            @Override public void setGameSettingChoices(String kind, List<String> ids) { lastCollection[0] = kind; lastCollection[1] = ids.isEmpty() ? "" : ids.get(0); }
 
             @Override
             public List<String[]> listWorlds() {
@@ -121,6 +136,7 @@ public final class BridgeHarness {
 
             @Override
             public List<String[]> gameOptions() {
+                if (failGameOptions[0]) throw new IllegalStateException("Native setting read failed");
                 return Collections.emptyList();
             }
 
@@ -209,12 +225,31 @@ public final class BridgeHarness {
                 cookie,
                 "{\"id\":\"offline:second\"}");
         String selectedBody = read(selectAccount);
-        check("rest account selection persists next-launch identity",
+        check("rest account selection commits current identity and persists selected account",
                 selectAccount.getResponseCode() == 200
                         && selectedBody.contains("\"id\":\"offline:second\"")
                         && selectedBody.contains("\"selected\":true")
+                        && selectedBody.contains("\"current\":true") && "Second".equals(liveIdentity[0])
                         && new String(Files.readAllBytes(accountCatalog), StandardCharsets.UTF_8)
                                 .contains("\"selectedAccountId\":\"offline:second\""));
+
+        rejectAccount[0] = true;
+        HttpURLConnection rejectedSwitch = http(origin + "/api/v1/client/accounts/select", "POST", cookie, "{\"id\":\"offline:first\"}");
+        check("rejected account switch preserves current session and selection", rejectedSwitch.getResponseCode() == 409 && "Second".equals(liveIdentity[0])
+                && new String(Files.readAllBytes(accountCatalog), StandardCharsets.UTF_8).contains("\"selectedAccountId\":\"offline:second\""));
+        rejectAccount[0] = false;
+        HttpURLConnection language = http(origin + "/api/v1/client/options/choices?kind=language", "GET", cookie);
+        check("native setting choices expose safe labels and real selection", language.getResponseCode() == 200 && read(language).contains("English (US)"));
+        HttpURLConnection changeLanguage = http(origin + "/api/v1/client/options/choices", "POST", cookie, "{\"kind\":\"language\",\"ids\":[\"en_US\"]}");
+        check("native setting collection change reaches owner", changeLanguage.getResponseCode() == 204 && "language".equals(lastCollection[0]) && "en_US".equals(lastCollection[1]));
+        HttpURLConnection duplicated = http(origin + "/api/v1/client/options/choices", "POST", cookie, "{\"kind\":\"packs\",\"ids\":[\"duplicate\",\"duplicate\"]}");
+        check("duplicate pack selection is rejected before owner mutation", duplicated.getResponseCode() == 400 && "language".equals(lastCollection[0]));
+        HttpURLConnection preferences = http(origin + "/api/v1/client/preferences", "POST", cookie, "{\"uiScale\":1,\"reduceMotion\":true,\"backgroundBlur\":4,\"compactMode\":true,\"accent\":\"mono\"}");
+        check("client UI preferences save separately from account catalog", preferences.getResponseCode() == 204 && Files.exists(accountDirectory.resolve("ui-preferences-v1.json")));
+        HttpURLConnection readPreferences = http(origin + "/api/v1/client/preferences", "GET", cookie);
+        check("client UI preferences read persisted values", readPreferences.getResponseCode() == 200 && read(readPreferences).contains("\"reduceMotion\":true"));
+        HttpURLConnection invalidPreferences = http(origin + "/api/v1/client/preferences", "POST", cookie, "{\"uiScale\":1,\"reduceMotion\":\"false\",\"backgroundBlur\":4,\"compactMode\":true,\"accent\":\"mono\"}");
+        check("invalid preference does not overwrite saved state", invalidPreferences.getResponseCode() == 400 && new String(Files.readAllBytes(accountDirectory.resolve("ui-preferences-v1.json")), StandardCharsets.UTF_8).contains("\"reduceMotion\":true"));
 
         HttpURLConnection worlds = http(origin + "/api/v1/client/worlds", "GET", cookie);
         check("rest worlds", worlds.getResponseCode() == 200
@@ -247,7 +282,10 @@ public final class BridgeHarness {
         check("rest server status exposes sanitized MOTD and telemetry",
                 statusServer.failure() == null
                         && statusBody.contains("\"state\":\"online\"")
-                        && statusBody.contains("\"motd\":\"Test MOTD\"")
+                        && statusBody.contains("\"motd\":\"Test MOTD\\nSeason 4\"")
+                        && statusBody.contains("\"motdRuns\":[")
+                        && statusBody.contains("\"color\":\"#00aaaa\"")
+                        && statusBody.contains("\"bold\":true")
                         && statusBody.contains("\"onlinePlayers\":7")
                         && statusBody.contains("\"maxPlayers\":64")
                         && statusBody.contains("\"version\":\"1.8.9 test\"")
@@ -256,6 +294,16 @@ public final class BridgeHarness {
         HttpURLConnection options = http(origin + "/api/v1/client/options", "GET", cookie);
         check("rest options", options.getResponseCode() == 200
                 && read(options).contains("\"options\":[]"));
+        failGameOptions[0] = true;
+        boolean explicitReadFailure = false;
+        try {
+            HttpURLConnection failedOptions = http(origin + "/api/v1/client/options", "GET", cookie);
+            explicitReadFailure = failedOptions.getResponseCode() == 503;
+        } catch (IOException closedWithoutResponse) {
+            // A native failure must have a response the client can present.
+        }
+        check("native settings read failure returns HTTP 503", explicitReadFailure);
+        failGameOptions[0] = false;
 
         HttpURLConnection modules = http(origin + "/api/v1/client/modules", "GET", cookie);
         check("rest modules", modules.getResponseCode() == 200
@@ -391,6 +439,8 @@ public final class BridgeHarness {
         statusServer.close();
         System.clearProperty("opus.accounts.file");
         Files.deleteIfExists(accountCatalog);
+        Files.deleteIfExists(accountDirectory.resolve("ui-preferences-v1.json"));
+        Files.deleteIfExists(accountDirectory);
 
         System.out.println(failures == 0
                 ? "BRIDGE HARNESS: ALL PASSED"
@@ -557,7 +607,7 @@ public final class BridgeHarness {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             DataOutputStream body = new DataOutputStream(buffer);
             writeVarInt(body, 0);
-            writeString(body, "{\"description\":{\"text\":\"§bTest \",\"extra\":[{\"text\":\"MOTD\"}]},"
+            writeString(body, "{\"description\":{\"text\":\"§bTest \",\"extra\":[{\"text\":\"MOTD\",\"color\":\"dark_aqua\",\"bold\":true},{\"text\":\"\\nSeason 4\"}]},"
                     + "\"players\":{\"online\":7,\"max\":64},"
                     + "\"version\":{\"name\":\"1.8.9 test\"}}");
             writePacket(output, buffer.toByteArray());

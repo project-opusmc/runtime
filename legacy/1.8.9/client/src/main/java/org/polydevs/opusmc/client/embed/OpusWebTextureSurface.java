@@ -129,6 +129,8 @@ public final class OpusWebTextureSurface {
         return textureId >= 0 && textureWidth > 0 && textureHeight > 0;
     }
 
+    public long retainedBytes() { return (long) textureWidth * textureHeight * 4L; }
+
     /**
      * Draws the current texture over the whole UI viewport (0,0..width,height in
      * Opus product units). GL state is fully saved and restored.

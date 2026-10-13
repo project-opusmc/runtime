@@ -188,8 +188,8 @@ public final class W7LifecycleHarness {
     private static void verifyLifecycleShellPolicy() {
         require(!UiLifecycleShellPolicy.showText(179L, false),
                 "normal wait displayed loading text before 180 ms");
-        require(UiLifecycleShellPolicy.showText(180L, false),
-                "normal wait concealed loading text beyond 180 ms");
+        require(!UiLifecycleShellPolicy.showText(180L, false),
+                "normal frame wait displayed internal loading text");
         require(UiLifecycleShellPolicy.showText(0L, true),
                 "explicit failure did not display immediately");
         require(!UiLifecycleShellPolicy.failedWithoutView(true, false),

@@ -109,6 +109,68 @@ public class OpusUiRemappingTransformerTest {
     }
 
     @Test
+    public void remapsInheritedGuiFieldsFromAnonymousShaderHost() {
+        String screen = "org/polydevs/opusmc/client/OpusClientScreen";
+        ClassWriter outer = new ClassWriter(0);
+        outer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, screen, null,
+                "net/minecraft/client/gui/GuiScreen", null);
+        outer.visitEnd();
+        OpusUiRemappingTransformer transformer = new OpusUiRemappingTransformer();
+        transformer.transform(screen.replace('/', '.'), screen.replace('/', '.'), outer.toByteArray());
+
+        String host = screen + "$1";
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, host, null, "java/lang/Object", null);
+        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "currentMinecraft", "(L" + screen + ";)Lnet/minecraft/client/Minecraft;", null, null);
+        method.visitCode();
+        method.visitVarInsn(Opcodes.ALOAD, 0);
+        method.visitFieldInsn(Opcodes.GETFIELD, screen, "field_146297_k", "Lnet/minecraft/client/Minecraft;");
+        method.visitInsn(Opcodes.ARETURN);
+        method.visitMaxs(1, 1);
+        method.visitEnd();
+        writer.visitEnd();
+
+        ClassNode node = new ClassNode();
+        new ClassReader(transformer.transform(host.replace('/', '.'), host.replace('/', '.'),
+                writer.toByteArray())).accept(node, 0);
+        assertTrue(hasFieldAccess(node, "j", screen),
+                "Pause shader host must resolve the outer screen's inherited Minecraft field");
+        assertFalse(hasFieldAccess(node, "field_146297_k", screen),
+                "Anonymous host must not leave a field that fails only when pause opens");
+    }
+
+    @Test
+    public void remapsHelperBeforeOwnerWithUnrelatedContextClassLoader() {
+        String screen = "org/polydevs/opusmc/client/RemapFixtureScreen";
+        String helper = screen + "$Shader";
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, helper, null, "java/lang/Object", null);
+        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "currentMinecraft", "(L" + screen + ";)Lnet/minecraft/client/Minecraft;", null, null);
+        method.visitCode();
+        method.visitVarInsn(Opcodes.ALOAD, 0);
+        method.visitFieldInsn(Opcodes.GETFIELD, screen, "field_146297_k", "Lnet/minecraft/client/Minecraft;");
+        method.visitInsn(Opcodes.ARETURN);
+        method.visitMaxs(1, 1);
+        method.visitEnd();
+        writer.visitEnd();
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        try {
+            thread.setContextClassLoader(new ClassLoader(null) { });
+            ClassNode node = new ClassNode();
+            byte[] remapped = new OpusUiRemappingTransformer().transform(
+                    helper.replace('/', '.'), helper.replace('/', '.'), writer.toByteArray());
+            new ClassReader(remapped).accept(node, 0);
+            assertTrue(hasFieldAccess(node, "j", screen),
+                    "A context-loader miss must fall back to the defining loader's screen metadata");
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    @Test
     public void doesNotRemapGuiScreenFieldsOnUnrelatedSubclass() {
         String owner = "org/polydevs/opusmc/client/UnrelatedScreen";
         ClassWriter writer = new ClassWriter(0);

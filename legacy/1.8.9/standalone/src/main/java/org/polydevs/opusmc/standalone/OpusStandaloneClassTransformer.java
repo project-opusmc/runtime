@@ -12,13 +12,21 @@ import org.polydevs.opusmc.patches.RetinaGuiInputTransformer;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import net.minecraft.launchwrapper.IClassTransformer;
 
 /** Adapts Opus's verified 1.8.9 bytecode patches to LaunchWrapper in standalone mode. */
 public final class OpusStandaloneClassTransformer implements IClassTransformer {
     private static final int BASE_TRANSFORMER_COUNT = 9;
     private static final String VANILLA_GUI_PREFIX = "net.minecraft.client.gui.";
+    private static final Map<String, String> VANILLA_GUI_CLASS_NAMES = vanillaGuiClassNames();
     private static final Set<String> BASE_TARGET_CLASSES = Collections.unmodifiableSet(new HashSet<String>(
             Arrays.asList(
                     "ave",
@@ -80,6 +88,13 @@ public final class OpusStandaloneClassTransformer implements IClassTransformer {
         if (BASE_TARGET_CLASSES.contains(normalizedName)) {
             return normalizedName;
         }
+        // Standalone LaunchWrapper supplies raw Notch names for both arguments.
+        // Preserve the actual class identity; use its pinned GUI name only to
+        // route absolute mouse reads through the existing Retina transformer.
+        String vanillaGuiName = VANILLA_GUI_CLASS_NAMES.get(normalizedName);
+        if (vanillaGuiName != null) {
+            return vanillaGuiName;
+        }
 
         String normalizedTransformedName = normalize(transformedName);
         if (normalizedTransformedName.startsWith(VANILLA_GUI_PREFIX)) {
@@ -110,6 +125,28 @@ public final class OpusStandaloneClassTransformer implements IClassTransformer {
             return "avo";
         }
         return normalizedName;
+    }
+
+    private static Map<String, String> vanillaGuiClassNames() {
+        Map<String, String> names = new HashMap<String, String>();
+        InputStream input = OpusStandaloneClassTransformer.class.getResourceAsStream("/notch-srg.srg");
+        if (input == null) throw new IllegalStateException("Standalone GUI routing requires notch-srg.srg");
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.startsWith("CL: ")) continue;
+                String[] parts = line.split("\\s+");
+                if (parts.length == 3 && parts[2].startsWith("net/minecraft/client/gui/")) {
+                    names.put(normalize(parts[1]), normalize(parts[2]));
+                }
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot read standalone GUI class mappings", failure);
+        }
+        if (!names.containsKey("axu") || !names.containsKey("awi")) {
+            throw new IllegalStateException("Standalone GUI class mappings are incomplete");
+        }
+        return Collections.unmodifiableMap(names);
     }
 
     private static java.util.List<ClassTransformer> transformers() {

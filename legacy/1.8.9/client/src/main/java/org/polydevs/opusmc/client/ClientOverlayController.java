@@ -24,7 +24,6 @@ import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.util.ScreenShotHelper;
 import net.minecraftforge.client.event.GuiOpenEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
-import net.minecraftforge.client.event.sound.PlaySoundEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.FMLCommonHandler;
@@ -99,6 +98,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
      */
     private boolean escapePauseGuard;
     private boolean escapeReleaseObserved;
+    private boolean openOptionsKeyLatched;
     /** Keeps child settings screens returning to the exact explicit native root. */
     private final NativeOptionsFlow nativeOptionsFlow = new NativeOptionsFlow();
 
@@ -111,11 +111,13 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     private String embeddedHelperPath;
     private OpusWebViewClient embeddedWebView;
     private final EmbeddedSurfaceLeaseState embeddedSurfaceLeases = new EmbeddedSurfaceLeaseState();
+    private RetainedUiSurfaceCache<org.polydevs.opusmc.client.embed.OpusWebTextureSurface> retainedUiSurfaces;
     private String embeddedRoute = "title";
     private volatile boolean embeddedWebViewPrewarming;
     private volatile boolean embeddedWebViewPrewarmFailed;
     private volatile Thread embeddedPrewarmThread;
     private volatile boolean shuttingDown;
+    private boolean accountSwitchPending;
 
     ClientOverlayController(Logger log) {
         this.log = log;
@@ -140,7 +142,6 @@ public final class ClientOverlayController implements OpusBridgeProvider {
 
     void initialize() {
         settingsStore.reload();
-        enforceMinecraftMusicDisabled();
         ClientRegistry.registerKeyBinding(openOptionsKey);
         MinecraftForge.EVENT_BUS.register(this);
         FMLCommonHandler.instance().bus().register(this);
@@ -182,32 +183,13 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             webView = embeddedWebView;
             embeddedWebView = null;
             embeddedSurfaceLeases.clear();
+            if (retainedUiSurfaces != null) retainedUiSurfaces.clear();
         }
         if (webView != null) {
             webView.stop();
         }
         uiNavigation.shutdown();
         interopServer.stop();
-    }
-
-    private void enforceMinecraftMusicDisabled() {
-        Minecraft minecraft = Minecraft.getMinecraft();
-        if (minecraft != null && minecraft.gameSettings != null
-                && minecraft.gameSettings.getSoundLevel(SoundCategory.MUSIC) != 0.0F) {
-            minecraft.gameSettings.setSoundLevel(SoundCategory.MUSIC, 0.0F);
-            minecraft.gameSettings.saveOptions();
-        }
-    }
-
-    @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onPlaySound(PlaySoundEvent event) {
-        // Also veto new music immediately if a native slider/resource reload
-        // temporarily changes the volume before the next client tick. Do not
-        // alter records, combat, steps, UI clicks or any other sound category.
-        // This pure event operation is safe on the sound thread as well.
-        if (event.category == SoundCategory.MUSIC) {
-            event.result = null;
-        }
     }
 
     @SubscribeEvent
@@ -220,10 +202,9 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             return;
         }
 
-        enforceMinecraftMusicDisabled();
         updateEscapePauseGuard();
 
-        while (openOptionsKey.isPressed()) {
+        if (consumeOpenOptionsPress()) {
             Minecraft minecraft = Minecraft.getMinecraft();
             if (minecraft.currentScreen == null) {
                 openHotkeyFlow();
@@ -258,6 +239,13 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         final Minecraft minecraft = Minecraft.getMinecraft();
         OpusClientScreen current = (minecraft != null && minecraft.currentScreen instanceof OpusClientScreen)
                 ? (OpusClientScreen) minecraft.currentScreen : null;
+        if (event.gui == null && current != null && current.systemScreenSession() != null
+                && current.systemScreenSession().retainsWorldStartup(minecraft.theWorld != null)) {
+            // Integrated-server startup clears the menu before local login
+            // opens its terrain screen. Keep the same CEF owner for that gap.
+            event.setCanceled(true);
+            return;
+        }
         if (event.gui != null && NativeSystemScreenSession.supports(event.gui)
                 && (minecraft != null && !minecraft.isCallingFromMinecraftThread())) {
             // The vanilla connector reports DNS/socket failures from its
@@ -291,7 +279,8 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             nativeOptionsFlow.close();
             try {
                 NativeSystemScreenSession session = NativeSystemScreenSession.create(
-                        event.gui, minecraft != null ? minecraft.getCurrentServerData() : null);
+                        event.gui, minecraft != null ? minecraft.getCurrentServerData() : null,
+                        current == null ? null : current.connectionState());
                 OpusClientScreen host = current == null
                         ? new OpusClientScreen(this, UiRoute.connection()) : current;
                 host.presentSystemScreen(session);
@@ -333,13 +322,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             // Same for the canonical CEF multiplayer route.
             event.gui = new OpusClientScreen(this, UiRoute.multiplayer());
         } else if (event.gui instanceof GuiOptions) {
-            if (nativeOptionsFlow.owns((GuiOptions) event.gui)) {
-                log.info("Opus preserved explicit vanilla Minecraft Settings screen");
-            } else {
-                // Generic vanilla options entry points still resolve to the
-                // canonical Opus client-settings surface.
-                event.gui = new OpusClientScreen(this, UiRoute.gameOptions());
-            }
+            event.gui = new OpusClientScreen(this, UiRoute.gameOptions());
         } else if (event.gui != null && isSystemScreen(event.gui)) {
             // Loading/disconnect/confirmation screens take ownership from the
             // product surface. Clear bridge state before Minecraft replaces it.
@@ -535,7 +518,8 @@ public final class ClientOverlayController implements OpusBridgeProvider {
                 return null;
             } else {
                 embeddedWebView.resize(width, height, scale);
-                embeddedWebView.navigate(url);
+                // The live SPA receives the canonical revision over ui-state/WS.
+                // Reloading here discards its committed layout on every open.
             }
             return embeddedWebView;
         }
@@ -546,6 +530,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         synchronized (this) {
             if (shuttingDown || embeddedWebViewPrewarming) return;
             embeddedSurfaceLeases.clear();
+            if (retainedUiSurfaces != null) retainedUiSurfaces.clear();
             embeddedWebViewPrewarmFailed = false;
         }
         prewarmEmbeddedWebView(true);
@@ -677,6 +662,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             return ("back".equals(action) || "close".equals(action)) && screen.performSystemPrimaryAction();
         }
         if ("create-world".equals(action)) {
+            if (accountSwitchPending) return false;
             GuiCreateWorld creation = createWorldScreen(screen);
             if (creation == null) return false;
             uiNavigation.close();
@@ -684,15 +670,32 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             return true;
         }
         if ("minecraft-settings".equals(action)) {
-            // GuiOptions returns to its parent instance. The current screen
-            // becomes CLOSED when options opens, so give vanilla a fresh
-            // OpusClientScreen that can acquire a new lease on return.
-            OpusClientScreen returnScreen = new OpusClientScreen(
-                    this, screen.navigationForSystemReturn());
-            GuiOptions options = new GuiOptions(returnScreen, minecraft.gameSettings);
-            nativeOptionsFlow.open(options);
+            screen.navigate(UiRoute.gameOptions(UiRoute.SettingsSection.GAME));
+            return true;
+        }
+        if ("achievements".equals(action) || "statistics".equals(action) || "open-lan".equals(action)) {
+            if (minecraft.theWorld == null || minecraft.thePlayer == null) return false;
+            GuiScreen parent = new OpusClientScreen(this, screen.navigationForSystemReturn());
+            GuiScreen next;
+            if ("achievements".equals(action)) next = new net.minecraft.client.gui.achievement.GuiAchievements(parent, minecraft.thePlayer.getStatFileWriter());
+            else if ("statistics".equals(action)) next = new net.minecraft.client.gui.achievement.GuiStats(parent, minecraft.thePlayer.getStatFileWriter());
+            else {
+                if (!minecraft.isSingleplayer() || minecraft.getIntegratedServer().getPublic()) return false;
+                next = new net.minecraft.client.gui.GuiShareToLan(parent);
+            }
             uiNavigation.close();
-            minecraft.displayGuiScreen(options);
+            minecraft.displayGuiScreen(next);
+            return true;
+        }
+        if (action.startsWith("hud-") && screen.isHudEditor()) {
+            if ("hud-edit".equals(action) || "hud-preview".equals(action)) {
+                boolean editing = "hud-edit".equals(action);
+                hudManager.setEditing(editing);
+                screen.setHudEditing(editing);
+            } else if ("hud-grid".equals(action)) hudManager.toggleGrid();
+            else if ("hud-snap".equals(action)) hudManager.toggleSnap();
+            else if ("hud-undo".equals(action)) hudManager.undo();
+            else return false;
             return true;
         }
         if ("back".equals(action)) {
@@ -859,24 +862,45 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         return minecraft.isSingleplayer() ? "singleplayer" : "multiplayer";
     }
 
-    @SubscribeEvent
-    public void onRenderHudText(RenderGameOverlayEvent.Text event) {
-        Minecraft minecraft = Minecraft.getMinecraft();
-        // The native layer is the live in-world HUD only. Never paint it over
-        // opaque title/list/settings routes when a Forge overlay event happens
-        // to fire during a no-world transition.
-        if (minecraft.theWorld == null) {
+    boolean consumeOpenOptionsPress() {
+        boolean queuedPress = openOptionsKey.isPressed();
+        boolean keyDown = openOptionsKey.isKeyDown();
+        if (!keyDown) {
+            boolean accepted = queuedPress && !openOptionsKeyLatched;
+            openOptionsKeyLatched = false;
+            return accepted;
+        }
+        if (queuedPress && !openOptionsKeyLatched) {
+            openOptionsKeyLatched = true;
+            return true;
+        }
+        return false;
+    }
+
+    void renderGameplayHud(Minecraft minecraft, org.polydevs.opusmc.client.ui.UiRenderer renderer,
+            UiBounds viewport) {
+        if (minecraft == null || renderer == null || viewport == null || minecraft.theWorld == null) {
             return;
         }
-        // The workspace is translucent live context, not a modal blackout:
-        // enabled Opus widgets remain part of the player's HUD beneath it.
-        // The editor draws the same widget itself so it can attach its hover
-        // controls without a second FPS pass.
         if (minecraft.currentScreen instanceof OpusClientScreen
                 && ((OpusClientScreen) minecraft.currentScreen).isHudEditor()) {
             return;
         }
-        hudManager.render(minecraft, event.resolution);
+        hudManager.render(minecraft, renderer, viewport);
+    }
+
+    @SubscribeEvent
+    public void onRenderHudText(RenderGameOverlayEvent.Text event) {
+        Minecraft minecraft = Minecraft.getMinecraft();
+        if (minecraft == null) {
+            return;
+        }
+        if (minecraft.theWorld == null) {
+            return;
+        }
+        renderGameplayHud(minecraft,
+                new org.polydevs.opusmc.client.ui.render.MinecraftUiRenderer(minecraft),
+                org.polydevs.opusmc.client.ui.render.MinecraftUiScale.viewport(minecraft));
     }
 
     PerformanceOverlaySettings performanceOverlay() {
@@ -899,13 +923,23 @@ public final class ClientOverlayController implements OpusBridgeProvider {
         return armorStatusModule.update(next);
     }
 
+    boolean nudgeHudEditor(int x, int y) { return hudManager.nudge(x, y); }
+
+    void setHudEditorEditing(boolean editing) { hudManager.setEditing(editing); }
+
     void renderHudEditor(UiRenderer renderer, UiBounds viewport, UiInput input) {
         hudManager.renderEditor(Minecraft.getMinecraft(), renderer, viewport, input);
+    }
+
+    void updateHudEditorGeometry(UiBounds canvas, List<UiBounds> exclusions) {
+        hudManager.updateEditorCanvas(canvas, exclusions);
     }
 
     HudManager.EditorAction hudEditorMouseDown(int mouseX, int mouseY, int button) {
         return hudManager.editorMouseDown(mouseX, mouseY, button);
     }
+
+    void openHudWidgetProperties(String moduleId) { hudManager.editorCommand("select",moduleId,0,0); }
 
     boolean hudEditorOwnsPoint(int mouseX, int mouseY) {
         return hudManager.editorOwnsPoint(mouseX, mouseY);
@@ -938,6 +972,32 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     synchronized boolean isCurrentEmbeddedWebView(OpusWebViewClient view, long leaseId) {
         return view != null && view == embeddedWebView
                 && embeddedSurfaceLeases.isCurrent(leaseId);
+    }
+
+    private synchronized RetainedUiSurfaceCache<org.polydevs.opusmc.client.embed.OpusWebTextureSurface> surfaceCache() {
+        if (retainedUiSurfaces == null) {
+            retainedUiSurfaces = new RetainedUiSurfaceCache<org.polydevs.opusmc.client.embed.OpusWebTextureSurface>(
+                    4, 64L * 1024L * 1024L,
+                    new RetainedUiSurfaceCache.Adapter<org.polydevs.opusmc.client.embed.OpusWebTextureSurface>() {
+                        public long bytes(org.polydevs.opusmc.client.embed.OpusWebTextureSurface surface) { return surface.retainedBytes(); }
+                        public void dispose(org.polydevs.opusmc.client.embed.OpusWebTextureSurface surface) {
+                            Minecraft mc = Minecraft.getMinecraft();
+                            // Shutdown may run after the GL context was destroyed.
+                            if (Display.isCreated() && mc != null && mc.isCallingFromMinecraftThread()) surface.dispose();
+                        }
+                    });
+        }
+        return retainedUiSurfaces;
+    }
+    long retainedSurfaceEpoch() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return surfaceCache().context(mc == null ? null : mc.theWorld, mc == null ? null : mc.getSession());
+    }
+    org.polydevs.opusmc.client.embed.OpusWebTextureSurface takeRetainedSurface(RetainedUiSurfaceCache.Key key) {
+        return surfaceCache().take(key, retainedSurfaceEpoch());
+    }
+    void retainSurface(RetainedUiSurfaceCache.Key key, long epoch, org.polydevs.opusmc.client.embed.OpusWebTextureSurface surface) {
+        retainedSurfaceEpoch(); surfaceCache().retain(key, epoch, surface);
     }
 
     /** Closing only the current owner parks CEF; shutdown/retry alone stops it. */
@@ -1015,24 +1075,41 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     /**
      * Load a singleplayer world exactly as vanilla's world list would, through
      * FML's loader (so mod save data and conversions are handled). The product
-     * screen then gives way to Minecraft's loading lifecycle.
+     * screen presents that loading lifecycle through the retained CEF owner.
      */
     @Override
     public void loadWorld(String fileName, String displayName) {
+        if (accountSwitchPending) throw new IllegalStateException("Wait for account selection to finish");
         if (fileName == null || fileName.trim().isEmpty()) {
             return;
         }
+        Minecraft minecraft = Minecraft.getMinecraft();
+        OpusClientScreen host = null;
+        NativeSystemScreenSession startup = null;
         try {
-            ISaveFormat saveFormat = Minecraft.getMinecraft().getSaveLoader();
+            ISaveFormat saveFormat = minecraft.getSaveLoader();
             if (!saveFormat.canLoadWorld(fileName)) {
                 log.warn("Opus refused to load an unreadable world: {}", fileName);
                 return;
             }
             String label = displayName == null || displayName.trim().isEmpty() ? fileName : displayName;
-            uiNavigation.close();
+            host = minecraft.currentScreen instanceof OpusClientScreen
+                    ? (OpusClientScreen) minecraft.currentScreen : new OpusClientScreen(this, UiRoute.singleplayer());
+            if (minecraft.currentScreen != host) minecraft.displayGuiScreen(host);
+            startup = NativeSystemScreenSession.loadingWorld(label);
+            host.presentSystemScreen(startup);
             FMLClientHandler.instance().tryLoadExistingWorld(null, fileName, label);
+            // The standalone FML compatibility method reports failed startup
+            // by returning without an integrated server. Restore the chooser.
+            if (!minecraft.isIntegratedServerRunning() && minecraft.currentScreen == host
+                    && host.systemScreenSession() == startup) {
+                host.adoptHostFlow(new UiNavigationState(UiRoute.singleplayer(), UiNavigationState.EntryPoint.TITLE));
+            }
         } catch (Throwable failure) {
             log.warn("Opus failed to load world {}", fileName, failure);
+            if (host != null && minecraft.currentScreen == host && host.systemScreenSession() == startup) {
+                host.adoptHostFlow(new UiNavigationState(UiRoute.singleplayer(), UiNavigationState.EntryPoint.TITLE));
+            }
         }
     }
 
@@ -1064,12 +1141,20 @@ public final class ClientOverlayController implements OpusBridgeProvider {
      */
     @Override
     public void connectServer(String address) {
+        if (accountSwitchPending) throw new IllegalStateException("Wait for account selection to finish");
         if (address == null || address.trim().isEmpty()) {
             return;
         }
         try {
             Minecraft minecraft = Minecraft.getMinecraft();
-            ServerData data = new ServerData("Opus Server", address.trim(), false);
+            ServerData data = new ServerData(address.trim(), address.trim(), false);
+            ServerList saved = new ServerList(minecraft);
+            saved.loadServerList();
+            for (int index=0; index<saved.countServers(); index++) {
+                ServerData candidate = saved.getServerData(index);
+                if (candidate.serverIP.trim().equalsIgnoreCase(address.trim())) { data = candidate; break; }
+            }
+            minecraft.setServerData(data);
             // GuiOpenEvent retains this native connection lifecycle while
             // switching the existing CEF host to its connection presentation.
             minecraft.displayGuiScreen(
@@ -1100,94 +1185,141 @@ public final class ClientOverlayController implements OpusBridgeProvider {
     // These option keys map to net.minecraft GameSettings.Options constants by
     // name. Rendering, cycling and persistence all go through the typed public
     // API, so the CEF route never needs the vanilla GuiOptions screen.
-    private static final String[] OPTION_KEYS = {
-        "FOV", "GAMMA", "SENSITIVITY", "RENDER_DISTANCE", "FRAMERATE_LIMIT",
-        "GUI_SCALE", "PARTICLES", "GRAPHICS", "RENDER_CLOUDS", "AMBIENT_OCCLUSION",
-        "VIEW_BOBBING", "ENABLE_VSYNC", "USE_VBO", "ENTITY_SHADOWS", "USE_FULLSCREEN",
-    };
-
     private static GameSettings.Options gameOption(String key) {
-        if ("FOV".equals(key)) return GameSettings.Options.FOV;
-        if ("GAMMA".equals(key)) return GameSettings.Options.GAMMA;
-        if ("SENSITIVITY".equals(key)) return GameSettings.Options.SENSITIVITY;
-        if ("RENDER_DISTANCE".equals(key)) return GameSettings.Options.RENDER_DISTANCE;
-        if ("FRAMERATE_LIMIT".equals(key)) return GameSettings.Options.FRAMERATE_LIMIT;
-        if ("GUI_SCALE".equals(key)) return GameSettings.Options.GUI_SCALE;
-        if ("PARTICLES".equals(key)) return GameSettings.Options.PARTICLES;
-        if ("GRAPHICS".equals(key)) return GameSettings.Options.GRAPHICS;
-        if ("RENDER_CLOUDS".equals(key)) return GameSettings.Options.RENDER_CLOUDS;
-        if ("AMBIENT_OCCLUSION".equals(key)) return GameSettings.Options.AMBIENT_OCCLUSION;
-        if ("VIEW_BOBBING".equals(key)) return GameSettings.Options.VIEW_BOBBING;
-        if ("ENABLE_VSYNC".equals(key)) return GameSettings.Options.ENABLE_VSYNC;
-        if ("USE_VBO".equals(key)) return GameSettings.Options.USE_VBO;
-        if ("ENTITY_SHADOWS".equals(key)) return GameSettings.Options.ENTITY_SHADOWS;
-        if ("USE_FULLSCREEN".equals(key)) return GameSettings.Options.USE_FULLSCREEN;
-        throw new IllegalArgumentException("Unknown game option: " + key);
+        try { return GameSettings.Options.valueOf(key); }
+        catch (IllegalArgumentException invalid) { throw new IllegalArgumentException("Unknown game option: " + key); }
     }
 
-    /**
-     * Cycle a boolean/enum option (delta ignored) or nudge a float slider by
-     * delta steps. Persists immediately, matching vanilla's button behavior.
-     */
     @Override
     public void adjustGameOption(String key, int delta) {
-        try {
-            GameSettings settings = Minecraft.getMinecraft().gameSettings;
+        Minecraft minecraft = Minecraft.getMinecraft();
+        GameSettings settings = minecraft.gameSettings;
+        if (key.startsWith("WORLD:")) {
+            // Standalone SRG mappings name getWorldInfo on its declaring World
+            // class; a WorldClient-owned reference does not resolve in vanilla.
+            net.minecraft.world.World world = minecraft.theWorld;
+            net.minecraft.world.storage.WorldInfo info = world == null ? null : world.getWorldInfo();
+            if (info == null || !minecraft.isSingleplayer() || info.isHardcoreModeEnabled() || info.isDifficultyLocked()) throw new IllegalArgumentException("World difficulty cannot be changed");
+            if ("WORLD:DIFFICULTY".equals(key)) info.setDifficulty(net.minecraft.world.EnumDifficulty.getDifficultyEnum(info.getDifficulty().getDifficultyId() + 1));
+            else if ("WORLD:LOCK".equals(key)) info.setDifficultyLocked(true);
+            else throw new IllegalArgumentException("Unknown world setting");
+            return;
+        }
+        if (key.startsWith("SHADER:") || key.startsWith("SHADER_PACK:")) { OptifineShaderSettings.adjust(key); return; }
+        if (key.startsWith("SKIN:")) {
+            net.minecraft.entity.player.EnumPlayerModelParts part = net.minecraft.entity.player.EnumPlayerModelParts.valueOf(key.substring(5));
+            settings.switchModelPartEnabled(part);
+        } else {
             GameSettings.Options option = gameOption(key);
             if (option.getEnumFloat()) {
-                float current = settings.getOptionFloatValue(option);
-                float normalized = option.normalizeValue(current);
-                float next = option.denormalizeValue(Math.max(0.0F, Math.min(1.0F, normalized + delta * 0.05F)));
-                settings.setOptionFloatValue(option, next);
-            } else {
-                settings.setOptionValue(option, delta >= 0 ? 1 : -1);
-            }
-            settings.saveOptions();
-        } catch (Throwable failure) {
-            log.warn("Opus failed to adjust option {}", key, failure);
+                float normalized = option.normalizeValue(settings.getOptionFloatValue(option));
+                settings.setOptionFloatValue(option, option.denormalizeValue(Math.max(0.0F, Math.min(1.0F, normalized + delta * 0.01F))));
+            } else settings.setOptionValue(option, delta >= 0 ? 1 : -1);
         }
+        settings.saveOptions();
     }
 
     @Override
     public List<String[]> gameOptions() {
-        List<String[]> rows = new ArrayList<String[]>(OPTION_KEYS.length);
-        try {
-            GameSettings settings = Minecraft.getMinecraft().gameSettings;
-            for (String key : OPTION_KEYS) {
-                GameSettings.Options option = gameOption(key);
-                boolean slider = option.getEnumFloat();
-                boolean bool = option.getEnumBoolean();
-                String type = slider ? "float" : (bool ? "boolean" : "enum");
-                // Normalized 0..1 contract so the web UI never needs to know
-                // per-option min/max; the client denormalizes on write.
-                String value = String.valueOf(
-                        option.normalizeValue(settings.getOptionFloatValue(option)));
-                String min = "0";
-                String max = "1";
-                String step = slider ? "0.05" : "1";
-                rows.add(new String[] {
-                        key, option.name(), type, value, min, max, step,
-                });
+        GameSettings settings = Minecraft.getMinecraft().gameSettings;
+        List<String[]> rows = new ArrayList<String[]>();
+        for (GameSettings.Options option : GameSettings.Options.values()) {
+            if (option.name().startsWith("STREAM_") || "FBO_ENABLE".equals(option.name()) || "SATURATION".equals(option.name())) continue;
+            try {
+                boolean slider = option.getEnumFloat(), bool = option.getEnumBoolean();
+                String formatted = settings.getKeyBinding(option);
+                int colon = formatted.indexOf(':');
+                String valueText = colon < 0 ? formatted : formatted.substring(colon + 1).trim();
+                float value = slider ? option.normalizeValue(settings.getOptionFloatValue(option))
+                        : bool && settings.getOptionOrdinalValue(option) ? 1.0F : 0.0F;
+                rows.add(new String[] {option.name(), net.minecraft.client.resources.I18n.format(option.getEnumString()),
+                        slider ? "float" : bool ? "boolean" : "enum", String.valueOf(value), "0", "1", slider ? "0.01" : "1", valueText});
+            } catch (RuntimeException unavailable) {
+                log.debug("Minecraft setting {} is unavailable on this host", option.name());
             }
-        } catch (Throwable failure) {
-            log.warn("Opus could not read game options", failure);
         }
+        for (net.minecraft.client.audio.SoundCategory category : net.minecraft.client.audio.SoundCategory.values()) {
+            float value = settings.getSoundLevel(category);
+            rows.add(new String[] {"SOUND:" + category.getCategoryName(), net.minecraft.client.resources.I18n.format("soundCategory." + category.getCategoryName()),
+                    "float", String.valueOf(value), "0", "1", "0.01", Math.round(value * 100) + "%"});
+        }
+        for (net.minecraft.entity.player.EnumPlayerModelParts part : net.minecraft.entity.player.EnumPlayerModelParts.values()) {
+            boolean enabled = settings.getModelParts().contains(part);
+            rows.add(new String[] {"SKIN:" + part.name(), part.name().toLowerCase(java.util.Locale.ROOT).replace('_', ' '), "boolean", enabled ? "1" : "0", "0", "1", "1", enabled ? "On" : "Off"});
+        }
+        for (KeyBinding binding : settings.keyBindings) {
+            rows.add(new String[] {"KEY:" + binding.getKeyDescription(), net.minecraft.client.resources.I18n.format(binding.getKeyDescription()),
+                    "enum", String.valueOf(binding.getKeyCode()), "-100", "255", "1", GameSettings.getKeyDisplayString(binding.getKeyCode())});
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        net.minecraft.world.World world = mc.theWorld;
+        if (world != null) {
+            net.minecraft.world.storage.WorldInfo info = world.getWorldInfo();
+            boolean available = mc.isSingleplayer() && !info.isHardcoreModeEnabled() && !info.isDifficultyLocked();
+            rows.add(new String[] {"WORLD:DIFFICULTY", "Difficulty", "enum", "0", "0", "1", "1", net.minecraft.client.resources.I18n.format(info.getDifficulty().getDifficultyResourceKey()), String.valueOf(available)});
+            rows.add(new String[] {"WORLD:LOCK", "Lock difficulty", "boolean", info.isDifficultyLocked() ? "1" : "0", "0", "1", "1", info.isDifficultyLocked() ? "Locked" : "Unlocked", String.valueOf(available)});
+        }
+        OptifineShaderSettings.appendOptions(rows);
         return rows;
     }
 
     @Override
-    public void setGameOptionFloat(String key, float value) {
-        try {
-            GameSettings settings = Minecraft.getMinecraft().gameSettings;
-            GameSettings.Options option = gameOption(key);
-            if (!option.getEnumFloat()) {
-                return;
+    public boolean switchAccount(final String id, final String username, final String kind) {
+        boolean accepted = callOnClientThread("beginAccountSwitch", new ClientCall<Boolean>() {
+            public Boolean call() {
+                Minecraft mc = Minecraft.getMinecraft();
+                if (accountSwitchPending || mc.theWorld != null || (mc.currentScreen instanceof OpusClientScreen && ((OpusClientScreen) mc.currentScreen).systemScreenSession() != null)) return false;
+                accountSwitchPending = true; return true;
             }
-            settings.setOptionFloatValue(option, option.denormalizeValue(value));
-            settings.saveOptions();
-        } catch (Throwable failure) {
-            log.warn("Opus could not set option {}", key, failure);
+        }, Boolean.FALSE);
+        if (!accepted) return false;
+        try {
+            final net.minecraft.util.Session next = ClientAccountSwitch.resolve(id, username, kind);
+            runOnClientThread("commitAccountSwitch", new Runnable() {
+                public void run() {
+                    Minecraft mc = Minecraft.getMinecraft();
+                    if (mc.currentScreen instanceof OpusClientScreen && ((OpusClientScreen) mc.currentScreen).systemScreenSession() != null) throw new IllegalStateException("Connection started during account selection");
+                    try { ClientAccountSwitch.apply(mc, next); }
+                    catch (Exception failure) { throw new IllegalStateException("Account session could not be committed"); }
+                }
+            });
+            return true;
+        } catch (Exception failure) {
+            // Private credential-pipe errors are deliberately not logged or chained.
+            throw new IllegalStateException("Account switch failed. Reconnect this account in Opus Launcher and try again.");
+        } finally {
+            runOnClientThread("finishAccountSwitch", new Runnable() { public void run() { accountSwitchPending = false; } });
         }
+    }
+
+    @Override
+    public List<String[]> gameSettingChoices(String kind) { return MinecraftSettingCollections.read(kind); }
+
+    @Override
+    public void setGameSettingChoices(String kind, List<String> ids) { MinecraftSettingCollections.write(kind, ids); }
+
+    @Override
+    public void setGameOptionFloat(String key, float value) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) throw new IllegalArgumentException("Non-finite game setting");
+        GameSettings settings = Minecraft.getMinecraft().gameSettings;
+        if (key.startsWith("SOUND:")) {
+            if (value < 0 || value > 1) throw new IllegalArgumentException("Volume outside 0..1");
+            net.minecraft.client.audio.SoundCategory category = net.minecraft.client.audio.SoundCategory.getCategory(key.substring(6));
+            if (category == null) throw new IllegalArgumentException("Unknown sound category");
+            settings.setSoundLevel(category, value);
+        } else if (key.startsWith("KEY:")) {
+            if (value != Math.rint(value) || value < -100 || value > 255) throw new IllegalArgumentException("Invalid key code");
+            KeyBinding target = null;
+            for (KeyBinding binding : settings.keyBindings) if (binding.getKeyDescription().equals(key.substring(4))) target = binding;
+            if (target == null) throw new IllegalArgumentException("Unknown key binding");
+            target.setKeyCode((int) value);
+            KeyBinding.resetKeyBindingArrayAndHash();
+        } else {
+            GameSettings.Options option = gameOption(key);
+            if (!option.getEnumFloat() || value < 0 || value > 1) throw new IllegalArgumentException("Invalid slider value");
+            settings.setOptionFloatValue(option, option.denormalizeValue(value));
+        }
+        settings.saveOptions();
     }
 
     /**
@@ -1240,30 +1372,15 @@ public final class ClientOverlayController implements OpusBridgeProvider {
             if (module == null) {
                 return rows;
             }
-            PerformanceOverlaySettings settings = module.settings();
-            rows.add(settingRow("enabled", "Enabled", "boolean",
-                    settings.enabled() ? "1" : "0", "0", "1", "1", ""));
-            rows.add(settingRow("scale", "Scale", "integer",
-                    String.valueOf(settings.scale()),
-                    String.valueOf(PerformanceOverlaySettings.MIN_SCALE),
-                    String.valueOf(PerformanceOverlaySettings.MAX_SCALE), "1", ""));
-            rows.add(settingRow("opacity", "Opacity", "integer",
-                    String.valueOf(settings.opacity()),
-                    String.valueOf(PerformanceOverlaySettings.MIN_OPACITY),
-                    String.valueOf(PerformanceOverlaySettings.MAX_OPACITY), "1", ""));
-            rows.add(settingRow("anchor", "Anchor", "enum",
-                    settings.anchor().storageValue(), "0", "0", "1",
-                    "top-left,top-right,bottom-left,bottom-right"));
-            rows.add(settingRow("offsetX", "Offset X", "integer",
-                    String.valueOf(settings.offsetX()), "0", "4096", "1", ""));
-            rows.add(settingRow("offsetY", "Offset Y", "integer",
-                    String.valueOf(settings.offsetY()), "0", "4096", "1", ""));
+            rows.addAll(module.moduleSettings());
         } else if ("keystrokes".equals(moduleId)) {
             KeystrokesModule module = (KeystrokesModule) moduleRegistry.byId(moduleId);
             if (module == null) return rows;
             KeystrokesSettings settings = module.settings();
             rows.add(settingRow("enabled", "Enabled", "boolean", settings.enabled() ? "1" : "0", "0", "1", "1", ""));
-            rows.add(settingRow("scale", "Scale", "integer", String.valueOf(settings.scale()), "50", "150", "1", ""));
+            rows.add(settingRow("scale", "Scale", "integer", String.valueOf(settings.scale()),
+                    String.valueOf(PerformanceOverlaySettings.MIN_SCALE),
+                    String.valueOf(PerformanceOverlaySettings.MAX_SCALE), "1", ""));
             rows.add(settingRow("opacity", "Opacity", "integer", String.valueOf(settings.opacity()), "25", "100", "1", ""));
             rows.add(settingRow("anchor", "Anchor", "enum", settings.anchor().storageValue(), "0", "0", "1",
                     "top-left,top-right,bottom-left,bottom-right"));
@@ -1315,20 +1432,7 @@ public final class ClientOverlayController implements OpusBridgeProvider {
                 if (module == null) {
                     return;
                 }
-                PerformanceOverlaySettings current = module.settings();
-                PerformanceOverlaySettings next = current;
-                if ("scale".equals(key)) {
-                    next = current.withScale(Integer.parseInt(value));
-                } else if ("opacity".equals(key)) {
-                    next = current.withOpacity(Integer.parseInt(value));
-                } else if ("anchor".equals(key)) {
-                    next = current.withAnchor(PerformanceOverlaySettings.Anchor.fromStorage(value));
-                } else if ("offsetX".equals(key)) {
-                    next = current.withOffset(Integer.parseInt(value), current.offsetY());
-                } else if ("offsetY".equals(key)) {
-                    next = current.withOffset(current.offsetX(), Integer.parseInt(value));
-                }
-                module.update(next);
+                module.applySetting(key, value);
             } else if ("keystrokes".equals(moduleId)) {
                 KeystrokesModule module = (KeystrokesModule) moduleRegistry.byId(moduleId);
                 if (module == null) return;
@@ -1855,12 +1959,52 @@ public final class ClientOverlayController implements OpusBridgeProvider {
 
         @Override
         public List<String[]> gameOptions() {
-            return callOnClientThread("gameOptions", new ClientCall<List<String[]>>() {
+            List<String[]> options = callOnClientThread("gameOptions", new ClientCall<List<String[]>>() {
                 @Override
                 public List<String[]> call() {
                     return ClientOverlayController.this.gameOptions();
                 }
+            }, null);
+            if (options == null) throw new IllegalStateException("Minecraft settings read did not complete");
+            return options;
+        }
+
+        @Override public String[] hudEditorState() { return callOnClientThread("hudEditorState", new ClientCall<String[]>() { public String[] call() { return hudManager.editorState(); } }, new String[] {"true", "false", "true", "false"}); }
+        @Override public String hudEditorStateJson() { return callOnClientThread("hudEditorSnapshot", new ClientCall<String>() { public String call() { return hudManager.editorStateJson(); } }, "{\"editing\":false,\"grid\":false,\"snap\":true,\"canUndo\":false}"); }
+        @Override public boolean updateHudEditor(final long revision,final String operation,final String moduleId,final int x,final int y) {
+            return callOnClientThread("hudInspector",new ClientCall<Boolean>() { public Boolean call() {
+                Minecraft mc=Minecraft.getMinecraft();
+                if (!(mc.currentScreen instanceof OpusClientScreen) || !((OpusClientScreen)mc.currentScreen).isHudEditor()
+                        || !isUiNavigationConfirmed(revision)) return Boolean.FALSE;
+                return hudManager.editorCommand(operation,moduleId,x,y);
+            } },Boolean.FALSE,true);
+        }
+        @Override public boolean canOpenLan() { return callOnClientThread("canOpenLan", new ClientCall<Boolean>() { public Boolean call() { Minecraft mc = Minecraft.getMinecraft(); return mc.theWorld != null && mc.isSingleplayer() && mc.getIntegratedServer() != null && !mc.getIntegratedServer().getPublic(); } }, Boolean.FALSE); }
+
+        @Override
+        public String[] currentAccount() {
+            return callOnClientThread("currentAccount", new ClientCall<String[]>() {
+                public String[] call() {
+                    net.minecraft.util.Session session = Minecraft.getMinecraft().getSession();
+                    return new String[] {session.getUsername(), session.getSessionType() != net.minecraft.util.Session.Type.LEGACY && session.getToken() != null && !session.getToken().isEmpty() && !"0".equals(session.getToken()) ? "official" : "unofficial"};
+                }
+            }, new String[] {"", "unofficial"});
+        }
+
+        @Override
+        public boolean switchAccount(String id, String username, String kind) { return ClientOverlayController.this.switchAccount(id, username, kind); }
+
+        @Override
+        public List<String[]> gameSettingChoices(final String kind) {
+            return callOnClientThread("settingChoices", new ClientCall<List<String[]>>() {
+                public List<String[]> call() { return ClientOverlayController.this.gameSettingChoices(kind); }
             }, java.util.Collections.<String[]>emptyList());
+        }
+        @Override
+        public void setGameSettingChoices(final String kind, final List<String> ids) {
+            runOnClientThread("setSettingChoices", new Runnable() {
+                public void run() { ClientOverlayController.this.setGameSettingChoices(kind, ids); }
+            });
         }
 
         @Override

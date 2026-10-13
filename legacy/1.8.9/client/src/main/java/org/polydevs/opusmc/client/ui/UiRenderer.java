@@ -17,6 +17,10 @@ public interface UiRenderer {
 
     void text(String value, int x, int y, int argb);
 
+    default void text(String value, int x, int y, int argb, boolean shadow) {
+        text(value, x, y, argb);
+    }
+
     int measureText(String value);
 
     int lineHeight();
@@ -30,5 +34,7 @@ public interface UiRenderer {
     void popTransform();
 
     void scale(float x, float y);
+
+    default void translate(float x, float y) { }
 
 }

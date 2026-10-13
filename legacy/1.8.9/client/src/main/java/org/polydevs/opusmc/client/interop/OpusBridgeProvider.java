@@ -23,6 +23,20 @@ public interface OpusBridgeProvider {
             String settingsSection,
             long expectedRevision);
 
+    /** Must resolve credentials off the game thread and commit the actual session. */
+    default String[] hudEditorState() { return new String[] {"true", "false", "true", "false"}; }
+    default String hudEditorStateJson() {
+        String[] state=hudEditorState();
+        return "{\"editing\":"+Boolean.parseBoolean(state[0])+",\"grid\":"+Boolean.parseBoolean(state[1])
+                +",\"snap\":"+Boolean.parseBoolean(state[2])+",\"canUndo\":"+Boolean.parseBoolean(state[3])+"}";
+    }
+    default boolean updateHudEditor(long revision,String operation,String moduleId,int x,int y) { return false; }
+    default boolean canOpenLan() { return false; }
+
+    default String[] currentAccount() { return null; }
+
+    default boolean switchAccount(String id, String username, String kind) { return false; }
+
     /** Rows are {fileName, displayName}. */
     List<String[]> listWorlds();
 
@@ -37,6 +51,10 @@ public interface OpusBridgeProvider {
 
     /** Rows are {key,label,type,value,min,max,step}. */
     List<String[]> gameOptions();
+
+    /** Rows {id,label,detail,selected,order,compatible}; real native collections only. */
+    default List<String[]> gameSettingChoices(String kind) { return java.util.Collections.emptyList(); }
+    default void setGameSettingChoices(String kind, List<String> ids) { throw new IllegalArgumentException("Collection is unavailable"); }
 
     void adjustGameOption(String key, int delta);
 

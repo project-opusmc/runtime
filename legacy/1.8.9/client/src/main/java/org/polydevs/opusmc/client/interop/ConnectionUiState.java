@@ -3,6 +3,7 @@ package org.polydevs.opusmc.client.interop;
 /** Immutable presentation of one Minecraft-owned system screen. */
 public final class ConnectionUiState {
     public final String phase;
+    public final String stage;
     public final String title;
     public final String detail;
     public final String serverName;
@@ -11,10 +12,21 @@ public final class ConnectionUiState {
 
     public ConnectionUiState(String phase, String title, String detail,
             String serverName, String serverAddress, boolean canCancel) {
+        this(phase, title, detail, serverName, serverAddress, canCancel,
+                "loading".equals(phase) ? "terrain" : "network");
+    }
+
+    public ConnectionUiState(String phase, String title, String detail,
+            String serverName, String serverAddress, boolean canCancel, String stage) {
         if (!"connecting".equals(phase) && !"loading".equals(phase) && !"disconnected".equals(phase)) {
             throw new IllegalArgumentException("Unknown connection phase");
         }
         this.phase = phase;
+        if (!"network".equals(stage) && !"session".equals(stage) && !"terrain".equals(stage)
+                && !"resources".equals(stage) && !"world".equals(stage)) {
+            throw new IllegalArgumentException("Unknown connection stage");
+        }
+        this.stage = stage;
         this.title = safe(title);
         this.detail = safe(detail);
         this.serverName = safe(serverName);
@@ -24,6 +36,7 @@ public final class ConnectionUiState {
 
     String json() {
         return "{\"phase\":\"" + OpusJson.escape(phase)
+                + "\",\"stage\":\"" + OpusJson.escape(stage)
                 + "\",\"title\":\"" + OpusJson.escape(title)
                 + "\",\"detail\":\"" + OpusJson.escape(detail)
                 + "\",\"serverName\":\"" + OpusJson.escape(serverName)
@@ -38,6 +51,7 @@ public final class ConnectionUiState {
         ConnectionUiState that = (ConnectionUiState) o;
         return canCancel == that.canCancel
                 && java.util.Objects.equals(phase, that.phase)
+                && java.util.Objects.equals(stage, that.stage)
                 && java.util.Objects.equals(title, that.title)
                 && java.util.Objects.equals(detail, that.detail)
                 && java.util.Objects.equals(serverName, that.serverName)
@@ -46,7 +60,7 @@ public final class ConnectionUiState {
 
     @Override
     public int hashCode() {
-        return java.util.Objects.hash(phase, title, detail, serverName, serverAddress, canCancel);
+        return java.util.Objects.hash(phase, stage, title, detail, serverName, serverAddress, canCancel);
     }
 
     private static String safe(String value) { return value == null ? "" : value; }

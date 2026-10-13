@@ -8,6 +8,7 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
@@ -47,8 +48,64 @@ final class StandaloneEventHookTransformer implements ClassTransformer {
             return transformRenderer(originalBytecode);
         } else if (GUI_INGAME_CLASS.equals(className)) {
             return transformGuiIngame(originalBytecode);
+        } else if ("avi".equals(className)) {
+            return transformLoadingScreen(originalBytecode);
         }
         return originalBytecode;
+    }
+
+    private byte[] transformLoadingScreen(byte[] originalBytecode) {
+        ClassReader reader = new ClassReader(originalBytecode);
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        final int[] anchors = {0};
+        reader.accept(new ClassVisitor(Opcodes.ASM5, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor,
+                    String signature, String[] exceptions) {
+                MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!"a".equals(name) || !"(I)V".equals(descriptor)) return delegate;
+                return new MethodNode(Opcodes.ASM5, access, name, descriptor, signature, exceptions) {
+                    @Override
+                    public void visitEnd() {
+                        for (AbstractInsnNode node = instructions.getFirst(); node != null; node = node.getNext()) {
+                            if (node instanceof MethodInsnNode
+                                    && HOOKS_OWNER.equals(((MethodInsnNode) node).owner)
+                                    && "onLoadingScreen".equals(((MethodInsnNode) node).name)) {
+                                anchors[0]++;
+                                accept(delegate);
+                                return;
+                            }
+                        }
+                        for (AbstractInsnNode node = instructions.getFirst(); node != null; node = node.getNext()) {
+                            if (node.getOpcode() == Opcodes.NEW && node instanceof TypeInsnNode
+                                    && "avr".equals(((TypeInsnNode) node).desc)) {
+                                // This anchor follows vanilla's running/loading-success
+                                // guard and its 100 ms throttle, before any native drawing.
+                                InsnList hook = new InsnList();
+                                LabelNode nativeDrawing = new LabelNode();
+                                hook.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                                hook.add(new FieldInsnNode(Opcodes.GETFIELD, "avi", "b", "Lave;"));
+                                hook.add(new FieldInsnNode(Opcodes.GETFIELD, "ave", "m", "Laxu;"));
+                                hook.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HOOKS_OWNER,
+                                        "onLoadingScreen", "(Ljava/lang/Object;)Z", false));
+                                hook.add(new JumpInsnNode(Opcodes.IFEQ, nativeDrawing));
+                                hook.add(new InsnNode(Opcodes.RETURN));
+                                hook.add(nativeDrawing);
+                                hook.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+                                instructions.insertBefore(node, hook);
+                                anchors[0]++;
+                                break;
+                            }
+                        }
+                        accept(delegate);
+                    }
+                };
+            }
+        }, 0);
+        if (anchors[0] != 1) {
+            throw new IllegalStateException("Minecraft 1.8.9 loading presentation anchor changed");
+        }
+        return writer.toByteArray();
     }
 
     private byte[] transformMinecraft(byte[] originalBytecode) {

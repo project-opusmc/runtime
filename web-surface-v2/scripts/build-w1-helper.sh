@@ -8,7 +8,8 @@ app="$root/legacy/1.8.9/client/native/opus-cef-helper/build/opus-webview-helper.
 guard="$app/Contents/Frameworks/opus-keychain-guard.dylib"
 test -x "$app/Contents/MacOS/opus-webview-helper"
 test -f "$guard"
-lipo "$guard" -verify_arch arm64 x86_64
+lipo "$guard" -verify_arch arm64
+lipo "$guard" -verify_arch x86_64
 codesign --verify --deep --strict "$app"
 printf '%s
 ' "$app"

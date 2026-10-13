@@ -44,7 +44,7 @@ public final class KeystrokesHarness {
                 "Null anchor did not fail safe to top-left");
         require(clamped.offsetX() == 0 && clamped.offsetY() == 0,
                 "Negative offsets escaped clamping");
-        require(clamped.scale() == 150 && clamped.opacity() == 25,
+        require(clamped.scale() == 400 && clamped.opacity() == 25,
                 "Scale or opacity escaped its persisted range");
 
         KeystrokesSettings changed = defaults
@@ -289,10 +289,12 @@ public final class KeystrokesHarness {
                 "Cancel did not restore the last persisted layout");
 
         int previewsBeforeResize = settings.previewCount;
-        require(!widget.resizeBy(widget.bounds(context), 0)
+        int startScale = settings.current.scale();
+        HudWidget resizeWidget = widget;
+        require(!resizeWidget.resizeToScale(startScale)
                         && settings.previewCount == previewsBeforeResize,
                 "Zero-width resize manufactured a preview");
-        require(widget.resizeBy(widget.bounds(context), 70),
+        require(resizeWidget.resizeToScale(150),
                 "Resize preview was rejected");
         require(settings.current.scale() == 150 && settings.persistCount == 1,
                 "Resize failed to clamp or persisted before release");

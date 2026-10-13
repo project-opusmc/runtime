@@ -55,16 +55,13 @@ minecraft {
     runDir = 'run'
 }
 
-def opusLegacyUiDir = file('../../../../ui')
 def opusUiDir = file('../../../../ui-v2')
 def opusUiDist = file("${opusUiDir}/dist")
-def opusUiV2Dir = opusUiDir
 def opusUiV2Dist = opusUiDist
 
 /**
- * Builds the Opus web UI SPA (Svelte 5 + Vite) before the client mod is
- * packaged. The game's loopback interop server serves these assets, exactly
- * like LiquidBounce embeds its theme build into the mod resources.
+ * Builds the production React Web Surface V2 SPA with Vite before the client
+ * mod is packaged. The game's loopback interop server serves these assets.
  */
 task buildUiDist(type: Exec) {
     description = 'Builds the production React Web Surface V2 SPA with Vite.'
@@ -79,16 +76,9 @@ task buildUiDist(type: Exec) {
             "${opusUiDir}/tsconfig.node.json",
             "${opusUiDir}/index.html")
     inputs.dir("${opusUiDir}/src")
+    inputs.dir("${opusUiDir}/public")
     outputs.dir opusUiDist
 }
-
-task buildLegacyUiDist(type: Exec) {
-    description = 'Builds the frozen Svelte UI rollback artifact.'
-    group = 'verification'
-    workingDir opusLegacyUiDir
-    commandLine 'npm', 'run', 'build'
-}
-
 
 task buildUiV2Dist {
     description = 'Alias for the production React Web Surface V2 build.'
@@ -122,6 +112,13 @@ sourceSets {
     }
 }
 
+task harnessMinecraftFontColor(type: JavaExec) {
+    group = 'verification'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.ui.render.MinecraftFontColorHarness'
+    doFirst { classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath) }
+}
+
 task harnessBridge(type: JavaExec) {
     group = 'verification'
     description = 'Runs the loopback interop bridge harness (SPA/auth/REST/WS/navigation).'
@@ -142,6 +139,54 @@ task harnessSystemScreens(type: JavaExec) {
     main = 'org.polydevs.opusmc.client.SystemScreenHarness'
     doFirst {
         classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+    }
+}
+
+task harnessMinecraftSettingsLinkage(type: JavaExec) {
+    group = 'verification'
+    description = 'Checks shipped Minecraft settings read/write linkage against the standalone remapper and vanilla game.'
+    dependsOn 'harnessClasses', 'reobfJar'
+    main = 'org.polydevs.opusmc.client.MinecraftSettingsLinkageHarness'
+    doFirst {
+        classpath = files(sourceSets.harness.output, sourceSets.main.runtimeClasspath)
+        args file('build/libs/opus-forge-client-0.0.1-preview.3.jar').absolutePath,
+            file('../../../build/runtime/artifacts/opus-standalone-loader-0.0.1.jar').absolutePath,
+            (System.getenv('OPUS_SETTINGS_MINECRAFT_JAR') ?: "${System.getProperty('user.home')}/.opus-launcher/minecraft/versions/1.8.9/1.8.9.jar")
+    }
+}
+
+task harnessMinecraftSettingsPersistence(type: JavaExec) {
+    group = 'verification'
+    description = 'Exercises real Minecraft settings read/write and options.txt persistence in an isolated profile.'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.MinecraftSettingsPersistenceHarness'
+    doFirst {
+        classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+    }
+}
+
+task harnessPauseShaderAccess(type: JavaExec) {
+    group = 'verification'
+    description = 'Executes the production pause shader host with vanilla protected GUI field access.'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.PauseShaderAccessHarness'
+    doFirst {
+        classpath = files(sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+    }
+}
+
+task harnessWorldSceneBlur(type: JavaExec) {
+    group = 'verification'
+    description = 'Measures production RShift blur on real GPU pixels with framebuffer rendering disabled.'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.WorldSceneBlurHarness'
+    args file('../../../../output/opus-client-integration/rshift-blur-gpu').absolutePath
+    doFirst {
+        def compatibility = file('../lwjgl-macos-compat/build/libs/opus-lwjgl-macos-compat-2.9.2-nightly-20140822.jar')
+        if (!compatibility.isFile()) throw new GradleException('Build the LWJGL compatibility artifact before harnessWorldSceneBlur.')
+        classpath = files(compatibility, sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+        systemProperty 'org.lwjgl.librarypath', file('../lwjgl-macos-compat/build/patched-native').absolutePath
+        systemProperty 'java.library.path', file('../lwjgl-macos-compat/build/patched-native').absolutePath
     }
 }
 
@@ -171,8 +216,23 @@ task harnessScreenInput(type: JavaExec) {
     }
 }
 
-['harnessHudEditor': 'HudEditorHarness', 'harnessHudSettings': 'HudSettingsHarness',
- 'harnessKeystrokes': 'KeystrokesHarness'].each { taskName, harnessClass ->
+task harnessHudCoordinates(type: JavaExec) {
+    group = 'verification'
+    description = 'Checks actual HUD/editor viewport producers across GUI and device scales.'
+    dependsOn 'harnessClasses'
+    main = 'org.polydevs.opusmc.client.HudCoordinateHarness'
+    doFirst {
+        def compatibility = file('../lwjgl-macos-compat/build/libs/opus-lwjgl-macos-compat-2.9.2-nightly-20140822.jar')
+        if (!compatibility.isFile()) throw new GradleException('Build the LWJGL compatibility artifact before harnessHudCoordinates.')
+        classpath = files(compatibility, sourceSets.harness.output, sourceSets.main.output, sourceSets.main.runtimeClasspath)
+        systemProperty 'org.lwjgl.librarypath', file('../lwjgl-macos-compat/build/patched-native').absolutePath
+    }
+}
+
+['harnessClientAccountSwitch': 'ClientAccountSwitchHarness', 'harnessHudEditor': 'HudEditorHarness', 'harnessHudSettings': 'HudSettingsHarness',
+ 'harnessKeystrokes': 'KeystrokesHarness', 'harnessHudLifecycle': 'HudLifecycleHarness',
+ 'harnessHudFrameResize': 'HudFrameResizeHarness',
+ 'harnessFpsAppearance': 'FpsAppearanceHarness', 'harnessFpsPersistence': 'FpsPersistenceHarness', 'harnessFpsRendering': 'FpsRenderingHarness'].each { taskName, harnessClass ->
     tasks.create(name: taskName, type: JavaExec) {
         group = 'verification'
         description = 'Checks real HUD editor/widget state without physical input or a GL display.'
@@ -200,7 +260,7 @@ def opusCefRoot = file(System.getenv('CEF_ROOT')
         ?: System.getenv('OPUS_CEF_ROOT')
         ?: (opusCefLockedRoot.isDirectory()
                 ? opusCefLockedRoot.absolutePath
-                : "${System.getProperty('user.home')}/.cache/opus-cef/current"))
+                : opusCefV2Cache))
 def opusIsMac = System.getProperty('os.name', '').toLowerCase().contains('mac')
 
 /**
@@ -212,9 +272,9 @@ def opusIsMac = System.getProperty('os.name', '').toLowerCase().contains('mac')
  * Chromium framework plus five subprocess bundles, so it is built in place and
  * located on disk at runtime (see OpusWebViewClient.resolveHelperPath).
  *
- * Skipped, not failed, when the CEF distribution is missing: a fresh clone must
- * still compile and run, with the in-game CEF lifecycle shell explaining that
- * the product surface is unavailable. Same on non-macOS hosts.
+ * Fails closed when the locked CEF distribution is missing; a product check
+ * must not pass with the embedded surface unavailable. Helper construction is
+ * macOS-only.
  */
 task buildWebViewHelper(type: Exec) {
     description = 'Builds the macOS Opus CEF helper (offscreen browser -> shared memory).'
@@ -225,10 +285,7 @@ task buildWebViewHelper(type: Exec) {
             return false
         }
         if (!cefFramework.isDirectory()) {
-            logger.lifecycle("Opus: no CEF distribution at ${opusCefRoot}; skipping " +
-                    'buildWebViewHelper (embedded web UI stays off). ' +
-                    'See native/opus-cef-helper/build.sh for what it expects.')
-            return false
+            throw new GradleException("Locked CEF distribution is missing: ${cefFramework}")
         }
         return true
     }
@@ -532,7 +589,7 @@ task verifyRetiredUiSources {
  * reobfuscation. The verification guards the typed UI path against quietly
  * falling back to a coremod package.
  */
-task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs', 'verifyRetiredUiSources']) {
+task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs', 'verifyRetiredUiSources', 'harnessPauseShaderAccess']) {
     group = 'verification'
     description = 'Verifies the reobfuscated, non-coremod Opus Forge client artifact.'
     doLast {
@@ -653,7 +710,11 @@ task verifyClientArtifact(dependsOn: ['reobfJar', 'verifyToolchainInputs', 'veri
 }
 
 check.dependsOn verifyClientArtifact
-check.dependsOn harnessBridge
+check.dependsOn harnessBridge, harnessClientAccountSwitch
+check.dependsOn harnessHudEditor, harnessHudSettings, harnessKeystrokes, harnessHudLifecycle
+check.dependsOn harnessHudCoordinates
+check.dependsOn harnessHudFrameResize
+check.dependsOn harnessMinecraftFontColor, harnessFpsAppearance, harnessFpsPersistence, harnessFpsRendering
 check.dependsOn harnessWebView
 
 /**

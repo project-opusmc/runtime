@@ -17,13 +17,13 @@ echo 'W6 production compile/resource/bridge gate'
 cd "$client"
 env OPUS_FORGE_UI_JAVAC="$jdk8/bin/javac" \
   GRADLE_USER_HOME="$cache/harness-gradle-home" JAVA_HOME="$jdk8" PATH="$jdk8/bin:$PATH" \
-  "$gradle" --no-daemon compileJava processResources harnessBridge harnessWebSurfaceHostNavigation
+  "$gradle" --no-daemon compileJava processResources harnessBridge harnessWebSurfaceHostNavigation \
+    harnessHudCoordinates harnessScreenInput
 
 screen="$client/src/main/java/org/polydevs/opusmc/client/OpusClientScreen.java"
-if grep -q 'MinecraftUiScale' "$screen"; then
-  echo 'ERROR: production Web Surface screen still depends on MinecraftUiScale' >&2
-  exit 1
-fi
+# The current viewport helper uses framebuffer / device scale, independent of
+# Minecraft GUI scale. The coordinate and real GuiScreen harnesses above verify
+# that behavior; banning the helper name would reject this supported path.
 if ! grep -q 'Display.getPixelScaleFactor' "$screen"; then
   echo 'ERROR: production Web Surface screen is not DPR-aware' >&2
   exit 1

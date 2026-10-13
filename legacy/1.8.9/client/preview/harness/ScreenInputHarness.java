@@ -130,8 +130,14 @@ public final class ScreenInputHarness {
                     String transitionWire = wire(control);
                     require(transitionWire.indexOf(" up 428 241 0 0\n") >= 0
                                     && !transitionWire.contains(" up 110 134 0 0\n")
-                                    && transitionWire.indexOf("VIEW ") > transitionWire.indexOf(" up 428 241 0 0\n"),
-                            "Route transition must cancel outside old controls before a new VIEW: " + transitionWire);
+                                    && !transitionWire.contains("VIEW "),
+                            "Retained-SPA transition must cancel outside old controls without reloading CEF: " + transitionWire);
+                    require(!navigation.isConfirmed() && state.get(screen)!=ready,
+                            "Retained route transition did not revoke the old DOM's input authority");
+                    control.reset();
+                    event(317,105,1,true);
+                    screen.handleMouseInput();
+                    require(control.size()==0,"Route transition accepted a click before its DOM ACK/current frame");
                     set(UiNavigationManager.class, navigation, "confirmed", true);
                     set(OpusClientScreen.class, screen, "requestedFrameRevision", navigation.revision());
                     state.set(screen, ready);
@@ -383,6 +389,7 @@ public final class ScreenInputHarness {
             int retryReleased = retryWire.indexOf(" up 428 241 0 0\n");
             require(retryReleased >= 0 && retryWire.indexOf("SURFACE HIDE\n") > retryReleased,
                     "Retry must cancel outside old controls before detaching the helper: " + retryWire);
+            verifyRetainedScreenReopen(minecraft, controller, navigation, view, control, geometry, state, ready, unsafe);
             System.out.println("PASS: real GuiScreen Retina clicks; 32 held-press route transitions; ACK-loss/multi-button/close/retry releases; post-dispatch focus/lost-release cancellation; render-only frames preserve queued clicks; stale/unconfirmed/revoked input rejected");
         } finally {
             set(ClientOverlayController.class, controller, "embeddedWebView", null);
@@ -397,6 +404,47 @@ public final class ScreenInputHarness {
 
     private static void event(int x, int bottomY, boolean down) throws Exception {
         event(x, bottomY, 0, down);
+    }
+
+    private static void verifyRetainedScreenReopen(Minecraft minecraft, ClientOverlayController controller,
+            UiNavigationManager navigation, OpusWebViewClient view, ByteArrayOutputStream control,
+            Method geometry, Field state, Object ready, sun.misc.Unsafe unsafe) throws Exception {
+        OpusClientScreen closing = new OpusClientScreen(controller, UiRoute.hudEditor());
+        set(GuiScreen.class, closing, "mc", minecraft);
+        minecraft.currentScreen = closing; closing.width = 427; closing.height = 240;
+        geometry.invoke(closing, 854, 480, 2.0F, true);
+        navigation.open("hud_editor"); set(UiNavigationManager.class, navigation, "confirmed", true);
+        set(OpusClientScreen.class, closing, "webView", view);
+        set(OpusClientScreen.class, closing, "webLeaseId", controller.claimEmbeddedWebView(view));
+        OpusWebTextureSurface snapshot = (OpusWebTextureSurface) get(OpusClientScreen.class, closing, "webSurface");
+        set(OpusWebTextureSurface.class, snapshot, "textureId", 1);
+        set(OpusWebTextureSurface.class, snapshot, "textureWidth", 854);
+        set(OpusWebTextureSurface.class, snapshot, "textureHeight", 480);
+        Method key = OpusClientScreen.class.getDeclaredMethod("surfaceKey"); key.setAccessible(true);
+        set(OpusClientScreen.class, closing, "lastSurfaceKey", key.invoke(closing));
+        set(OpusClientScreen.class, closing, "lastSurfaceEpoch", controller.retainedSurfaceEpoch());
+        state.set(closing, ready);
+        closing.onGuiClosed();
+        require(snapshot.hasTexture(), "GuiScreen close discarded its committed GPU surface");
+
+        OpusClientScreen reopening = new OpusClientScreen(controller, UiRoute.hudEditor());
+        set(GuiScreen.class, reopening, "mc", minecraft);
+        minecraft.currentScreen = reopening; reopening.width = 427; reopening.height = 240;
+        geometry.invoke(reopening, 854, 480, 2.0F, true);
+        navigation.open("hud_editor");
+        set(OpusClientScreen.class, reopening, "expectedHostRevision", navigation.revision());
+        set(OpusClientScreen.class, reopening, "webView", view);
+        set(OpusClientScreen.class, reopening, "webLeaseId", controller.claimEmbeddedWebView(view));
+        Method restore = OpusClientScreen.class.getDeclaredMethod("restoreRetainedSurface"); restore.setAccessible(true); restore.invoke(reopening);
+        require(get(OpusClientScreen.class, reopening, "webSurface") == snapshot,
+                "new GuiScreen did not take ownership of its matching retained surface");
+        require(!reopening.previewProductSurfaceReady(), "a cached image bypassed fresh-frame confirmation");
+        try (DisplayFocusFixture focus = new DisplayFocusFixture(unsafe)) {
+            control.reset(); event(110, 105, true); reopening.handleMouseInput();
+            require(control.size() == 0, "a click activated an old cached image before the new ACK/frame");
+        }
+        set(OpusWebTextureSurface.class, snapshot, "textureId", -1);
+        System.out.println("PASS: actual GuiScreen close/reopen transfers the retained surface while stale image input stays locked");
     }
 
     private static void event(int x, int bottomY, int button, boolean down) throws Exception {

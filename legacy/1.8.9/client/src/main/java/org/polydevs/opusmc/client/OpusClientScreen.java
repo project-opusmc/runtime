@@ -44,43 +44,64 @@ final class OpusClientScreen extends GuiScreen {
         CLOSED
     }
 
+    private boolean hudEditing = true;
     private final ClientOverlayController controller;
     private UiNavigationState navigation;
     private UiNavigationState systemReturnNavigation;
     private NativeSystemScreenSession systemScreen;
     private final MinecraftUiRenderer nativeRenderer;
-    private final OpusWebTextureSurface webSurface = new OpusWebTextureSurface();
+    private OpusWebTextureSurface webSurface = new OpusWebTextureSurface();
+    private RetainedUiSurfaceCache.Key lastSurfaceKey;
+    private long lastSurfaceEpoch;
+    private final WorldSceneBlur worldSceneBlur = new WorldSceneBlur();
+    private boolean worldBlurReported;
+    private boolean worldBlurFailed;
     private final PauseWorldBlur pauseWorldBlur = new PauseWorldBlur(new PauseWorldBlur.ShaderHost() {
         @Override
         public Object currentShader() {
-            EntityRenderer renderer = mc == null ? null : mc.entityRenderer;
-            return renderer == null ? null : renderer.getShaderGroup();
+            return currentPauseShader();
         }
 
         @Override
         public Object loadPauseShader() {
-            if (mc == null || mc.entityRenderer == null || !OpenGlHelper.shadersSupported
-                    || !OpenGlHelper.isFramebufferEnabled()) {
-                return null;
-            }
-            try {
-                mc.entityRenderer.loadShader(PAUSE_BLUR);
-                return mc.entityRenderer.getShaderGroup();
-            } catch (RuntimeException error) {
-                LOG.warn("Opus pause blur unavailable; keeping the transparent dim overlay", error);
-                return null;
-            }
+            return loadWorldPauseShader();
         }
 
         @Override
         public void stopShader() {
-            try {
-                mc.entityRenderer.stopUseShader();
-            } catch (RuntimeException error) {
-                LOG.warn("Could not release the Opus pause blur", error);
-            }
+            stopWorldPauseShader();
         }
     });
+
+    // Vanilla keeps GuiScreen.mc protected. Forge's compile-time access
+    // transformer exposes it publicly, but an anonymous helper is not a GUI
+    // subclass in standalone Minecraft. Keep its field access in this screen.
+    private Object currentPauseShader() {
+        EntityRenderer renderer = mc == null ? null : mc.entityRenderer;
+        return renderer == null ? null : renderer.getShaderGroup();
+    }
+
+    private Object loadWorldPauseShader() {
+        if (mc == null || mc.entityRenderer == null || !OpenGlHelper.shadersSupported
+                || !OpenGlHelper.isFramebufferEnabled()) {
+            return null;
+        }
+        try {
+            mc.entityRenderer.loadShader(PAUSE_BLUR);
+            return mc.entityRenderer.getShaderGroup();
+        } catch (RuntimeException error) {
+            LOG.warn("Opus pause blur unavailable; keeping the transparent dim overlay", error);
+            return null;
+        }
+    }
+
+    private void stopWorldPauseShader() {
+        try {
+            mc.entityRenderer.stopUseShader();
+        } catch (RuntimeException error) {
+            LOG.warn("Could not release the Opus pause blur", error);
+        }
+    }
     private final OpusDisplayMetricsTracker displayMetricsTracker = new OpusDisplayMetricsTracker();
     private UiBounds productViewport = new UiBounds(0, 0, 1, 1);
     private OpusDisplayMetrics displayMetrics;
@@ -137,7 +158,7 @@ final class OpusClientScreen extends GuiScreen {
             controller.closeNavigation(navigation);
             return;
         }
-        pauseWorldBlur.update((route().kind() == UiRoute.Kind.PAUSE_MENU || route().kind() == UiRoute.Kind.QUICK_HUB) && mc.theWorld != null);
+        pauseWorldBlur.update(shouldBlurWorld());
         // Minecraft calls initGui again for each live-resize step. Only the
         // first call opens a route/acquires CEF; subsequent calls update just
         // geometry or they restart the ACK timer and starve browser paints.
@@ -173,6 +194,23 @@ final class OpusClientScreen extends GuiScreen {
         webState = webView == null
                 ? (controller.isEmbeddedWebViewPrewarming() ? WebState.STARTING : WebState.FAILED)
                 : WebState.STARTING;
+        if (webView != null && !webSurface.hasTexture()) restoreRetainedSurface();
+    }
+
+    private RetainedUiSurfaceCache.Key surfaceKey() {
+        UiRoute current = route();
+        String key = controller.routeIdFor(current) + "/" + current.moduleId() + "/"
+                + (current.settingsSection() == null ? "" : current.settingsSection().wireValue());
+        return new RetainedUiSurfaceCache.Key(key, productViewport.width, productViewport.height, embeddedScale());
+    }
+    private void restoreRetainedSurface() {
+        RetainedUiSurfaceCache.Key key = surfaceKey();
+        OpusWebTextureSurface retained = controller.takeRetainedSurface(key);
+        if (retained != null) {
+            webSurface = retained; lastSurfaceKey = key; lastSurfaceEpoch = controller.retainedSurfaceEpoch();
+            LOG.info("Opus UI restored route frame: route={} viewport={}x{}", controller.routeIdFor(route()), productViewport.width, productViewport.height);
+        }
+        // Presentation only: STARTING and revision/lease guards still deny input.
     }
 
     @Override
@@ -205,10 +243,10 @@ final class OpusClientScreen extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         if (mc.theWorld == null) {
-            drawRect(0, 0, width, height, 0xFF0D0E15);
+            drawRect(0, 0, width, height, 0xFF141414);
         }
-        pauseWorldBlur.update((route().kind() == UiRoute.Kind.PAUSE_MENU || route().kind() == UiRoute.Kind.QUICK_HUB) && mc.theWorld != null);
         refreshViewport(false);
+        drawNativeWorldBlur();
         if (webView == null && webState == WebState.STARTING
                 && !controller.isEmbeddedWebViewPrewarming()) {
             if (controller.didEmbeddedWebViewPrewarmFail()) {
@@ -230,14 +268,10 @@ final class OpusClientScreen extends GuiScreen {
         pointerY = uiY;
 
         consumeWebFrame();
-        if (usesNativeSystemFallback()) {
-            if (route().kind() == UiRoute.Kind.CONNECTION) {
-                // Use our styled native screen instead of the vanilla GuiConnecting
-                drawNativeConnectionScreen();
-            } else {
-                systemScreen.draw(mouseX, mouseY, partialTicks);
-            }
-            return;
+        if (webState == WebState.STARTING && pendingFrameSinceNanos > 0L
+                && UiLifecycleShellPolicy.frameTimedOut((System.nanoTime() - pendingFrameSinceNanos) / 1000000L)) {
+            webState = WebState.FAILED;
+            LOG.warn("Opus UI frame timed out for route {}; retry remains available", controller.routeIdFor(route()));
         }
         if (isHudEditor() && productSurfaceReady()) {
             boolean nativePointer = nativeHudCanvasOwnsPoint(uiX, uiY) || nativeHudPointerCapture;
@@ -259,13 +293,6 @@ final class OpusClientScreen extends GuiScreen {
         if (mc.currentScreen == this && systemScreen == owner && !java.util.Objects.equals(owner.state(), before)) {
             commitNavigation();
         }
-    }
-
-    private boolean usesNativeSystemFallback() {
-        long waitingMillis = pendingFrameSinceNanos == 0L ? 0L
-                : (System.nanoTime() - pendingFrameSinceNanos) / 1000000L;
-        return UiLifecycleShellPolicy.drawNativeSystem(systemScreen != null,
-                webState == WebState.FAILED, productSurfaceReady(), waitingMillis);
     }
 
     private void consumeWebFrame() {
@@ -302,8 +329,15 @@ final class OpusClientScreen extends GuiScreen {
             try {
                 if (webView.isCurrent(
                         frame, productViewport.width, productViewport.height, embeddedScale())) {
+                    boolean transition = webState != WebState.READY;
+                    boolean retained = webSurface.hasTexture();
                     webSurface.upload(frame);
+                    lastSurfaceKey = surfaceKey();
+                    lastSurfaceEpoch = controller.retainedSurfaceEpoch();
                     webState = WebState.READY;
+                    if (transition) LOG.info("Opus UI frame committed: route={} revision={} waitMs={} retained={}",
+                            controller.routeIdFor(route()), expectedHostRevision,
+                            pendingFrameSinceNanos == 0L ? 0L : (System.nanoTime() - pendingFrameSinceNanos) / 1000000L, retained);
                 }
             } finally {
                 webView.release(frame);
@@ -332,117 +366,49 @@ final class OpusClientScreen extends GuiScreen {
         }
     }
 
+    /** Called only after the standalone loader's vanilla lifecycle/throttle guards. */
+    public boolean renderRetainedLoadingSurface() {
+        boolean live = mc != null && mc.currentScreen == this && mc.entityRenderer != null
+                && mc.isCallingFromMinecraftThread() && mc.getFramebuffer() != null
+                && webView != null && !webView.isFailed() && webView.isSurfaceVisible()
+                && controller.isCurrentEmbeddedWebView(webView, webLeaseId);
+        if (!live) return false;
+        consumeWebFrame();
+        if (!UiLifecycleShellPolicy.drawTexture(
+                productSurfaceReady(), webState == WebState.STARTING, webSurface.hasTexture(), live)) {
+            return false;
+        }
+        // LoadingScreenRenderer runs outside the normal game frame while a
+        // world changes. Present the same owned CEF texture on Minecraft's
+        // framebuffer instead of drawing an intervening dirt/text screen.
+        mc.getFramebuffer().bindFramebuffer(true);
+        try {
+            mc.entityRenderer.setupOverlayRendering();
+            GlStateManager.disableLighting();
+            GlStateManager.disableFog();
+            drawProductSurface();
+        } finally {
+            mc.getFramebuffer().unbindFramebuffer();
+        }
+        mc.getFramebuffer().framebufferRender(mc.displayWidth, mc.displayHeight);
+        mc.updateDisplay();
+        return true;
+    }
+
     private void drawLifecycleShell() {
-        if (route().kind() == UiRoute.Kind.CONNECTION && webState != WebState.FAILED) {
-            drawNativeConnectionScreen();
-            return;
-        }
-        if (mc.theWorld != null) {
-            drawDefaultBackground();
-        } else {
-            drawRect(0, 0, width, height, 0xFF0D0E15);
-        }
+        // No vanilla dirt wash or second connection menu between CEF frames.
+        if (mc.theWorld == null) drawRect(0, 0, width, height, 0xFF141414);
         long elapsedMillis = pendingFrameSinceNanos == 0L ? 0L
                 : (System.nanoTime() - pendingFrameSinceNanos) / 1000000L;
         if (!UiLifecycleShellPolicy.showText(elapsedMillis, webState == WebState.FAILED)) return;
-        String title = webState == WebState.FAILED ? "OPUS UI unavailable" : "Starting OPUS UI";
-        String detail = webState == WebState.FAILED
-                ? "Press R to retry or Esc to close"
-                : "Loading the embedded interface";
+        String title = "Could not open Opus";
+        String detail = "Press R to retry or Esc to return";
         drawCenteredString(fontRendererObj, title, width / 2, height / 2 - 8, 0xFFFFFFFF);
         drawCenteredString(fontRendererObj, detail, width / 2, height / 2 + 8, 0xFFAAAAAA);
     }
 
-    /**
-     * Renders a clean native connection screen (Lunar-style) that appears instantly
-     * without waiting for the CEF pipeline to boot. Shows phase-appropriate text
-     * with an animated ellipsis indicator.
-     */
-    private void drawNativeConnectionScreen() {
-        // Dark semi-transparent overlay over the world/background
-        drawDefaultBackground();
-        net.minecraft.client.gui.Gui.drawRect(0, 0, width, height, 0xCC000000);
-
-        ConnectionUiState conn = connectionState();
-        String phase = conn == null ? "connecting" : conn.phase;
-        String title = conn == null ? "Connecting..." : conn.title;
-        String serverAddress = conn == null ? "" : conn.serverAddress.trim();
-
-        // Animated dots — ticks at 20fps, cycles every 60 ticks = 3 seconds
-        long tick = (System.currentTimeMillis() / 500L) % 4;
-        String dots = tick == 0 ? "" : tick == 1 ? "." : tick == 2 ? ".." : "...";
-
-        int cx = width / 2;
-        int cy = height / 2;
-
-        // Title (phase label)
-        String displayTitle;
-        if ("disconnected".equals(phase)) {
-            displayTitle = title.isEmpty() ? "Disconnected" : title;
-        } else if ("loading".equals(phase)) {
-            displayTitle = "Loading terrain" + dots;
-        } else {
-            displayTitle = title.isEmpty() ? "Connecting" : title;
-            if (!"disconnected".equals(phase)) displayTitle += dots;
-        }
-
-        // Accent color ring — draw a simple spinner arc using quads
-        drawSpinnerRing(cx, cy - 30, 18, 3);
-
-        // Server address (if available)
-        int textY = cy + 6;
-        drawCenteredString(fontRendererObj, displayTitle, cx, textY, 0xFFFFFFFF);
-        if (!serverAddress.isEmpty()) {
-            drawCenteredString(fontRendererObj, serverAddress, cx, textY + 14, 0xFF888888);
-        }
-
-        // Cancel hint
-        if (conn != null && conn.canCancel) {
-            drawCenteredString(fontRendererObj, "Press Esc to cancel", cx, cy + (serverAddress.isEmpty() ? 26 : 40), 0xFF555555);
-        }
-    }
-
-    /** Draws a partial-arc spinner ring using GL quads. Angle advances with time. */
-    private void drawSpinnerRing(int cx, int cy, int radius, int thickness) {
-        long timeMs = System.currentTimeMillis();
-        double startAngle = (timeMs / 800.0D) * Math.PI * 2.0D;
-        double arcLength = Math.PI * 1.3D; // ~234 degrees filled
-
-        final int segments = 24;
-        net.minecraft.client.renderer.GlStateManager.disableTexture2D();
-        net.minecraft.client.renderer.GlStateManager.enableBlend();
-        net.minecraft.client.renderer.GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
-        net.minecraft.client.renderer.Tessellator tess = net.minecraft.client.renderer.Tessellator.getInstance();
-        net.minecraft.client.renderer.WorldRenderer wr = tess.getWorldRenderer();
-        wr.begin(org.lwjgl.opengl.GL11.GL_TRIANGLE_STRIP, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
-        float outer = radius + thickness / 2.0F;
-        float inner = Math.max(0.0F, radius - thickness / 2.0F);
-        // accent color ~#6C72FF with alpha
-        int r = 108, g = 114, b = 255, a = 220;
-        for (int i = 0; i <= segments; i++) {
-            double angle = startAngle + arcLength * i / segments;
-            double cos = Math.cos(angle);
-            double sin = Math.sin(angle);
-            // Fade tail end
-            int alpha = i < 4 ? (int)(a * i / 4.0D) : a;
-            wr.pos(cx + cos * outer, cy + sin * outer, 0).color(r, g, b, alpha).endVertex();
-            wr.pos(cx + cos * inner, cy + sin * inner, 0).color(r, g, b, alpha).endVertex();
-        }
-        tess.draw();
-        // Ghost track ring
-        wr.begin(org.lwjgl.opengl.GL11.GL_TRIANGLE_STRIP, net.minecraft.client.renderer.vertex.DefaultVertexFormats.POSITION_COLOR);
-        for (int i = 0; i <= segments * 3; i++) {
-            double angle = Math.PI * 2.0D * i / (segments * 3);
-            double cos = Math.cos(angle);
-            double sin = Math.sin(angle);
-            wr.pos(cx + cos * outer, cy + sin * outer, 0).color(255, 255, 255, 18).endVertex();
-            wr.pos(cx + cos * inner, cy + sin * inner, 0).color(255, 255, 255, 18).endVertex();
-        }
-        tess.draw();
-        net.minecraft.client.renderer.GlStateManager.enableTexture2D();
-    }
-
     private void drawHudEditor(int mouseX, int mouseY, float partialTicks) {
+        controller.setHudEditorEditing(hudEditing);
         nativeRenderer.beginFrame(productViewport);
         try {
             controller.renderHudEditor(
@@ -477,7 +443,7 @@ final class OpusClientScreen extends GuiScreen {
                 if (action.settingsModuleId() != null) {
                     nativeHudPointerOwner = false;
                     nativeHudPointerButton = -1;
-                    controller.navigateFromHudEditorToModule(action.settingsModuleId());
+                    controller.openHudWidgetProperties(action.settingsModuleId());
                     return;
                 }
                 nativeHudPointerCapture = controller.hudEditorHasPointerCapture();
@@ -547,10 +513,6 @@ final class OpusClientScreen extends GuiScreen {
 
     @Override
     public void handleMouseInput() throws IOException {
-        if (usesNativeSystemFallback()) {
-            systemScreen.mouseInput();
-            return;
-        }
         super.handleMouseInput();
         int wheel = Mouse.getEventDWheel();
         if (wheel != 0 && embeddedInputActive() && !nativeHudPointerOwner
@@ -582,6 +544,7 @@ final class OpusClientScreen extends GuiScreen {
         systemScreen = null;
         systemReturnNavigation = null;
         pauseWorldBlur.close();
+        worldSceneBlur.close();
         OpusWebViewClient owner = webView;
         long leaseId = webLeaseId;
         // CEF stays alive between screens. Balance its pressed buttons while
@@ -589,7 +552,14 @@ final class OpusClientScreen extends GuiScreen {
         // reference or parking the surface.
         clearInputOwnership();
         webState = WebState.CLOSED;
-        webSurface.dispose();
+        if (lastSurfaceKey != null && webSurface.hasTexture()
+                && controller.isCurrentEmbeddedWebView(owner, leaseId)) {
+            controller.retainSurface(lastSurfaceKey, lastSurfaceEpoch, webSurface);
+        } else {
+            webSurface.dispose();
+        }
+        webSurface = new OpusWebTextureSurface();
+        lastSurfaceKey = null;
         webView = null;
         webLeaseId = 0L;
         controller.releaseEmbeddedWebView(owner, leaseId);
@@ -606,6 +576,39 @@ final class OpusClientScreen extends GuiScreen {
                         && kind == UiRoute.Kind.GAME_OPTIONS
                         && navigation.entryPoint() == UiNavigationState.EntryPoint.PAUSE);
     }
+
+    private boolean shouldBlurWorld() {
+        if (mc == null || mc.theWorld == null) return false;
+        UiRoute.Kind kind = route().kind();
+        return kind == UiRoute.Kind.PAUSE_MENU || kind == UiRoute.Kind.QUICK_HUB
+                || kind == UiRoute.Kind.GAME_OPTIONS || kind == UiRoute.Kind.MOD_HUB
+                || kind == UiRoute.Kind.MODULE_DETAIL || (kind == UiRoute.Kind.HUD_EDITOR && hudEditing);
+    }
+
+    private void drawNativeWorldBlur() {
+        boolean requested = shouldBlurWorld();
+        pauseWorldBlur.update(requested);
+        if (!requested || (pauseWorldBlur.isActive() && OpenGlHelper.shadersSupported
+                && OpenGlHelper.isFramebufferEnabled() && mc.entityRenderer.isShaderActive())) {
+            worldSceneBlur.close();
+            return;
+        }
+        if (worldBlurFailed) return;
+        try {
+            if (worldSceneBlur.draw(productViewport.width, productViewport.height) && !worldBlurReported) {
+                worldBlurReported = true;
+                LOG.info("Opus native world blur active: route={} backend=frame-copy viewport={}x{} framebuffers={}",
+                        controller == null ? route().kind().name().toLowerCase(java.util.Locale.ROOT)
+                                : controller.routeIdFor(route()),
+                        productViewport.width, productViewport.height, OpenGlHelper.isFramebufferEnabled());
+            }
+        } catch (RuntimeException failure) {
+            worldBlurFailed = true;
+            LOG.warn("Could not render the Opus world blur", failure);
+        }
+    }
+
+    void setHudEditing(boolean editing) { hudEditing = editing; pauseWorldBlur.update(shouldBlurWorld()); }
 
     boolean isHudEditor() {
         return route().kind() == UiRoute.Kind.HUD_EDITOR;
@@ -637,8 +640,9 @@ final class OpusClientScreen extends GuiScreen {
         if (systemScreen != null) systemScreen.close();
         systemScreen = next;
         navigation = new UiNavigationState(UiRoute.connection(), UiNavigationState.EntryPoint.TITLE,
-                next.state().canCancel ? UiRoute.multiplayer() : null);
+                next.state().canCancel ? ("world".equals(next.state().stage) ? UiRoute.singleplayer() : UiRoute.multiplayer()) : null);
         pauseWorldBlur.close();
+        worldSceneBlur.close();
         if (initialized) commitNavigation();
     }
 
@@ -648,7 +652,7 @@ final class OpusClientScreen extends GuiScreen {
         systemScreen = null;
         systemReturnNavigation = null;
         navigation = next;
-        pauseWorldBlur.update((route().kind() == UiRoute.Kind.PAUSE_MENU || route().kind() == UiRoute.Kind.QUICK_HUB) && mc.theWorld != null);
+        pauseWorldBlur.update(shouldBlurWorld());
         if (initialized) commitNavigation();
     }
 
@@ -757,9 +761,8 @@ final class OpusClientScreen extends GuiScreen {
         controller.onNavigationChanged(navigation, connectionState());
         expectedHostRevision = controller.currentUiNavigationRevision();
         requestedFrameRevision = -1L;
-        if (webView != null && !webView.isFailed()) {
-            webView.navigate(controller.embeddedUrlFor(route()));
-        }
+        // uiNavigation broadcasts this revision into the existing SPA. Input
+        // remains closed until React ACKs it and a fresh compositor frame lands.
     }
 
     void setPreviewPointer(int x, int y) {
@@ -791,6 +794,7 @@ final class OpusClientScreen extends GuiScreen {
             if (hole.width > 0 && hole.height > 0) clippedExclusions.add(hole);
         }
         nativeHudExclusions = java.util.Collections.unmodifiableList(clippedExclusions);
+        controller.updateHudEditorGeometry(nativeHudCanvas, nativeHudExclusions);
     }
 
     boolean previewClick(int x, int y, int button) {
@@ -852,8 +856,10 @@ final class OpusClientScreen extends GuiScreen {
 
     /** Geometry transition shared by live LWJGL metrics and headless checks. */
     private void refreshViewport(int framebufferWidth, int framebufferHeight, float pixelScale, boolean force) {
-        int logicalWidth = Math.max(1, Math.round(framebufferWidth / pixelScale));
-        int logicalHeight = Math.max(1, Math.round(framebufferHeight / pixelScale));
+        UiBounds logicalViewport = org.polydevs.opusmc.client.ui.render.MinecraftUiScale.viewport(
+                framebufferWidth, framebufferHeight, pixelScale);
+        int logicalWidth = logicalViewport.width;
+        int logicalHeight = logicalViewport.height;
         boolean framebufferChanged = framebufferWidth != viewportDisplayWidth
                 || framebufferHeight != viewportDisplayHeight;
         boolean pixelScaleChanged = Math.abs(pixelScale - viewportPixelScale) > 0.0001F;
@@ -1005,6 +1011,7 @@ final class OpusClientScreen extends GuiScreen {
         nativeHudCanvas = new UiBounds(0, 0, 0, 0);
         nativeHudCanvasRevision = -1L;
         nativeHudExclusions = java.util.Collections.emptyList();
+        controller.updateHudEditorGeometry(nativeHudCanvas, nativeHudExclusions);
         nativeHudPointerOwner = false;
         nativeHudPointerButton = -1;
         nativeHudPointerCapture = false;

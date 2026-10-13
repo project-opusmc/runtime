@@ -79,7 +79,8 @@ tasks.register("verifyStandaloneArtifact") {
     doLast {
         val artifact = tasks.jar.get().archiveFile.get().asFile
         JarFile(artifact).use { archive ->
-            val requiredClasses = listOf(
+            val requiredEntries = listOf(
+                "notch-srg.srg",
                 "org/polydevs/opusmc/standalone/OpusTweaker.class",
                 "org/polydevs/opusmc/standalone/OpusStandaloneClassTransformer.class",
                 "org/polydevs/opusmc/standalone/StandaloneLifecycleTransformer.class",
@@ -89,9 +90,9 @@ tasks.register("verifyStandaloneArtifact") {
                 "net/minecraftforge/fml/common/eventhandler/EventBus.class",
                 "net/minecraftforge/fml/common/eventhandler/Cancelable.class",
             )
-            val missing = requiredClasses.filter { archive.getEntry(it) == null }
+            val missing = requiredEntries.filter { archive.getEntry(it) == null }
             check(missing.isEmpty()) {
-                "Standalone Loader is missing required classes: ${missing.joinToString()}"
+                "Standalone Loader is missing required entries: ${missing.joinToString()}"
             }
 
             val forbidden = listOf(

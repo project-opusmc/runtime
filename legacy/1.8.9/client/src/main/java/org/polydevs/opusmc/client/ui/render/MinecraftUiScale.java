@@ -3,11 +3,12 @@ package org.polydevs.opusmc.client.ui.render;
 import org.polydevs.opusmc.client.ui.UiBounds;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
+import org.lwjgl.opengl.Display;
 
 /**
  * Defines the one logical coordinate space shared by CEF, GuiScreen input, and
- * the native HUD editor. Logical units are the live Minecraft scaled-screen
- * units; framebuffer/device scale affects raster density only.
+ * the native HUD editor. Logical units are window points: framebuffer pixels
+ * divided by device scale. Minecraft GUI scale affects the GL transform only.
  */
 public final class MinecraftUiScale {
     private MinecraftUiScale() {
@@ -17,12 +18,17 @@ public final class MinecraftUiScale {
         if (minecraft == null) {
             return new UiBounds(0, 0, 1, 1);
         }
-        ScaledResolution resolution = new ScaledResolution(minecraft);
+        float pixelScale = Display.isCreated() ? Display.getPixelScaleFactor() : 1.0F;
+        return viewport(minecraft.displayWidth, minecraft.displayHeight, pixelScale);
+    }
+
+    public static UiBounds viewport(int framebufferWidth, int framebufferHeight, float pixelScale) {
+        float deviceScale = Math.max(1.0F, pixelScale);
         return new UiBounds(
                 0,
                 0,
-                Math.max(1, resolution.getScaledWidth()),
-                Math.max(1, resolution.getScaledHeight()));
+                Math.max(1, Math.round(framebufferWidth / deviceScale)),
+                Math.max(1, Math.round(framebufferHeight / deviceScale)));
     }
 
     /**
