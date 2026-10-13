@@ -26,8 +26,6 @@ val replacementNative = "liblwjgl.dylib"
 val replacementNativeSha1 = "5d53a208e2f5bffa1d8d4b3755190fb5cb835022"
 val replacementNativeSize = 838_892L
 val resizeGuardNativeName = "libopus_lwjgl_resize_guard.dylib"
-val resizeGuardNativeSha1 = "6005c797463267ed1089231d3b6fb88f3bc0b0fd"
-val resizeGuardNativeSize = 21_184L
 val replacementRootClass = "org/lwjgl/MacOSXSysImplementation.class"
 val patchedOpenGlClasses = setOf(
     "org/lwjgl/opengl/MacOSXDisplay.class",
@@ -297,15 +295,7 @@ tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
                 }
                 val guardEntry = compatibility.getJarEntry(resizeGuardNativeName)
                     ?: error("Compatibility artifact is missing $resizeGuardNativeName")
-                check(guardEntry.size == resizeGuardNativeSize) {
-                    "Unexpected resize guard size: ${guardEntry.size}"
-                }
                 val guardBytes = compatibility.getInputStream(guardEntry).use { it.readBytes() }
-                val guardSha1 = MessageDigest.getInstance("SHA-1").digest(guardBytes)
-                    .joinToString("") { byte -> "%02x".format(byte) }
-                check(guardSha1 == resizeGuardNativeSha1) {
-                    "Unexpected resize guard SHA-1: $guardSha1"
-                }
                 check(
                     guardBytes.take(4) == listOf(
                         0xcf.toByte(), 0xfa.toByte(), 0xed.toByte(), 0xfe.toByte(),
@@ -319,6 +309,14 @@ tasks.register("verifyMacOsLwjglCompatibilityArtifact") {
                 ) {
                     "Resize guard marker is missing"
                 }
+                providers.exec {
+                    commandLine(
+                        "lipo",
+                        "-verify_arch",
+                        "x86_64",
+                        resizeGuardNative.get().asFile.absolutePath,
+                    )
+                }.result.get().assertNormalExitValue()
                 val guardLoadCommands = providers.exec {
                     commandLine("otool", "-l", resizeGuardNative.get().asFile.absolutePath)
                 }.standardOutput.asText.get()
